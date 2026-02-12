@@ -613,6 +613,9 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.code(500).send({
         error: 'MAIL_SEND_FAILED',
         message: 'No se pudo enviar el email de verificacion. Intenta nuevamente.',
+        ...(process.env.BILLING_MAIL_DEBUG === 'true'
+          ? { debug: mailResult.error || 'unknown' }
+          : {}),
       });
     }
 
