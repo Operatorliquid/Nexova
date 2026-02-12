@@ -1,5 +1,5 @@
-import nodemailer from 'nodemailer';
 import dns from 'node:dns';
+import nodemailer from 'nodemailer';
 
 type MailPayload = {
   to: string;
@@ -8,7 +8,36 @@ type MailPayload = {
   text: string;
 };
 
-const getMailConfig = () => {
+type MailRuntimeConfig = {
+  host?: string;
+  port: number;
+  user?: string;
+  pass?: string;
+  from?: string;
+  secure: boolean;
+  connectionTimeout: number;
+  greetingTimeout: number;
+  socketTimeout: number;
+  sendTimeout: number;
+};
+
+type MailTransportConfig = {
+  label: string;
+  host: string;
+  port: number;
+  secure: boolean;
+  requireTLS?: boolean;
+  tlsServername?: string;
+  user: string;
+  pass: string;
+  from: string;
+  connectionTimeout: number;
+  greetingTimeout: number;
+  socketTimeout: number;
+  sendTimeout: number;
+};
+
+const getMailConfig = (): MailRuntimeConfig => {
   const host = process.env.SMTP_HOST;
   const port = Number.parseInt(process.env.SMTP_PORT || '587', 10);
   const user = process.env.SMTP_USER;
@@ -28,6 +57,7 @@ const getMailConfig = () => {
     10
   );
   const sendTimeout = Number.parseInt(process.env.SMTP_SEND_TIMEOUT_MS || '15000', 10);
+
   return {
     host,
     port: Number.isFinite(port) ? port : 587,
@@ -42,8 +72,8 @@ const getMailConfig = () => {
   };
 };
 
-let transporter: nodemailer.Transporter | null = null;
 let dnsConfigured = false;
+const transporters = new Map<string, nodemailer.Transporter>();
 
 const ensureDnsResultOrder = () => {
   if (dnsConfigured) return;
@@ -59,16 +89,81 @@ const ensureDnsResultOrder = () => {
   }
 };
 
-const getTransporter = () => {
-  if (transporter) return transporter;
-  ensureDnsResultOrder();
-  const cfg = getMailConfig();
-  if (!cfg.host || !cfg.user || !cfg.pass || !cfg.from) return null;
+const buildTransportConfigs = (cfg: MailRuntimeConfig): MailTransportConfig[] => {
+  if (!cfg.host || !cfg.user || !cfg.pass || !cfg.from) return [];
 
-  transporter = nodemailer.createTransport({
+  const list: MailTransportConfig[] = [
+    {
+      label: 'primary',
+      host: cfg.host,
+      port: cfg.port,
+      secure: cfg.secure,
+      user: cfg.user,
+      pass: cfg.pass,
+      from: cfg.from,
+      connectionTimeout: cfg.connectionTimeout,
+      greetingTimeout: cfg.greetingTimeout,
+      socketTimeout: cfg.socketTimeout,
+      sendTimeout: cfg.sendTimeout,
+    },
+  ];
+
+  const allowFallback = String(process.env.SMTP_ALLOW_FALLBACK ?? 'true').toLowerCase() !== 'false';
+  if (!allowFallback) return list;
+
+  // Hostinger SMTP can fail by environment/route depending on port.
+  // Add automatic fallback between SSL:465 and STARTTLS:587.
+  if (cfg.host === 'smtp.hostinger.com') {
+    if (cfg.port === 465 && cfg.secure) {
+      list.push({
+        label: 'fallback-hostinger-587',
+        host: cfg.host,
+        port: 587,
+        secure: false,
+        requireTLS: true,
+        tlsServername: 'smtp.hostinger.com',
+        user: cfg.user,
+        pass: cfg.pass,
+        from: cfg.from,
+        connectionTimeout: cfg.connectionTimeout,
+        greetingTimeout: cfg.greetingTimeout,
+        socketTimeout: cfg.socketTimeout,
+        sendTimeout: cfg.sendTimeout,
+      });
+    } else if (cfg.port === 587 && !cfg.secure) {
+      list.push({
+        label: 'fallback-hostinger-465',
+        host: cfg.host,
+        port: 465,
+        secure: true,
+        tlsServername: 'smtp.hostinger.com',
+        user: cfg.user,
+        pass: cfg.pass,
+        from: cfg.from,
+        connectionTimeout: cfg.connectionTimeout,
+        greetingTimeout: cfg.greetingTimeout,
+        socketTimeout: cfg.socketTimeout,
+        sendTimeout: cfg.sendTimeout,
+      });
+    }
+  }
+
+  return list;
+};
+
+const transporterKey = (cfg: MailTransportConfig): string =>
+  `${cfg.host}:${cfg.port}:${cfg.secure ? 'secure' : 'plain'}:${cfg.requireTLS ? 'reqtls' : 'noreqtls'}`;
+
+const getTransporter = (cfg: MailTransportConfig): nodemailer.Transporter => {
+  const key = transporterKey(cfg);
+  const cached = transporters.get(key);
+  if (cached) return cached;
+
+  const created = nodemailer.createTransport({
     host: cfg.host,
     port: cfg.port,
     secure: cfg.secure,
+    requireTLS: cfg.requireTLS,
     connectionTimeout: cfg.connectionTimeout,
     greetingTimeout: cfg.greetingTimeout,
     socketTimeout: cfg.socketTimeout,
@@ -76,8 +171,47 @@ const getTransporter = () => {
       user: cfg.user,
       pass: cfg.pass,
     },
+    tls: cfg.tlsServername
+      ? {
+          servername: cfg.tlsServername,
+        }
+      : undefined,
   });
-  return transporter;
+
+  transporters.set(key, created);
+  return created;
+};
+
+const isRetryableMailError = (message: string): boolean => {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes('timeout') ||
+    normalized.includes('enetunreach') ||
+    normalized.includes('ehostunreach') ||
+    normalized.includes('etimedout') ||
+    normalized.includes('econnrefused') ||
+    normalized.includes('socket hang up') ||
+    normalized.includes('connection closed')
+  );
+};
+
+const sendWithConfig = async (
+  cfg: MailTransportConfig,
+  payload: MailPayload
+): Promise<void> => {
+  const tx = getTransporter(cfg);
+  await Promise.race([
+    tx.sendMail({
+      from: cfg.from,
+      to: payload.to,
+      subject: payload.subject,
+      text: payload.text,
+      html: payload.html,
+    }),
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('SMTP send timeout')), cfg.sendTimeout);
+    }),
+  ]);
 };
 
 export const isMailerConfigured = (): boolean => {
@@ -88,28 +222,29 @@ export const isMailerConfigured = (): boolean => {
 export const sendMail = async (
   payload: MailPayload
 ): Promise<{ sent: boolean; error?: string }> => {
-  const cfg = getMailConfig();
-  const tx = getTransporter();
-  if (!tx || !cfg.from) {
+  ensureDnsResultOrder();
+  const base = getMailConfig();
+  const configs = buildTransportConfigs(base);
+  if (configs.length === 0) {
     return { sent: false, error: 'Mailer not configured' };
   }
 
-  try {
-    await Promise.race([
-      tx.sendMail({
-        from: cfg.from,
-        to: payload.to,
-        subject: payload.subject,
-        text: payload.text,
-        html: payload.html,
-      }),
-      new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('SMTP send timeout')), cfg.sendTimeout);
-      }),
-    ]);
-    return { sent: true };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown mail error';
-    return { sent: false, error: message };
+  const errors: string[] = [];
+
+  for (let index = 0; index < configs.length; index += 1) {
+    const cfg = configs[index];
+    try {
+      await sendWithConfig(cfg, payload);
+      return { sent: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown mail error';
+      errors.push(`${cfg.label}: ${message}`);
+      const isLast = index === configs.length - 1;
+      if (isLast || !isRetryableMailError(message)) {
+        return { sent: false, error: errors.join(' | ') };
+      }
+    }
   }
+
+  return { sent: false, error: errors.join(' | ') || 'Unknown mail error' };
 };
