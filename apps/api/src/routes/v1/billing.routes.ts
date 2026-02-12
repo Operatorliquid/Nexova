@@ -598,6 +598,17 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
       html,
     });
 
+    if (!mailResult.sent) {
+      request.log.error(
+        {
+          email,
+          flowToken,
+          mailError: mailResult.error || 'unknown',
+        },
+        'Billing verification email send failed'
+      );
+    }
+
     if (!mailResult.sent && isMailerConfigured()) {
       return reply.code(500).send({
         error: 'MAIL_SEND_FAILED',
