@@ -1,4 +1,5 @@
 import nodemailer from 'nodemailer';
+import dns from 'node:dns';
 
 type MailPayload = {
   to: string;
@@ -42,9 +43,25 @@ const getMailConfig = () => {
 };
 
 let transporter: nodemailer.Transporter | null = null;
+let dnsConfigured = false;
+
+const ensureDnsResultOrder = () => {
+  if (dnsConfigured) return;
+  dnsConfigured = true;
+
+  const preferIpv4 = String(process.env.SMTP_PREFER_IPV4 ?? 'true').toLowerCase() !== 'false';
+  if (!preferIpv4) return;
+
+  try {
+    dns.setDefaultResultOrder('ipv4first');
+  } catch {
+    // Ignore if runtime does not support this option.
+  }
+};
 
 const getTransporter = () => {
   if (transporter) return transporter;
+  ensureDnsResultOrder();
   const cfg = getMailConfig();
   if (!cfg.host || !cfg.user || !cfg.pass || !cfg.from) return null;
 
