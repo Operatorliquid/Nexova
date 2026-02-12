@@ -146,6 +146,39 @@ const buildTransportConfigs = (cfg: MailRuntimeConfig): MailTransportConfig[] =>
         sendTimeout: cfg.sendTimeout,
       });
     }
+
+    // Many Hostinger mailboxes are backed by Titan. Using Titan directly can bypass
+    // networking edge cases (e.g., Cloudflare IP blocks from some cloud providers).
+    list.push({
+      label: 'fallback-titan-465',
+      host: 'smtp.titan.email',
+      port: 465,
+      secure: true,
+      tlsServername: 'smtp.titan.email',
+      user: cfg.user,
+      pass: cfg.pass,
+      from: cfg.from,
+      connectionTimeout: cfg.connectionTimeout,
+      greetingTimeout: cfg.greetingTimeout,
+      socketTimeout: cfg.socketTimeout,
+      sendTimeout: cfg.sendTimeout,
+    });
+
+    list.push({
+      label: 'fallback-titan-587',
+      host: 'smtp.titan.email',
+      port: 587,
+      secure: false,
+      requireTLS: true,
+      tlsServername: 'smtp.titan.email',
+      user: cfg.user,
+      pass: cfg.pass,
+      from: cfg.from,
+      connectionTimeout: cfg.connectionTimeout,
+      greetingTimeout: cfg.greetingTimeout,
+      socketTimeout: cfg.socketTimeout,
+      sendTimeout: cfg.sendTimeout,
+    });
   }
 
   return list;
