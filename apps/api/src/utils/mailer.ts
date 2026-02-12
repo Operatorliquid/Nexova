@@ -14,6 +14,19 @@ const getMailConfig = () => {
   const pass = process.env.SMTP_PASS;
   const from = process.env.SMTP_FROM;
   const secure = String(process.env.SMTP_SECURE || '').toLowerCase() === 'true';
+  const connectionTimeout = Number.parseInt(
+    process.env.SMTP_CONNECTION_TIMEOUT_MS || '10000',
+    10
+  );
+  const greetingTimeout = Number.parseInt(
+    process.env.SMTP_GREETING_TIMEOUT_MS || '10000',
+    10
+  );
+  const socketTimeout = Number.parseInt(
+    process.env.SMTP_SOCKET_TIMEOUT_MS || '15000',
+    10
+  );
+  const sendTimeout = Number.parseInt(process.env.SMTP_SEND_TIMEOUT_MS || '15000', 10);
   return {
     host,
     port: Number.isFinite(port) ? port : 587,
@@ -21,6 +34,10 @@ const getMailConfig = () => {
     pass,
     from,
     secure,
+    connectionTimeout: Number.isFinite(connectionTimeout) ? connectionTimeout : 10000,
+    greetingTimeout: Number.isFinite(greetingTimeout) ? greetingTimeout : 10000,
+    socketTimeout: Number.isFinite(socketTimeout) ? socketTimeout : 15000,
+    sendTimeout: Number.isFinite(sendTimeout) ? sendTimeout : 15000,
   };
 };
 
@@ -35,6 +52,9 @@ const getTransporter = () => {
     host: cfg.host,
     port: cfg.port,
     secure: cfg.secure,
+    connectionTimeout: cfg.connectionTimeout,
+    greetingTimeout: cfg.greetingTimeout,
+    socketTimeout: cfg.socketTimeout,
     auth: {
       user: cfg.user,
       pass: cfg.pass,
@@ -58,17 +78,21 @@ export const sendMail = async (
   }
 
   try {
-    await tx.sendMail({
-      from: cfg.from,
-      to: payload.to,
-      subject: payload.subject,
-      text: payload.text,
-      html: payload.html,
-    });
+    await Promise.race([
+      tx.sendMail({
+        from: cfg.from,
+        to: payload.to,
+        subject: payload.subject,
+        text: payload.text,
+        html: payload.html,
+      }),
+      new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('SMTP send timeout')), cfg.sendTimeout);
+      }),
+    ]);
     return { sent: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown mail error';
     return { sent: false, error: message };
   }
 };
-
