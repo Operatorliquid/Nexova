@@ -8,6 +8,8 @@ type MailPayload = {
   text: string;
 };
 
+type MailProvider = 'smtp' | 'resend';
+
 type MailRuntimeConfig = {
   host?: string;
   port: number;
@@ -42,7 +44,7 @@ const getMailConfig = (): MailRuntimeConfig => {
   const port = Number.parseInt(process.env.SMTP_PORT || '587', 10);
   const user = process.env.SMTP_USER;
   const pass = process.env.SMTP_PASS;
-  const from = process.env.SMTP_FROM;
+  const from = process.env.MAIL_FROM || process.env.SMTP_FROM;
   const secure = String(process.env.SMTP_SECURE || '').toLowerCase() === 'true';
   const connectionTimeout = Number.parseInt(
     process.env.SMTP_CONNECTION_TIMEOUT_MS || '10000',
@@ -70,6 +72,12 @@ const getMailConfig = (): MailRuntimeConfig => {
     socketTimeout: Number.isFinite(socketTimeout) ? socketTimeout : 15000,
     sendTimeout: Number.isFinite(sendTimeout) ? sendTimeout : 15000,
   };
+};
+
+const getMailProvider = (): MailProvider => {
+  const raw = String(process.env.MAIL_PROVIDER || 'smtp').toLowerCase().trim();
+  if (raw === 'resend') return 'resend';
+  return 'smtp';
 };
 
 let dnsConfigured = false;
@@ -248,15 +256,97 @@ const sendWithConfig = async (
 };
 
 export const isMailerConfigured = (): boolean => {
+  const provider = getMailProvider();
+  if (provider === 'resend') {
+    const from = process.env.MAIL_FROM || process.env.SMTP_FROM;
+    return Boolean(process.env.RESEND_API_KEY && from);
+  }
+
   const cfg = getMailConfig();
   return Boolean(cfg.host && cfg.user && cfg.pass && cfg.from);
+};
+
+const readResendError = async (response: Response): Promise<string> => {
+  try {
+    const data = (await response.json()) as {
+      message?: string;
+      error?: string;
+      details?: unknown;
+    };
+    if (data?.message) return data.message;
+    if (data?.error) return data.error;
+    return JSON.stringify(data);
+  } catch {
+    try {
+      return await response.text();
+    } catch {
+      return `HTTP ${response.status}`;
+    }
+  }
+};
+
+const sendMailViaResend = async (
+  cfg: MailRuntimeConfig,
+  payload: MailPayload
+): Promise<{ sent: boolean; error?: string }> => {
+  const apiKey = process.env.RESEND_API_KEY;
+  const from = cfg.from || process.env.MAIL_FROM || process.env.SMTP_FROM;
+  if (!apiKey || !from) {
+    return { sent: false, error: 'Resend not configured' };
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), cfg.sendTimeout);
+
+  try {
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from,
+        to: payload.to,
+        subject: payload.subject,
+        html: payload.html,
+        text: payload.text,
+      }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      return {
+        sent: false,
+        error: `resend: ${await readResendError(response)}`,
+      };
+    }
+
+    return { sent: true };
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.name === 'AbortError'
+          ? 'resend: send timeout'
+          : `resend: ${error.message}`
+        : 'resend: unknown error';
+    return { sent: false, error: message };
+  } finally {
+    clearTimeout(timeout);
+  }
 };
 
 export const sendMail = async (
   payload: MailPayload
 ): Promise<{ sent: boolean; error?: string }> => {
-  ensureDnsResultOrder();
+  const provider = getMailProvider();
   const base = getMailConfig();
+
+  if (provider === 'resend') {
+    return sendMailViaResend(base, payload);
+  }
+
+  ensureDnsResultOrder();
   const configs = buildTransportConfigs(base);
   if (configs.length === 0) {
     return { sent: false, error: 'Mailer not configured' };
