@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID } from 'crypto';
 import { FastifyPluginAsync } from 'fastify';
 import Stripe from 'stripe';
 import { z } from 'zod';
+import type { Prisma } from '@prisma/client';
 import {
   WorkspaceService,
   generateTokenPair,
@@ -56,12 +57,56 @@ const finalizeCheckoutSchema = z.object({
 });
 
 type AuthTokens = ReturnType<typeof generateTokenPair>;
+type PendingRegistrationDraft = {
+  email: string;
+  passwordHash: string;
+  firstName: string | null;
+  lastName: string | null;
+  tokenHash: string;
+  tokenExpiresAt: string;
+  createdAt: string;
+};
 
 const normalizeEmail = (value: string) => value.trim().toLowerCase();
 
 const hashPlainToken = (value: string) => createHash('sha256').update(value).digest('hex');
 
 const randomToken = (size = 32) => randomBytes(size).toString('hex');
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const readIntentMetadata = (value: unknown): Record<string, unknown> =>
+  isRecord(value) ? { ...value } : {};
+
+const readPendingRegistrationDraft = (
+  metadata: Record<string, unknown>
+): PendingRegistrationDraft | null => {
+  const raw = metadata.pendingRegistration;
+  if (!isRecord(raw)) return null;
+
+  const email = typeof raw.email === 'string' ? normalizeEmail(raw.email) : '';
+  const passwordHash = typeof raw.passwordHash === 'string' ? raw.passwordHash : '';
+  const firstName = typeof raw.firstName === 'string' ? raw.firstName : null;
+  const lastName = typeof raw.lastName === 'string' ? raw.lastName : null;
+  const tokenHash = typeof raw.tokenHash === 'string' ? raw.tokenHash : '';
+  const tokenExpiresAt = typeof raw.tokenExpiresAt === 'string' ? raw.tokenExpiresAt : '';
+  const createdAt = typeof raw.createdAt === 'string' ? raw.createdAt : '';
+
+  if (!email || !passwordHash || !tokenHash || !tokenExpiresAt || !createdAt) {
+    return null;
+  }
+
+  return {
+    email,
+    passwordHash,
+    firstName,
+    lastName,
+    tokenHash,
+    tokenExpiresAt,
+    createdAt,
+  };
+};
 
 const formatWorkspaceName = (params: { firstName?: string | null; email?: string | null }) => {
   const first = params.firstName?.trim();
@@ -412,6 +457,9 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
         amount: true,
         currency: true,
         status: true,
+        userId: true,
+        workspaceId: true,
+        metadata: true,
         expiresAt: true,
       },
     });
@@ -423,8 +471,27 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
       });
     }
 
+    const metadata = readIntentMetadata(intent.metadata);
+    const pendingRegistration = readPendingRegistrationDraft(metadata);
+
     return reply.send({
-      intent,
+      intent: {
+        flowToken: intent.flowToken,
+        email: intent.email,
+        plan: intent.plan,
+        months: intent.months,
+        amount: intent.amount,
+        currency: intent.currency,
+        status: intent.status,
+        expiresAt: intent.expiresAt,
+        requiresEmailVerification:
+          intent.status === 'pending_verification' && Boolean(pendingRegistration),
+        isVerified:
+          intent.status === 'verified' ||
+          intent.status === 'checkout_created' ||
+          intent.status === 'completed' ||
+          Boolean(intent.userId && intent.workspaceId),
+      },
       planDetails: BILLING_PLAN_CATALOG[intent.plan as CommercePlan] || null,
     });
   });
@@ -441,6 +508,20 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.code(400).send({
         error: 'INVALID_INTENT',
         message: 'La sesión de checkout expiró. Volvé a seleccionar un plan.',
+      });
+    }
+
+    if (intent.status === 'completed') {
+      return reply.code(409).send({
+        error: 'INTENT_ALREADY_COMPLETED',
+        message: 'Este checkout ya fue completado.',
+      });
+    }
+
+    if (intent.userId || intent.workspaceId) {
+      return reply.code(409).send({
+        error: 'INTENT_ALREADY_LINKED',
+        message: 'Este checkout ya está asociado a una cuenta. Iniciá sesión para continuar.',
       });
     }
 
@@ -466,74 +547,39 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
       });
     }
 
+    const plainToken = randomToken(24);
+    const tokenHash = hashPlainToken(plainToken);
     const passwordHash = await hashPassword(body.password);
-    const user = await fastify.prisma.user.create({
-      data: {
-        email,
-        passwordHash,
-        firstName: body.firstName?.trim() || null,
-        lastName: body.lastName?.trim() || null,
-        status: 'pending_verification',
-      },
-      select: {
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        isSuperAdmin: true,
-      },
-    });
+    const draft: PendingRegistrationDraft = {
+      email,
+      passwordHash,
+      firstName: body.firstName?.trim() || null,
+      lastName: body.lastName?.trim() || null,
+      tokenHash,
+      tokenExpiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      createdAt: new Date().toISOString(),
+    };
 
-    const memberships = await ensureWorkspaceForUser({
-      id: user.id,
-      firstName: user.firstName,
-      email: user.email,
-      isSuperAdmin: user.isSuperAdmin,
-    });
-
-    const workspace = memberships[0]?.workspace;
-    if (!workspace) {
-      return reply.code(500).send({
-        error: 'WORKSPACE_CREATE_FAILED',
-        message: 'No se pudo crear el workspace',
-      });
-    }
-
-    await fastify.prisma.workspace.update({
-      where: { id: workspace.id },
-      data: {
-        plan: intent.plan,
-        status: 'suspended',
-      },
-    });
+    const currentMetadata = readIntentMetadata(intent.metadata);
 
     await fastify.prisma.billingCheckoutIntent.update({
       where: { id: intent.id },
       data: {
         email,
-        userId: user.id,
-        workspaceId: workspace.id,
         status: 'pending_verification',
+        metadata: {
+          ...currentMetadata,
+          pendingRegistration: draft,
+        } as Prisma.InputJsonValue,
       },
     });
 
-    const plainToken = randomToken(24);
-    const tokenHash = hashPlainToken(plainToken);
     const verifyUrl = `${getLandingUrl()}/verify-email?token=${encodeURIComponent(
       plainToken
     )}&flowToken=${encodeURIComponent(flowToken)}`;
 
-    await fastify.prisma.emailVerificationToken.create({
-      data: {
-        userId: user.id,
-        tokenHash,
-        flowToken,
-        expiresAt: new Date(Date.now() + 60 * 60 * 1000),
-      },
-    });
-
     const subject = 'Confirmá tu email para continuar el checkout en Nexova';
-    const text = `Hola ${user.firstName || ''}, confirmá tu email para continuar: ${verifyUrl}`;
+    const text = `Hola ${body.firstName?.trim() || ''}, confirmá tu email para continuar: ${verifyUrl}`;
     const html = `
       <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;color:#1f2937">
         <h2 style="margin-bottom:12px">Confirmá tu email</h2>
@@ -580,88 +626,206 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post('/verify-email', async (request, reply) => {
     const body = verifyEmailSchema.parse(request.body);
     const tokenHash = hashPlainToken(body.token.trim());
+    const flowToken = body.flowToken?.trim();
+    if (!flowToken) {
+      return reply.code(400).send({
+        error: 'FLOW_TOKEN_REQUIRED',
+        message: 'Falta flowToken para verificar la cuenta.',
+      });
+    }
 
-    const verification = await fastify.prisma.emailVerificationToken.findUnique({
-      where: { tokenHash },
-      include: {
-        user: {
-          select: {
-            id: true,
-            email: true,
-            firstName: true,
-            lastName: true,
-            isSuperAdmin: true,
-            status: true,
-          },
-        },
+    const intent = await fastify.prisma.billingCheckoutIntent.findUnique({
+      where: { flowToken },
+      select: {
+        id: true,
+        flowToken: true,
+        plan: true,
+        status: true,
+        expiresAt: true,
+        email: true,
+        userId: true,
+        workspaceId: true,
+        metadata: true,
       },
     });
 
-    if (!verification || verification.usedAt || verification.expiresAt.getTime() < Date.now()) {
+    if (!intent || isIntentExpired(intent.expiresAt)) {
+      return reply.code(400).send({
+        error: 'INVALID_INTENT',
+        message: 'La sesión de checkout expiró. Volvé a seleccionar un plan.',
+      });
+    }
+
+    // Idempotency: if the intent is already linked to a user, just reissue session.
+    if (intent.userId) {
+      const existingUser = await fastify.prisma.user.findUnique({
+        where: { id: intent.userId },
+        select: {
+          id: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+          isSuperAdmin: true,
+        },
+      });
+
+      if (existingUser) {
+        const tokens = await issueTokensForUser({
+          user: {
+            id: existingUser.id,
+            email: existingUser.email,
+            isSuperAdmin: existingUser.isSuperAdmin,
+          },
+          ipAddress: request.ip,
+          userAgent: request.headers['user-agent'],
+        });
+        setAuthCookies(reply, tokens);
+
+        const memberships = await ensureWorkspaceForUser({
+          id: existingUser.id,
+          firstName: existingUser.firstName,
+          email: existingUser.email,
+          isSuperAdmin: existingUser.isSuperAdmin,
+        });
+        const workspaces = mapWorkspaces(memberships);
+        const workspace = workspaces[0] || null;
+
+        return reply.send({
+          success: true,
+          alreadyVerified: true,
+          user: {
+            id: existingUser.id,
+            email: existingUser.email,
+            firstName: existingUser.firstName,
+            lastName: existingUser.lastName,
+            isSuperAdmin: existingUser.isSuperAdmin,
+          },
+          workspace,
+          workspaces,
+          next: `${getLandingUrl()}/checkout/continue?flowToken=${encodeURIComponent(flowToken)}`,
+        });
+      }
+    }
+
+    const metadata = readIntentMetadata(intent.metadata);
+    const draft = readPendingRegistrationDraft(metadata);
+    if (!draft) {
+      return reply.code(400).send({
+        error: 'INVALID_TOKEN',
+        message: 'No hay una verificación pendiente para este checkout.',
+      });
+    }
+
+    if (draft.tokenHash !== tokenHash) {
       return reply.code(400).send({
         error: 'INVALID_TOKEN',
         message: 'El enlace de verificación es inválido o expiró.',
       });
     }
 
-    await fastify.prisma.$transaction(async (tx) => {
-      await tx.emailVerificationToken.update({
-        where: { id: verification.id },
-        data: { usedAt: new Date() },
+    const tokenExpiresAt = new Date(draft.tokenExpiresAt);
+    if (Number.isNaN(tokenExpiresAt.getTime()) || tokenExpiresAt.getTime() < Date.now()) {
+      return reply.code(400).send({
+        error: 'INVALID_TOKEN',
+        message: 'El enlace de verificación es inválido o expiró.',
       });
-      await tx.user.update({
-        where: { id: verification.userId },
+    }
+
+    const existingByEmail = await fastify.prisma.user.findUnique({
+      where: { email: draft.email },
+      select: { id: true },
+    });
+    if (existingByEmail) {
+      return reply.code(409).send({
+        error: 'EMAIL_EXISTS',
+        message: 'Ya existe una cuenta con ese email. Iniciá sesión para continuar.',
+      });
+    }
+
+    const user = await fastify.prisma.user.create({
+      data: {
+        email: draft.email,
+        passwordHash: draft.passwordHash,
+        firstName: draft.firstName,
+        lastName: draft.lastName,
+        status: 'active',
+        emailVerifiedAt: new Date(),
+      },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        isSuperAdmin: true,
+      },
+    });
+
+    const memberships = await ensureWorkspaceForUser({
+      id: user.id,
+      firstName: user.firstName,
+      email: user.email,
+      isSuperAdmin: user.isSuperAdmin,
+    });
+    const workspace = memberships[0]?.workspace;
+    if (!workspace) {
+      return reply.code(500).send({
+        error: 'WORKSPACE_CREATE_FAILED',
+        message: 'No se pudo crear el workspace',
+      });
+    }
+
+    await fastify.prisma.$transaction(async (tx) => {
+      await tx.workspace.update({
+        where: { id: workspace.id },
         data: {
-          status: 'active',
-          emailVerifiedAt: new Date(),
+          plan: intent.plan,
+          status: 'suspended',
         },
       });
-      if (body.flowToken) {
-        await tx.billingCheckoutIntent.updateMany({
-          where: {
-            flowToken: body.flowToken,
-            userId: verification.userId,
-          },
-          data: { status: 'verified' },
-        });
-      }
+
+      const currentMetadata = readIntentMetadata(intent.metadata);
+      const nextMetadata: Record<string, unknown> = { ...currentMetadata };
+      delete nextMetadata.pendingRegistration;
+      nextMetadata.emailVerifiedAt = new Date().toISOString();
+
+      await tx.billingCheckoutIntent.update({
+        where: { id: intent.id },
+        data: {
+          email: user.email,
+          userId: user.id,
+          workspaceId: workspace.id,
+          status: 'verified',
+          metadata: nextMetadata as Prisma.InputJsonValue,
+        },
+      });
     });
 
     const tokens = await issueTokensForUser({
       user: {
-        id: verification.user.id,
-        email: verification.user.email,
-        isSuperAdmin: verification.user.isSuperAdmin,
+        id: user.id,
+        email: user.email,
+        isSuperAdmin: user.isSuperAdmin,
       },
       ipAddress: request.ip,
       userAgent: request.headers['user-agent'],
     });
 
     setAuthCookies(reply, tokens);
-
-    const memberships = await ensureWorkspaceForUser({
-      id: verification.user.id,
-      firstName: verification.user.firstName,
-      email: verification.user.email,
-      isSuperAdmin: verification.user.isSuperAdmin,
-    });
     const workspaces = mapWorkspaces(memberships);
-    const workspace = workspaces[0] || null;
+    const primaryWorkspace = workspaces[0] || null;
 
     return reply.send({
       success: true,
       user: {
-        id: verification.user.id,
-        email: verification.user.email,
-        firstName: verification.user.firstName,
-        lastName: verification.user.lastName,
-        isSuperAdmin: verification.user.isSuperAdmin,
+        id: user.id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        isSuperAdmin: user.isSuperAdmin,
       },
-      workspace,
+      workspace: primaryWorkspace,
       workspaces,
-      next: body.flowToken
-        ? `${getLandingUrl()}/checkout/continue?flowToken=${encodeURIComponent(body.flowToken)}`
-        : getDashboardUrl(),
+      next: `${getLandingUrl()}/checkout/continue?flowToken=${encodeURIComponent(flowToken)}`,
     });
   });
 
@@ -851,22 +1015,28 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
     });
     const workspace = memberships[0]?.workspace || null;
 
-    if (oauthState.flowToken && workspace) {
-      const checkoutIntent = await fastify.prisma.billingCheckoutIntent.findUnique({
-        where: { flowToken: oauthState.flowToken },
-        select: { id: true, plan: true },
-      });
-
-      if (checkoutIntent) {
-        await fastify.prisma.billingCheckoutIntent.update({
-          where: { id: checkoutIntent.id },
-          data: {
-            email: user.email,
-            userId: user.id,
-            workspaceId: workspace.id,
-            status: 'verified',
-          },
+      if (oauthState.flowToken && workspace) {
+        const checkoutIntent = await fastify.prisma.billingCheckoutIntent.findUnique({
+          where: { flowToken: oauthState.flowToken },
+          select: { id: true, plan: true, metadata: true },
         });
+
+        if (checkoutIntent) {
+          const currentMetadata = readIntentMetadata(checkoutIntent.metadata);
+          const nextMetadata: Record<string, unknown> = { ...currentMetadata };
+          delete nextMetadata.pendingRegistration;
+          nextMetadata.emailVerifiedAt = new Date().toISOString();
+
+          await fastify.prisma.billingCheckoutIntent.update({
+            where: { id: checkoutIntent.id },
+            data: {
+              email: user.email,
+              userId: user.id,
+              workspaceId: workspace.id,
+              status: 'verified',
+              metadata: nextMetadata as Prisma.InputJsonValue,
+            },
+          });
         await fastify.prisma.workspace.update({
           where: { id: workspace.id },
           data: {
