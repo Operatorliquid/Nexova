@@ -5,7 +5,7 @@
   "type": "module",
   "main": "./dist/main.js",
   "scripts": {
-    "build": "tsc --build",
+    "build": "prisma generate --schema ../../prisma/schema.prisma && tsc --build",
     "clean": "rm -rf dist *.tsbuildinfo",
     "dev": "tsx watch src/main.ts",
     "start": "node dist/main.js",
@@ -15,15 +15,16 @@
     "test:unit": "vitest run --dir test/unit"
   },
   "dependencies": {
-    "@prisma/client": "^5.22.0",
-    "@nexova/shared": "workspace:*",
-    "@nexova/core": "workspace:*",
-    "@nexova/retail": "workspace:*",
-    "@nexova/integrations": "workspace:*",
     "@nexova/agent-runtime": "workspace:*",
+    "@nexova/core": "workspace:*",
+    "@nexova/integrations": "workspace:*",
+    "@nexova/retail": "workspace:*",
+    "@nexova/shared": "workspace:*",
+    "@prisma/client": "^5.22.0",
     "bullmq": "^5.4.0",
     "ioredis": "^5.3.0",
     "pino": "^8.19.0",
+    "prisma": "^5.10.0",
     "tsyringe": "^4.8.0"
   },
   "devDependencies": {

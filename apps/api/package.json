@@ -5,7 +5,7 @@
   "type": "module",
   "main": "./dist/main.js",
   "scripts": {
-    "build": "tsc --build",
+    "build": "prisma generate --schema ../../prisma/schema.prisma && tsc --build",
     "clean": "rm -rf dist *.tsbuildinfo",
     "dev": "tsx watch src/main.ts",
     "start": "node dist/main.js",
@@ -32,6 +32,7 @@
     "fastify-plugin": "^4.5.0",
     "ioredis": "^5.4.1",
     "nodemailer": "^8.0.1",
+    "prisma": "^5.10.0",
     "stripe": "^20.3.1",
     "zod": "^3.23.0"
   },
