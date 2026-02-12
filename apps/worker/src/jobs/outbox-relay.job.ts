@@ -1,0 +1,156 @@
+/**
+ * Outbox Relay Job
+ * Publishes pending outbox events (placeholder relay)
+ */
+import { Job } from 'bullmq';
+import { PrismaClient, Prisma } from '@prisma/client';
+import type { Redis } from 'ioredis';
+import { OutboxRelayPayload } from '@nexova/shared';
+import { InfobipClient } from '@nexova/integrations';
+import { decrypt } from '@nexova/core';
+
+interface OutboxRelayResult {
+  processed: number;
+  failed: number;
+}
+
+const DEFAULT_REALTIME_CHANNEL = 'nexova:realtime';
+const OWNER_WHATSAPP_NOTIFICATION_EVENT = 'owner.whatsapp_notification';
+
+function resolveWhatsAppApiKey(number: {
+  apiKeyEnc?: string | null;
+  apiKeyIv?: string | null;
+}): string {
+  if (!number.apiKeyEnc || !number.apiKeyIv) {
+    return '';
+  }
+  return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
+}
+
+function resolveInfobipBaseUrl(apiUrl?: string | null): string {
+  if (apiUrl && apiUrl.trim().length > 0) {
+    return apiUrl.replace(/\/$/, '');
+  }
+  return 'https://api.infobip.com';
+}
+
+async function sendOwnerWhatsAppNotification(
+  prisma: PrismaClient,
+  params: { workspaceId: string; to: string; text: string }
+): Promise<void> {
+  const whatsappNumber = await prisma.whatsAppNumber.findFirst({
+    where: { workspaceId: params.workspaceId, isActive: true },
+    select: { apiKeyEnc: true, apiKeyIv: true, apiUrl: true, phoneNumber: true },
+  });
+
+  if (!whatsappNumber) {
+    throw new Error('WhatsApp not configured');
+  }
+
+  const apiKey = resolveWhatsAppApiKey(whatsappNumber);
+  if (!apiKey) {
+    throw new Error('WhatsApp API key not configured');
+  }
+
+  const client = new InfobipClient({
+    apiKey,
+    baseUrl: resolveInfobipBaseUrl(whatsappNumber.apiUrl),
+    senderNumber: whatsappNumber.phoneNumber,
+  });
+
+  await client.sendText(params.to, params.text);
+}
+
+export function createOutboxRelayProcessor(
+  prisma: PrismaClient,
+  publisher: Redis,
+  channel = DEFAULT_REALTIME_CHANNEL
+) {
+  return async (job: Job<OutboxRelayPayload>): Promise<OutboxRelayResult> => {
+    const batchSize = job.data.batchSize || 50;
+    const maxAgeMs = job.data.maxAge;
+    const now = new Date();
+
+    const where: Prisma.EventOutboxWhereInput = {
+      status: 'pending',
+      ...(maxAgeMs ? { createdAt: { lte: new Date(Date.now() - maxAgeMs) } } : {}),
+    };
+
+    const events = await prisma.eventOutbox.findMany({
+      where,
+      orderBy: { createdAt: 'asc' },
+      take: batchSize,
+    });
+
+    let processed = 0;
+    let failed = 0;
+
+    for (const event of events) {
+      try {
+        if (event.eventType === OWNER_WHATSAPP_NOTIFICATION_EVENT) {
+          const payload = (event.payload as Record<string, unknown>) || {};
+          const to = typeof payload.to === 'string' ? payload.to : '';
+          const content = (payload.content as Record<string, unknown>) || {};
+          const text = typeof content.text === 'string' ? content.text : '';
+
+          if (!to.trim() || !text.trim()) {
+            throw new Error('Invalid owner WhatsApp notification payload');
+          }
+
+          await sendOwnerWhatsAppNotification(prisma, {
+            workspaceId: event.workspaceId,
+            to,
+            text,
+          });
+
+          await prisma.eventOutbox.updateMany({
+            where: { id: event.id, workspaceId: event.workspaceId },
+            data: {
+              status: 'published',
+              publishedAt: now,
+              errorMessage: null,
+            },
+          });
+
+          processed++;
+          continue;
+        }
+
+        const payload = {
+          id: event.id,
+          workspaceId: event.workspaceId,
+          eventType: event.eventType,
+          aggregateType: event.aggregateType,
+          aggregateId: event.aggregateId,
+          payload: event.payload,
+          correlationId: event.correlationId,
+          createdAt: event.createdAt,
+        };
+
+        await publisher.publish(channel, JSON.stringify(payload));
+
+        await prisma.eventOutbox.updateMany({
+          where: { id: event.id, workspaceId: event.workspaceId },
+          data: {
+            status: 'published',
+            publishedAt: now,
+            errorMessage: null,
+          },
+        });
+        processed++;
+      } catch (error) {
+        failed++;
+        await prisma.eventOutbox.updateMany({
+          where: { id: event.id, workspaceId: event.workspaceId },
+          data: {
+            status: 'failed',
+            errorMessage: error instanceof Error ? error.message : 'Unknown error',
+            retryCount: { increment: 1 },
+          },
+        });
+      }
+    }
+
+    return { processed, failed };
+  };
+}

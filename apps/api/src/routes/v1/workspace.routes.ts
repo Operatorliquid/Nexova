@@ -1,0 +1,796 @@
+/**
+ * Workspace Routes
+ */
+import { FastifyPluginAsync } from 'fastify';
+import { Prisma } from '@prisma/client';
+import { z } from 'zod';
+import { WorkspaceService } from '@nexova/core';
+import { randomBytes, scryptSync } from 'crypto';
+import { getWorkspacePlanContext } from '../../utils/commerce-plan.js';
+
+const createWorkspaceSchema = z.object({
+  name: z.string().min(2).max(255),
+  slug: z
+    .string()
+    .min(2)
+    .max(63)
+    .regex(/^[a-z0-9-]+$/, 'Slug must be lowercase letters, numbers, and hyphens only'),
+});
+
+const updateWorkspaceSchema = z.object({
+  name: z.string().min(2).max(255).optional(),
+  phone: z.string().max(20).optional(),
+  settings: z.record(z.unknown()).optional(),
+});
+
+const inviteMemberSchema = z.object({
+  email: z.string().email(),
+  roleId: z.string().uuid(),
+});
+
+function assertWorkspaceAccess(
+  request: { workspaceId?: string; user?: { isSuperAdmin?: boolean } },
+  reply: { code: (statusCode: number) => { send: (payload: unknown) => void } },
+  targetWorkspaceId: string
+): boolean {
+  if (request.user?.isSuperAdmin) {
+    return true;
+  }
+
+  if (!request.workspaceId) {
+    reply.code(400).send({
+      error: 'MISSING_WORKSPACE',
+      message: 'X-Workspace-Id header required',
+    });
+    return false;
+  }
+
+  if (request.workspaceId !== targetWorkspaceId) {
+    reply.code(403).send({
+      error: 'FORBIDDEN',
+      message: 'Workspace mismatch',
+    });
+    return false;
+  }
+
+  return true;
+}
+
+function hashOwnerAgentPin(pin: string): string {
+  const salt = randomBytes(16);
+  const hash = scryptSync(pin, salt, 32);
+  return `scrypt$${salt.toString('base64')}$${hash.toString('base64')}`;
+}
+
+function toPhoneDigits(value: string): string {
+  return (value || '').trim().replace(/\D/g, '');
+}
+
+function normalizeOwnerAgentNumberForSettings(raw: unknown, timezone: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+
+  let digits = toPhoneDigits(trimmed);
+  if (!digits) return trimmed;
+
+  if (digits.startsWith('00')) {
+    digits = digits.slice(2);
+  }
+
+  const tz = typeof timezone === 'string' ? timezone.trim() : '';
+  const isArgentina = tz.startsWith('America/Argentina/');
+
+  if (isArgentina) {
+    if (digits.startsWith('54')) {
+      if (!digits.startsWith('549') && digits.length === 12) {
+        digits = `549${digits.slice(2)}`;
+      }
+      return `+${digits}`;
+    }
+
+    digits = digits.replace(/^0+/, '');
+    if (digits.length === 10) {
+      return `+549${digits}`;
+    }
+
+    if (digits.length >= 11) {
+      return `+${digits}`;
+    }
+  }
+
+  if (trimmed.startsWith('+') && digits.length >= 11) {
+    return `+${digits}`;
+  }
+
+  if (digits.length >= 11) {
+    return `+${digits}`;
+  }
+
+  return trimmed;
+}
+
+export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
+  const workspaceService = new WorkspaceService(fastify.prisma);
+
+  // Get user's workspaces (protected)
+  fastify.get(
+    '/',
+    { preHandler: [fastify.authenticate], config: { allowMissingWorkspace: true } },
+    async (request, reply) => {
+      const workspaces = await workspaceService.getUserWorkspaces(request.user!.sub);
+      reply.send({ workspaces });
+    }
+  );
+
+  // Get available workspaces to join (protected)
+  // For now, returns all workspaces. In production, this should be invitation-based
+  fastify.get(
+    '/available',
+    { preHandler: [fastify.authenticate], config: { allowMissingWorkspace: true } },
+    async (request, reply) => {
+      // Get workspaces user is already a member of
+      const memberships = await fastify.prisma.membership.findMany({
+        where: { userId: request.user!.sub },
+        select: { workspaceId: true },
+      });
+
+      const memberWorkspaceIds = memberships.map((m) => m.workspaceId);
+
+      // Get all active workspaces (in a real app, this would be invite-based)
+      const workspaces = await fastify.prisma.workspace.findMany({
+        where: {
+          status: 'active',
+          id: { notIn: memberWorkspaceIds },
+        },
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+        },
+        take: 20,
+      });
+
+      reply.send({ workspaces });
+    }
+  );
+
+  // Create workspace (protected)
+  fastify.post(
+    '/',
+    { preHandler: [fastify.authenticate], config: { allowMissingWorkspace: true } },
+    async (request, reply) => {
+      const body = createWorkspaceSchema.parse(request.body);
+
+      const workspace = await workspaceService.create({
+        name: body.name,
+        slug: body.slug,
+        ownerId: request.user!.sub,
+      });
+
+      reply.code(201).send({ workspace });
+    }
+  );
+
+  // Get workspace by ID (protected)
+  fastify.get(
+    '/:id',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      if (!assertWorkspaceAccess(request, reply, id)) return;
+
+      const workspace = await workspaceService.getById(id);
+
+      if (!workspace) {
+        return reply.code(404).send({
+          error: 'NOT_FOUND',
+          message: 'Workspace not found',
+        });
+      }
+
+      reply.send({ workspace });
+    }
+  );
+
+  // Update workspace (protected, requires settings:update)
+  fastify.patch(
+    '/:id',
+    { preHandler: [fastify.requirePermission('settings:update')] },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      if (!assertWorkspaceAccess(request, reply, id)) return;
+      const body = updateWorkspaceSchema.parse(request.body);
+
+      const workspace = await workspaceService.update(id, {
+        name: body.name,
+        phone: body.phone,
+        settings: body.settings as import('@nexova/core').UpdateWorkspaceInput['settings'],
+      });
+
+      reply.send({ workspace });
+    }
+  );
+
+  // Delete workspace (protected, requires owner role)
+  fastify.delete(
+    '/:id',
+    { preHandler: [fastify.requirePermission('*')] },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      if (!assertWorkspaceAccess(request, reply, id)) return;
+
+      await workspaceService.delete(id);
+
+      reply.send({ success: true });
+    }
+  );
+
+  // Get workspace members (protected)
+  fastify.get(
+    '/:id/members',
+    { preHandler: [fastify.requirePermission('members:read')] },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      if (!assertWorkspaceAccess(request, reply, id)) return;
+
+      const members = await workspaceService.getMembers(id);
+
+      reply.send({ members });
+    }
+  );
+
+  // Invite member (protected)
+  fastify.post(
+    '/:id/members/invite',
+    { preHandler: [fastify.requirePermission('members:create')] },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      if (!assertWorkspaceAccess(request, reply, id)) return;
+      const body = inviteMemberSchema.parse(request.body);
+
+      const membership = await workspaceService.inviteMember(
+        id,
+        body.email,
+        body.roleId,
+        request.user!.sub
+      );
+
+      reply.code(201).send({ membership });
+    }
+  );
+
+  // Remove member (protected)
+  fastify.delete(
+    '/:id/members/:userId',
+    { preHandler: [fastify.requirePermission('members:delete')] },
+    async (request, reply) => {
+      const { id, userId } = request.params as { id: string; userId: string };
+      if (!assertWorkspaceAccess(request, reply, id)) return;
+
+      await workspaceService.removeMember(id, userId);
+
+      reply.send({ success: true });
+    }
+  );
+
+  // Get workspace roles (protected - only requires auth for own workspace)
+  fastify.get(
+    '/:id/roles',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      if (!assertWorkspaceAccess(request, reply, id)) return;
+
+      const roles = await fastify.prisma.role.findMany({
+        where: { workspaceId: id },
+        orderBy: [{ isSystem: 'desc' }, { name: 'asc' }],
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          permissions: true,
+          isSystem: true,
+        },
+      });
+
+      reply.send({ roles });
+    }
+  );
+
+  // Join workspace (protected)
+  fastify.post(
+    '/:id/join',
+    { preHandler: [fastify.authenticate], config: { allowMissingWorkspace: true } },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const userId = request.user!.sub;
+
+      // Check if workspace exists
+      const workspace = await fastify.prisma.workspace.findUnique({
+        where: { id },
+      });
+
+      if (!workspace) {
+        return reply.code(404).send({
+          error: 'NOT_FOUND',
+          message: 'Workspace not found',
+        });
+      }
+
+      // Check if already a member
+      const existing = await fastify.prisma.membership.findUnique({
+        where: { userId_workspaceId: { userId, workspaceId: id } },
+      });
+
+      if (existing) {
+        return reply.code(400).send({
+          error: 'ALREADY_MEMBER',
+          message: 'Already a member of this workspace',
+        });
+      }
+
+      // Get default role for commerce plans.
+      // Prefer Basic; keep Viewer fallback for legacy workspaces.
+      const defaultRole = await fastify.prisma.role.findFirst({
+        where: {
+          workspaceId: id,
+          name: { in: ['Basic', 'Viewer'] },
+        },
+        orderBy: { createdAt: 'asc' },
+      });
+
+      if (!defaultRole) {
+        return reply.code(400).send({
+          error: 'NO_ROLE',
+          message: 'No default role available',
+        });
+      }
+
+      // Create membership
+      const membership = await fastify.prisma.membership.create({
+        data: {
+          userId,
+          workspaceId: id,
+          roleId: defaultRole.id,
+          status: 'ACTIVE',
+          joinedAt: new Date(),
+        },
+        include: {
+          role: true,
+          workspace: true,
+        },
+      });
+
+      reply.code(201).send({ membership });
+    }
+  );
+
+  // Update own role in workspace (protected)
+  fastify.patch(
+    '/:id/members/me/role',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const userId = request.user!.sub;
+      if (!assertWorkspaceAccess(request, reply, id)) return;
+      const { roleId } = z.object({ roleId: z.string().uuid() }).parse(request.body);
+
+      // Verify role exists in workspace
+      const role = await fastify.prisma.role.findFirst({
+        where: { id: roleId, workspaceId: id },
+      });
+
+      if (!role) {
+        return reply.code(404).send({
+          error: 'ROLE_NOT_FOUND',
+          message: 'Role not found in this workspace',
+        });
+      }
+
+      // Update membership
+      const membership = await fastify.prisma.membership.update({
+        where: { userId_workspaceId: { userId, workspaceId: id } },
+        data: { roleId },
+        include: {
+          role: true,
+        },
+      });
+
+      reply.send({ membership });
+    }
+  );
+
+  // Get available WhatsApp numbers for workspace to claim (protected)
+  fastify.get(
+    '/:id/whatsapp-numbers/available',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      if (!assertWorkspaceAccess(request, reply, id)) return;
+
+      // Get workspace with settings
+      const workspace = await fastify.prisma.workspace.findUnique({
+        where: { id },
+        select: { settings: true },
+      });
+
+      if (!workspace) {
+        return reply.code(404).send({
+          error: 'NOT_FOUND',
+          message: 'Workspace not found',
+        });
+      }
+
+      // Get business type from workspace settings
+      const settings = (workspace.settings as Record<string, unknown>) || {};
+      const businessType = (settings.businessType as string) || 'commerce';
+
+      // Get available numbers for this business type (not assigned to any workspace)
+      const numbers = await fastify.prisma.whatsAppNumber.findMany({
+        where: {
+          businessType,
+          status: 'available',
+          workspaceId: null,
+          isActive: true,
+        },
+        select: {
+          id: true,
+          phoneNumber: true,
+          displayName: true,
+        },
+      });
+
+      reply.send({ numbers });
+    }
+  );
+
+  // Get workspace's connected WhatsApp number (protected)
+  fastify.get(
+    '/:id/whatsapp-numbers',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      if (!assertWorkspaceAccess(request, reply, id)) return;
+
+      // Get WhatsApp number assigned to this workspace
+      const number = await fastify.prisma.whatsAppNumber.findFirst({
+        where: {
+          workspaceId: id,
+          isActive: true,
+        },
+        select: {
+          id: true,
+          phoneNumber: true,
+          displayName: true,
+          status: true,
+          healthStatus: true,
+        },
+      });
+
+      reply.send({ number });
+    }
+  );
+
+  // Claim a WhatsApp number for workspace (protected - owner only)
+  fastify.post(
+    '/:id/whatsapp-numbers/:numberId/claim',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const { id, numberId } = request.params as { id: string; numberId: string };
+      const userId = request.user!.sub;
+      if (!assertWorkspaceAccess(request, reply, id)) return;
+
+      // Verify user is owner of this workspace
+      const membership = await fastify.prisma.membership.findUnique({
+        where: { userId_workspaceId: { userId, workspaceId: id } },
+        include: { role: true },
+      });
+
+      if (!membership || !membership.role.permissions.includes('*')) {
+        return reply.code(403).send({
+          error: 'FORBIDDEN',
+          message: 'Only owners can connect WhatsApp numbers',
+        });
+      }
+
+      // Check if workspace already has a number
+      const existingNumber = await fastify.prisma.whatsAppNumber.findFirst({
+        where: { workspaceId: id },
+      });
+
+      if (existingNumber) {
+        return reply.code(400).send({
+          error: 'ALREADY_CONNECTED',
+          message: 'Workspace already has a WhatsApp number connected. Disconnect first.',
+        });
+      }
+
+      // Get workspace settings to check business type
+      const workspace = await fastify.prisma.workspace.findUnique({
+        where: { id },
+        select: { settings: true },
+      });
+
+      const settings = (workspace?.settings as Record<string, unknown>) || {};
+      const businessType = (settings.businessType as string) || 'commerce';
+
+      // Verify number is available and matches business type
+      const number = await fastify.prisma.whatsAppNumber.findFirst({
+        where: {
+          id: numberId,
+          businessType,
+          status: 'available',
+          workspaceId: null,
+          isActive: true,
+        },
+      });
+
+      if (!number) {
+        return reply.code(404).send({
+          error: 'NOT_AVAILABLE',
+          message: 'Number is not available or does not match your business type',
+        });
+      }
+
+      // Claim the number
+      const claimedResult = await fastify.prisma.whatsAppNumber.updateMany({
+        where: { id: numberId, workspaceId: null, status: 'available' },
+        data: {
+          workspaceId: id,
+          status: 'assigned',
+        },
+      });
+      if (claimedResult.count === 0) {
+        return reply.code(404).send({
+          error: 'NOT_AVAILABLE',
+          message: 'Number is not available or does not match your business type',
+        });
+      }
+
+      const claimed = await fastify.prisma.whatsAppNumber.findFirst({
+        where: { id: numberId, workspaceId: id },
+        select: {
+          id: true,
+          phoneNumber: true,
+          displayName: true,
+          status: true,
+        },
+      });
+      if (!claimed) {
+        return reply.code(404).send({
+          error: 'NOT_FOUND',
+          message: 'Number not found after assignment',
+        });
+      }
+
+      reply.send({ number: claimed });
+    }
+  );
+
+  // Release/disconnect a WhatsApp number (protected - owner only)
+  fastify.post(
+    '/:id/whatsapp-numbers/release',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const userId = request.user!.sub;
+      if (!assertWorkspaceAccess(request, reply, id)) return;
+
+      // Verify user is owner of this workspace
+      const membership = await fastify.prisma.membership.findUnique({
+        where: { userId_workspaceId: { userId, workspaceId: id } },
+        include: { role: true },
+      });
+
+      if (!membership || !membership.role.permissions.includes('*')) {
+        return reply.code(403).send({
+          error: 'FORBIDDEN',
+          message: 'Only owners can disconnect WhatsApp numbers',
+        });
+      }
+
+      // Find and release the number
+      const number = await fastify.prisma.whatsAppNumber.findFirst({
+        where: { workspaceId: id },
+      });
+
+      if (!number) {
+        return reply.code(404).send({
+          error: 'NOT_FOUND',
+          message: 'No WhatsApp number connected to this workspace',
+        });
+      }
+
+      await fastify.prisma.whatsAppNumber.updateMany({
+        where: { id: number.id, workspaceId: id },
+        data: {
+          workspaceId: null,
+          status: 'available',
+        },
+      });
+
+      reply.send({ success: true });
+    }
+  );
+
+  // Update workspace settings (protected - owner only)
+  fastify.patch(
+    '/:id/settings',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const userId = request.user!.sub;
+      if (!assertWorkspaceAccess(request, reply, id)) return;
+
+      // Verify user is owner of this workspace
+      const membership = await fastify.prisma.membership.findUnique({
+        where: { userId_workspaceId: { userId, workspaceId: id } },
+        include: { role: true },
+      });
+
+      if (!membership) {
+        return reply.code(403).send({
+          error: 'FORBIDDEN',
+          message: 'Not a member of this workspace',
+        });
+      }
+
+      // Workspace settings are editable by any member.
+      // Current product model: 1 user = 1 workspace.
+
+      const planContext = await getWorkspacePlanContext(
+        fastify.prisma,
+        id,
+        membership.role.name
+      );
+
+      const body = z
+        .object({
+          businessType: z.enum(['commerce', 'bookings']).optional(),
+          tools: z.array(z.string()).optional(),
+          currency: z.string().optional(),
+          timezone: z.string().optional(),
+          language: z.string().optional(),
+          businessName: z.string().max(120).optional(),
+          // Commerce profile fields
+          companyLogo: z.string().url().optional().nullable(),
+	          whatsappContact: z.string().max(20).optional(),
+	          ownerAgentEnabled: z.boolean().optional(),
+	          ownerAgentNumber: z.string().max(20).optional(),
+	          ownerAgentPin: z
+	            .string()
+	            .trim()
+	            .min(4)
+	            .max(12)
+	            .regex(/^[0-9]+$/, 'PIN must be numeric')
+	            .optional()
+	            .nullable(),
+	          paymentAlias: z.string().max(100).optional(),
+	          paymentCbu: z.string().max(100).optional(),
+	          businessAddress: z.string().max(500).optional(),
+	          vatConditionId: z.string().max(50).optional().nullable(),
+          monotributoCategory: z.string().max(2).optional(),
+          monotributoActivity: z.enum(['services', 'goods']).optional(),
+          paymentMethodsEnabled: z
+            .object({
+              mpLink: z.boolean().optional(),
+              transfer: z.boolean().optional(),
+              cash: z.boolean().optional(),
+            })
+            .optional(),
+          notificationPreferences: z
+            .object({
+              orders: z.boolean().optional(),
+              handoffs: z.boolean().optional(),
+              stock: z.boolean().optional(),
+              payments: z.boolean().optional(),
+              customers: z.boolean().optional(),
+            })
+            .optional(),
+          lowStockThreshold: z.number().int().min(0).max(1_000_000).optional(),
+          workingDays: z.array(z.enum(['lun', 'mar', 'mie', 'jue', 'vie', 'sab', 'dom'])).optional(),
+          continuousHours: z.boolean().optional(),
+          workingHoursStart: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+          workingHoursEnd: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+          morningShiftStart: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+          morningShiftEnd: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+          afternoonShiftStart: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+          afternoonShiftEnd: z.string().regex(/^\d{2}:\d{2}$/).optional(),
+          assistantNotes: z.string().max(2000).optional(),
+          availabilityStatus: z.enum(['available', 'unavailable', 'vacation']).optional(),
+	        })
+	        .parse(request.body);
+
+	      // Get current settings and merge
+      const workspace = await fastify.prisma.workspace.findUnique({
+        where: { id },
+        select: { settings: true },
+      });
+
+	      const currentSettings = (workspace?.settings as Record<string, unknown>) || {};
+	      const { ownerAgentPin, ...rest } = body;
+	      const newSettings: Record<string, unknown> = { ...currentSettings, ...rest };
+      const hasLowStockThresholdUpdate = typeof body.lowStockThreshold === 'number';
+      const lowStockThresholdToApply = hasLowStockThresholdUpdate
+        ? body.lowStockThreshold
+        : null;
+
+      if (!planContext.capabilities.showOwnerWhatsappAgentSettings) {
+        delete newSettings.ownerAgentEnabled;
+        delete newSettings.ownerAgentNumber;
+        delete newSettings.ownerAgentPinHash;
+      }
+      if (!planContext.capabilities.showBusinessInvoicingSettings) {
+        delete newSettings.vatConditionId;
+        delete newSettings.monotributoCategory;
+        delete newSettings.monotributoActivity;
+      }
+      if (!planContext.capabilities.showSettingsNotifications) {
+        delete newSettings.notificationPreferences;
+      }
+      if (!planContext.capabilities.showMercadoPagoIntegration) {
+        const paymentMethodsEnabled =
+          (newSettings.paymentMethodsEnabled as Record<string, unknown> | undefined) || {};
+        newSettings.paymentMethodsEnabled = {
+          ...paymentMethodsEnabled,
+          mpLink: false,
+        };
+      }
+
+	      if (planContext.capabilities.showOwnerWhatsappAgentSettings && ownerAgentPin === null) {
+	        delete newSettings.ownerAgentPinHash;
+	      } else if (
+          planContext.capabilities.showOwnerWhatsappAgentSettings &&
+          typeof ownerAgentPin === 'string' &&
+          ownerAgentPin.trim()
+        ) {
+	        newSettings.ownerAgentPinHash = hashOwnerAgentPin(ownerAgentPin.trim());
+	      }
+
+        if (typeof newSettings.ownerAgentNumber === 'string') {
+          const normalized = normalizeOwnerAgentNumberForSettings(
+            newSettings.ownerAgentNumber,
+            newSettings.timezone
+          );
+          if (typeof normalized === 'string') {
+            newSettings.ownerAgentNumber = normalized;
+          }
+        }
+
+      const updated = await fastify.prisma.$transaction(async (tx) => {
+        if (hasLowStockThresholdUpdate && lowStockThresholdToApply !== null) {
+          const productIds = await tx.product.findMany({
+            where: { workspaceId: id },
+            select: { id: true },
+          });
+          if (productIds.length > 0) {
+            await tx.stockItem.updateMany({
+              where: {
+                productId: { in: productIds.map((product) => product.id) },
+              },
+              data: {
+                lowThreshold: lowStockThresholdToApply,
+              },
+            });
+          }
+        }
+
+        return tx.workspace.update({
+          where: { id },
+          data: { settings: newSettings as Prisma.InputJsonValue },
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            settings: true,
+          },
+        });
+      });
+
+      reply.send({ workspace: updated });
+    }
+  );
+
+};

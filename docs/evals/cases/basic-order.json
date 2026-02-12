@@ -1,0 +1,12 @@
+{
+  "id": "basic-order",
+  "description": "Pedido simple de productos",
+  "messages": [
+    { "role": "user", "content": "quiero 2 cocas y 1 fanta" }
+  ],
+  "expect": {
+    "mode": "order",
+    "mustMention": ["pedido", "coca"],
+    "mustNotMention": ["stock"]
+  }
+}

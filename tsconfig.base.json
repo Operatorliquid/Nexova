@@ -1,0 +1,39 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "composite": true,
+    "incremental": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    // Temporarily disabled for compatibility - TODO: fix all packages
+    // "exactOptionalPropertyTypes": true,
+    // "noUncheckedIndexedAccess": true,
+    "paths": {
+      "@nexova/shared": ["./packages/shared/src"],
+      "@nexova/shared/*": ["./packages/shared/src/*"],
+      "@nexova/core": ["./packages/core/src"],
+      "@nexova/core/*": ["./packages/core/src/*"],
+      "@nexova/retail": ["./packages/retail/src"],
+      "@nexova/retail/*": ["./packages/retail/src/*"],
+      "@nexova/integrations": ["./packages/integrations/src"],
+      "@nexova/integrations/*": ["./packages/integrations/src/*"],
+      "@nexova/agent-runtime": ["./packages/agent-runtime/src"],
+      "@nexova/agent-runtime/*": ["./packages/agent-runtime/src/*"]
+    }
+  },
+  "exclude": ["node_modules", "dist", "coverage"]
+}

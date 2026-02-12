@@ -1,0 +1,35 @@
+{
+  "name": "@nexova/worker",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./dist/main.js",
+  "scripts": {
+    "build": "tsc --build",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "dev": "tsx watch src/main.ts",
+    "start": "node dist/main.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src --ext .ts",
+    "test": "vitest run",
+    "test:unit": "vitest run --dir test/unit"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.22.0",
+    "@nexova/shared": "workspace:*",
+    "@nexova/core": "workspace:*",
+    "@nexova/retail": "workspace:*",
+    "@nexova/integrations": "workspace:*",
+    "@nexova/agent-runtime": "workspace:*",
+    "bullmq": "^5.4.0",
+    "ioredis": "^5.3.0",
+    "pino": "^8.19.0",
+    "tsyringe": "^4.8.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.3.0"
+  }
+}

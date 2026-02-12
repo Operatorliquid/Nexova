@@ -1,0 +1,114 @@
+version: '3.8'
+
+services:
+  # ══════════════════════════════════════════════════════════════════════════
+  # PostgreSQL Database
+  # ══════════════════════════════════════════════════════════════════════════
+  postgres:
+    image: postgres:16-alpine
+    container_name: nexova-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: nexova
+      POSTGRES_PASSWORD: nexova
+      POSTGRES_DB: nexova
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U nexova -d nexova']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # Redis (Cache + Queues)
+  # ══════════════════════════════════════════════════════════════════════════
+  redis:
+    image: redis:7-alpine
+    container_name: nexova-redis
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # Redis Commander (Dev UI for Redis)
+  # ══════════════════════════════════════════════════════════════════════════
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: nexova-redis-commander
+    restart: unless-stopped
+    environment:
+      REDIS_HOSTS: local:redis:6379
+    ports:
+      - '8081:8081'
+    depends_on:
+      - redis
+    profiles:
+      - dev-tools
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # BullMQ Board (Queue monitoring)
+  # ══════════════════════════════════════════════════════════════════════════
+  bull-board:
+    image: deadly0/bull-board
+    container_name: nexova-bull-board
+    restart: unless-stopped
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    ports:
+      - '3001:3000'
+    depends_on:
+      - redis
+    profiles:
+      - dev-tools
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # OpenTelemetry Collector (optional, for local observability)
+  # ══════════════════════════════════════════════════════════════════════════
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: nexova-otel-collector
+    restart: unless-stopped
+    command: ['--config=/etc/otel-collector-config.yaml']
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml
+    ports:
+      - '4317:4317' # OTLP gRPC
+      - '4318:4318' # OTLP HTTP
+      - '8888:8888' # Prometheus metrics
+    profiles:
+      - observability
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # Jaeger (Tracing UI)
+  # ══════════════════════════════════════════════════════════════════════════
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: nexova-jaeger
+    restart: unless-stopped
+    environment:
+      COLLECTOR_OTLP_ENABLED: 'true'
+    ports:
+      - '16686:16686' # Jaeger UI
+      - '14268:14268' # HTTP collector
+    profiles:
+      - observability
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  default:
+    name: nexova-network

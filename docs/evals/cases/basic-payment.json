@@ -1,0 +1,12 @@
+{
+  "id": "basic-payment",
+  "description": "Pago con transferencia",
+  "messages": [
+    { "role": "user", "content": "quiero pagar con transferencia" }
+  ],
+  "expect": {
+    "mode": "payments",
+    "mustMention": ["pago", "transferencia"],
+    "mustNotMention": ["stock"]
+  }
+}

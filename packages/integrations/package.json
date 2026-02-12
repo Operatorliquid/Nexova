@@ -1,0 +1,56 @@
+{
+  "name": "@nexova/integrations",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./whatsapp": {
+      "types": "./dist/whatsapp/index.d.ts",
+      "import": "./dist/whatsapp/index.js"
+    },
+    "./infobip": {
+      "types": "./dist/infobip/index.d.ts",
+      "import": "./dist/infobip/index.js"
+    },
+    "./mercadopago": {
+      "types": "./dist/mercadopago/index.d.ts",
+      "import": "./dist/mercadopago/index.js"
+    },
+    "./arca": {
+      "types": "./dist/arca/index.d.ts",
+      "import": "./dist/arca/index.js"
+    },
+    "./llm": {
+      "types": "./dist/llm/index.d.ts",
+      "import": "./dist/llm/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc --build",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src --ext .ts",
+    "test": "vitest run",
+    "test:unit": "vitest run --dir test/unit"
+  },
+  "dependencies": {
+    "@nexova/shared": "workspace:*",
+    "@nexova/core": "workspace:*",
+    "@anthropic-ai/sdk": "^0.20.0",
+    "openai": "^4.28.0",
+    "fast-xml-parser": "^4.4.1",
+    "node-forge": "^1.3.1",
+    "tsyringe": "^4.8.0"
+  },
+  "devDependencies": {
+    "@types/node-forge": "^1.3.7",
+    "typescript": "^5.4.0",
+    "vitest": "^1.3.0"
+  }
+}

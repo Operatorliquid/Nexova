@@ -1,0 +1,12 @@
+{
+  "id": "basic-info",
+  "description": "Consulta de horarios",
+  "messages": [
+    { "role": "user", "content": "¿a qué hora abren?" }
+  ],
+  "expect": {
+    "mode": "info",
+    "mustMention": ["horario"],
+    "mustNotMention": ["stock"]
+  }
+}
