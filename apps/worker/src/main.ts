@@ -47,14 +47,18 @@ function resolveWhatsAppApiKey(number: {
   apiKeyIv?: string | null;
   provider?: string | null;
 }): string {
-  if (number.apiKeyEnc && number.apiKeyIv) {
-    return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
-  }
-
-  // Default: use a single global Infobip API key (configured in env vars).
   const provider = (number.provider || 'infobip').toLowerCase();
   if (provider === 'infobip') {
-    return (process.env.INFOBIP_API_KEY || '').trim();
+    // Prefer global key; fallback to legacy per-number credentials only if env is missing.
+    const envKey = (process.env.INFOBIP_API_KEY || '').trim();
+    if (envKey) return envKey;
+    if (number.apiKeyEnc && number.apiKeyIv) {
+      return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
+    }
+    return '';
+  }
+  if (number.apiKeyEnc && number.apiKeyIv) {
+    return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
   }
   return '';
 }

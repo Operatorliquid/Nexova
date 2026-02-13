@@ -136,13 +136,17 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
     apiKeyIv?: string | null;
     provider?: string | null;
   }): string => {
-    if (number.apiKeyEnc && number.apiKeyIv) {
-      return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
-    }
-
     const provider = (number.provider || 'infobip').toLowerCase();
     if (provider === 'infobip') {
-      return (process.env.INFOBIP_API_KEY || '').trim();
+      const envKey = (process.env.INFOBIP_API_KEY || '').trim();
+      if (envKey) return envKey;
+      if (number.apiKeyEnc && number.apiKeyIv) {
+        return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
+      }
+      return '';
+    }
+    if (number.apiKeyEnc && number.apiKeyIv) {
+      return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
     }
     return '';
   };
@@ -1430,10 +1434,12 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
         select: { apiKeyEnc: true, apiKeyIv: true, provider: true },
       });
 
+      const envKey = (process.env.INFOBIP_API_KEY || '').trim();
       const apiKey =
+        envKey ||
         (whatsappNumber?.apiKeyEnc && whatsappNumber?.apiKeyIv
           ? decrypt({ encrypted: whatsappNumber.apiKeyEnc, iv: whatsappNumber.apiKeyIv })
-          : '') || process.env.INFOBIP_API_KEY || '';
+          : '');
 
       const headers: Record<string, string> = {};
       if (apiKey) {

@@ -71,13 +71,17 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
   const ledgerService = new LedgerService(fastify.prisma);
 
   const resolveWhatsAppApiKey = (number: { apiKeyEnc?: string | null; apiKeyIv?: string | null }): string => {
-    if (number.apiKeyEnc && number.apiKeyIv) {
-      return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
-    }
-
     const provider = ((number as { provider?: string | null }).provider || 'infobip').toLowerCase();
     if (provider === 'infobip') {
-      return (process.env.INFOBIP_API_KEY || '').trim();
+      const envKey = (process.env.INFOBIP_API_KEY || '').trim();
+      if (envKey) return envKey;
+      if (number.apiKeyEnc && number.apiKeyIv) {
+        return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
+      }
+      return '';
+    }
+    if (number.apiKeyEnc && number.apiKeyIv) {
+      return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
     }
     return '';
   };

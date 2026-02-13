@@ -580,13 +580,17 @@ export class SendCatalogPdfTool extends BaseTool<typeof SendCatalogPdfInput> {
     apiKeyIv?: string | null;
     provider?: string | null;
   }): string {
-    if (number.apiKeyEnc && number.apiKeyIv) {
-      return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
-    }
-
     const provider = (number.provider || 'infobip').toLowerCase();
     if (provider === 'infobip') {
-      return (process.env.INFOBIP_API_KEY || '').trim();
+      const envKey = (process.env.INFOBIP_API_KEY || '').trim();
+      if (envKey) return envKey;
+      if (number.apiKeyEnc && number.apiKeyIv) {
+        return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
+      }
+      return '';
+    }
+    if (number.apiKeyEnc && number.apiKeyIv) {
+      return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
     }
     return '';
   }
@@ -920,13 +924,17 @@ export class SendOrderPdfTool extends BaseTool<typeof SendOrderPdfInput> {
     apiKeyIv?: string | null;
     provider?: string | null;
   }): string {
-    if (number.apiKeyEnc && number.apiKeyIv) {
-      return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
-    }
-
     const provider = (number.provider || 'infobip').toLowerCase();
     if (provider === 'infobip') {
-      return (process.env.INFOBIP_API_KEY || '').trim();
+      const envKey = (process.env.INFOBIP_API_KEY || '').trim();
+      if (envKey) return envKey;
+      if (number.apiKeyEnc && number.apiKeyIv) {
+        return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
+      }
+      return '';
+    }
+    if (number.apiKeyEnc && number.apiKeyIv) {
+      return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
     }
     return '';
   }

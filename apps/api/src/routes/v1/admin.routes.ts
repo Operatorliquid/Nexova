@@ -22,7 +22,7 @@ function getWhatsAppCredentialsStatus(number: { provider?: string | null; apiKey
     const hasGlobal = hasGlobalInfobipApiKey();
     return {
       hasCredentials: hasPerNumber || hasGlobal,
-      credentialsSource: hasPerNumber ? 'number' : hasGlobal ? 'global' : 'missing',
+      credentialsSource: hasGlobal ? 'global' : hasPerNumber ? 'number' : 'missing',
     };
   }
 
