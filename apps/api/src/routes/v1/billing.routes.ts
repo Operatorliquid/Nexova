@@ -38,8 +38,9 @@ const registerWithIntentSchema = z.object({
   flowToken: z.string().min(8).max(64),
   email: z.string().email(),
   password: z.string().min(8).max(128),
-  firstName: z.string().min(1).max(100).optional(),
-  lastName: z.string().min(1).max(100).optional(),
+  firstName: z.string().min(1).max(100),
+  lastName: z.string().min(1).max(100),
+  companyName: z.string().min(2).max(255),
 });
 
 const verifyEmailSchema = z.object({
@@ -62,6 +63,7 @@ type PendingRegistrationDraft = {
   passwordHash: string;
   firstName: string | null;
   lastName: string | null;
+  companyName: string | null;
   tokenHash: string;
   tokenExpiresAt: string;
   createdAt: string;
@@ -89,6 +91,7 @@ const readPendingRegistrationDraft = (
   const passwordHash = typeof raw.passwordHash === 'string' ? raw.passwordHash : '';
   const firstName = typeof raw.firstName === 'string' ? raw.firstName : null;
   const lastName = typeof raw.lastName === 'string' ? raw.lastName : null;
+  const companyName = typeof raw.companyName === 'string' ? raw.companyName : null;
   const tokenHash = typeof raw.tokenHash === 'string' ? raw.tokenHash : '';
   const tokenExpiresAt = typeof raw.tokenExpiresAt === 'string' ? raw.tokenExpiresAt : '';
   const createdAt = typeof raw.createdAt === 'string' ? raw.createdAt : '';
@@ -102,13 +105,20 @@ const readPendingRegistrationDraft = (
     passwordHash,
     firstName,
     lastName,
+    companyName,
     tokenHash,
     tokenExpiresAt,
     createdAt,
   };
 };
 
-const formatWorkspaceName = (params: { firstName?: string | null; email?: string | null }) => {
+const formatWorkspaceName = (params: {
+  companyName?: string | null;
+  firstName?: string | null;
+  email?: string | null;
+}) => {
+  const company = params.companyName?.trim();
+  if (company) return company;
   const first = params.firstName?.trim();
   if (first) return first;
   const prefix = params.email?.split('@')[0]?.trim();
@@ -239,22 +249,40 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
   const ensureWorkspaceForUser = async (params: {
     id: string;
     firstName?: string | null;
+    companyName?: string | null;
     email?: string | null;
     isSuperAdmin?: boolean;
   }) => {
     let memberships = await fetchMemberships(params.id);
     if (memberships.length === 0 && !params.isSuperAdmin) {
       const workspaceName = formatWorkspaceName({
+        companyName: params.companyName,
         firstName: params.firstName,
         email: params.email,
       });
       const workspaceSlug = `${formatWorkspaceSlug(workspaceName)}-${Date.now()}`;
 
-      await workspaceService.create({
+      const created = await workspaceService.create({
         name: workspaceName,
         slug: workspaceSlug,
         ownerId: params.id,
       });
+
+      // Keep the dashboard "Mi negocio" business name aligned with workspace name on initial signup.
+      const companyName = params.companyName?.trim();
+      if (companyName) {
+        const existingSettings =
+          (created.settings as Record<string, unknown>) || {};
+        await fastify.prisma.workspace.update({
+          where: { id: created.id },
+          data: {
+            settings: {
+              ...existingSettings,
+              businessName: companyName,
+            } as Prisma.InputJsonValue,
+          },
+        });
+      }
       memberships = await fetchMemberships(params.id);
     }
     return memberships;
@@ -553,8 +581,9 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
     const draft: PendingRegistrationDraft = {
       email,
       passwordHash,
-      firstName: body.firstName?.trim() || null,
-      lastName: body.lastName?.trim() || null,
+      firstName: body.firstName.trim() || null,
+      lastName: body.lastName.trim() || null,
+      companyName: body.companyName.trim() || null,
       tokenHash,
       tokenExpiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
       createdAt: new Date().toISOString(),
@@ -579,7 +608,7 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
     )}&flowToken=${encodeURIComponent(flowToken)}`;
 
     const subject = 'Confirmá tu email para continuar el checkout en Nexova';
-    const text = `Hola ${body.firstName?.trim() || ''}, confirmá tu email para continuar: ${verifyUrl}`;
+    const text = `Hola ${body.firstName.trim()}, confirmá tu email para continuar: ${verifyUrl}`;
     const html = `
       <div style="font-family:Arial,sans-serif;max-width:520px;margin:0 auto;color:#1f2937">
         <h2 style="margin-bottom:12px">Confirmá tu email</h2>
@@ -777,6 +806,7 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
     const memberships = await ensureWorkspaceForUser({
       id: user.id,
       firstName: user.firstName,
+      companyName: draft.companyName,
       email: user.email,
       isSuperAdmin: user.isSuperAdmin,
     });
@@ -844,7 +874,7 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   fastify.get('/auth/google/start', async (request, reply) => {
-    const { flowToken } = request.query as { flowToken?: string };
+    const { flowToken, companyName } = request.query as { flowToken?: string; companyName?: string };
     if (!flowToken) {
       return reply.code(400).send({
         error: 'FLOW_TOKEN_REQUIRED',
@@ -854,7 +884,7 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
 
     const intent = await fastify.prisma.billingCheckoutIntent.findUnique({
       where: { flowToken },
-      select: { flowToken: true, expiresAt: true },
+      select: { id: true, flowToken: true, expiresAt: true, metadata: true },
     });
     if (!intent || isIntentExpired(intent.expiresAt)) {
       return reply.code(400).send({
@@ -862,6 +892,25 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
         message: 'Intent inválido o expirado.',
       });
     }
+
+    const normalizedCompany = typeof companyName === 'string' ? companyName.trim() : '';
+    if (!normalizedCompany || normalizedCompany.length < 2) {
+      return reply.code(400).send({
+        error: 'COMPANY_NAME_REQUIRED',
+        message: 'Ingresá el nombre de tu empresa para continuar.',
+      });
+    }
+
+    const currentIntentMetadata = readIntentMetadata(intent.metadata);
+    await fastify.prisma.billingCheckoutIntent.update({
+      where: { id: intent.id },
+      data: {
+        metadata: {
+          ...currentIntentMetadata,
+          companyName: normalizedCompany,
+        } as Prisma.InputJsonValue,
+      },
+    });
 
     const google = readGoogleConfig();
     if (!google.enabled) {
@@ -1021,21 +1070,29 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
       });
     }
 
+    const checkoutIntent = oauthState.flowToken
+      ? await fastify.prisma.billingCheckoutIntent.findUnique({
+          where: { flowToken: oauthState.flowToken },
+          select: { id: true, plan: true, metadata: true },
+        })
+      : null;
+    const checkoutCompanyName = checkoutIntent
+      ? (() => {
+          const meta = readIntentMetadata(checkoutIntent.metadata);
+          return typeof meta.companyName === 'string' ? meta.companyName : null;
+        })()
+      : null;
+
     const memberships = await ensureWorkspaceForUser({
       id: user.id,
       firstName: user.firstName,
+      companyName: checkoutCompanyName,
       email: user.email,
       isSuperAdmin: user.isSuperAdmin,
     });
     const workspace = memberships[0]?.workspace || null;
 
-      if (oauthState.flowToken && workspace) {
-        const checkoutIntent = await fastify.prisma.billingCheckoutIntent.findUnique({
-          where: { flowToken: oauthState.flowToken },
-          select: { id: true, plan: true, metadata: true },
-        });
-
-        if (checkoutIntent) {
+      if (checkoutIntent && workspace) {
           const currentMetadata = readIntentMetadata(checkoutIntent.metadata);
           const nextMetadata: Record<string, unknown> = { ...currentMetadata };
           delete nextMetadata.pendingRegistration;
@@ -1058,7 +1115,6 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
             plan: normalizePlanInput(checkoutIntent.plan) || workspace.plan,
           },
         });
-      }
     }
 
     await fastify.prisma.oAuthState.update({

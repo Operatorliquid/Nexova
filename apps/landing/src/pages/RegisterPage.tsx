@@ -43,6 +43,8 @@ export default function RegisterPage() {
   const flowToken = useMemo(() => searchParams.get('flowToken')?.trim() || '', [searchParams]);
 
   const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [companyName, setCompanyName] = useState('');
   const [email, setEmail] = useState(searchParams.get('email')?.trim() || '');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -60,6 +62,14 @@ export default function RegisterPage() {
     }
     if (!firstName.trim()) {
       setError('Ingresá tu nombre.');
+      return;
+    }
+    if (!lastName.trim()) {
+      setError('Ingresá tu apellido.');
+      return;
+    }
+    if (!companyName.trim()) {
+      setError('Ingresá el nombre de tu empresa.');
       return;
     }
     if (password.length < 8) {
@@ -83,6 +93,8 @@ export default function RegisterPage() {
           email: email.trim().toLowerCase(),
           password,
           firstName: firstName.trim(),
+          lastName: lastName.trim(),
+          companyName: companyName.trim(),
         }),
       });
 
@@ -114,8 +126,12 @@ export default function RegisterPage() {
       setError('Falta el flowToken de checkout. Volvé al carrito.');
       return;
     }
+    if (!companyName.trim()) {
+      setError('Ingresá el nombre de tu empresa para continuar con Google.');
+      return;
+    }
     const base = API_URL || '';
-    window.location.href = `${base}/api/v1/billing/auth/google/start?flowToken=${encodeURIComponent(flowToken)}`;
+    window.location.href = `${base}/api/v1/billing/auth/google/start?flowToken=${encodeURIComponent(flowToken)}&companyName=${encodeURIComponent(companyName.trim())}`;
   };
 
   return (
@@ -251,25 +267,78 @@ export default function RegisterPage() {
 
           {/* Form */}
           <form className="px-6 pb-6 space-y-4" onSubmit={onSubmit}>
-            {/* Name */}
+            {/* Name + last name */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label className="block text-xs font-medium text-white/50 uppercase tracking-wider">
+                  Nombre
+                </label>
+                <div className="relative">
+                  <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white/20">
+                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                      <circle cx="12" cy="7" r="4" />
+                    </svg>
+                  </div>
+                  <input
+                    type="text"
+                    value={firstName}
+                    onChange={(event) => setFirstName(event.target.value)}
+                    className="w-full rounded-xl border border-white/[0.08] bg-white/[0.03] pl-10 pr-4 py-3 text-sm text-white placeholder-white/20 outline-none transition-all duration-200 focus:border-[#4D7CFF]/50 focus:bg-white/[0.05] focus:shadow-[0_0_0_3px_rgba(77,124,255,0.08)]"
+                    placeholder="Tu nombre"
+                    autoComplete="given-name"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-xs font-medium text-white/50 uppercase tracking-wider">
+                  Apellido
+                </label>
+                <div className="relative">
+                  <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white/20">
+                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                      <circle cx="12" cy="7" r="4" />
+                    </svg>
+                  </div>
+                  <input
+                    type="text"
+                    value={lastName}
+                    onChange={(event) => setLastName(event.target.value)}
+                    className="w-full rounded-xl border border-white/[0.08] bg-white/[0.03] pl-10 pr-4 py-3 text-sm text-white placeholder-white/20 outline-none transition-all duration-200 focus:border-[#4D7CFF]/50 focus:bg-white/[0.05] focus:shadow-[0_0_0_3px_rgba(77,124,255,0.08)]"
+                    placeholder="Tu apellido"
+                    autoComplete="family-name"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Company name */}
             <div className="space-y-1.5">
               <label className="block text-xs font-medium text-white/50 uppercase tracking-wider">
-                Nombre
+                Nombre de la empresa
               </label>
               <div className="relative">
                 <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white/20">
                   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-                    <circle cx="12" cy="7" r="4" />
+                    <path d="M3 21h18" />
+                    <path d="M9 8h1" />
+                    <path d="M9 12h1" />
+                    <path d="M9 16h1" />
+                    <path d="M14 8h1" />
+                    <path d="M14 12h1" />
+                    <path d="M14 16h1" />
+                    <path d="M5 21V4a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v17" />
                   </svg>
                 </div>
                 <input
                   type="text"
-                  value={firstName}
-                  onChange={(event) => setFirstName(event.target.value)}
+                  value={companyName}
+                  onChange={(event) => setCompanyName(event.target.value)}
                   className="w-full rounded-xl border border-white/[0.08] bg-white/[0.03] pl-10 pr-4 py-3 text-sm text-white placeholder-white/20 outline-none transition-all duration-200 focus:border-[#4D7CFF]/50 focus:bg-white/[0.05] focus:shadow-[0_0_0_3px_rgba(77,124,255,0.08)]"
-                  placeholder="Tu nombre"
-                  autoComplete="given-name"
+                  placeholder="Ej: Mi comercio"
+                  autoComplete="organization"
                 />
               </div>
             </div>
