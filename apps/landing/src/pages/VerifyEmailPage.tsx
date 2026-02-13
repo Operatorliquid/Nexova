@@ -39,9 +39,6 @@ export default function VerifyEmailPage() {
       ? 'Validando enlace de verificación...'
       : 'Verificá tu cuenta para continuar. Esta pantalla se actualizará automáticamente.'
   );
-  const [nextUrl, setNextUrl] = useState(
-    flowToken ? `/checkout/continue?flowToken=${encodeURIComponent(flowToken)}` : '/cart'
-  );
 
   const autoAttemptedRef = useRef(false);
   const navigatingRef = useRef(false);
@@ -91,18 +88,36 @@ export default function VerifyEmailPage() {
       }
 
       const payload = (await response.json()) as VerifyResponse;
+      if (!payload.success) {
+        throw new Error('No se pudo verificar el email.');
+      }
+
       setSuccess(true);
       setStatusMessage('Verificación exitosa. Puedes cerrar esta ventana.');
-      if (payload.next) {
-        setNextUrl(payload.next);
-      }
       notifyVerified();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo verificar el email.');
-      setStatusMessage('No pudimos verificar el enlace. Reintentá desde el botón.');
+      setStatusMessage(
+        'No pudimos verificar el enlace. Abrí el link más reciente desde tu email o volvé al registro para reenviar la verificación.'
+      );
     } finally {
       setIsVerifying(false);
       setIsPolling(false);
+    }
+  };
+
+  const canContinue = success && Boolean(flowToken) && !isVerifying && !isPolling;
+
+  const onContinue = () => {
+    if (!flowToken) return;
+    if (canContinue) {
+      goToCheckout();
+      return;
+    }
+    // Single-button UX: if user came from the email link and verification failed,
+    // allow clicking "Continuar" to reattempt verification with the same token.
+    if (hasToken && !success && !isVerifying) {
+      void verifyToken(token);
     }
   };
 
@@ -222,24 +237,20 @@ export default function VerifyEmailPage() {
               </div>
             )}
 
-            {hasToken && !success && !isVerifying && (
-              <button
-                type="button"
-                onClick={() => verifyToken(token)}
-                className="w-full rounded-xl border border-white/[0.1] bg-white/[0.03] hover:bg-white/[0.06] px-4 py-3.5 font-medium text-sm transition-all duration-200 text-white/75"
-              >
-                Reintentar verificación
-              </button>
-            )}
-
-            {hasToken && success && (
-              <a
-                href={nextUrl}
-                className="group relative block w-full text-center rounded-xl bg-[#4D7CFF] hover:bg-[#3D6BEE] px-4 py-3.5 font-medium text-sm transition-all duration-300 shadow-lg shadow-[#4D7CFF]/25"
-              >
+            <button
+              type="button"
+              onClick={onContinue}
+              disabled={!success || !flowToken || isVerifying || isPolling}
+              className="group relative w-full rounded-xl bg-[#4D7CFF] hover:bg-[#3D6BEE] disabled:opacity-50 disabled:cursor-not-allowed px-4 py-3.5 font-medium text-sm transition-all duration-300 shadow-lg shadow-[#4D7CFF]/25 hover:shadow-xl hover:shadow-[#4D7CFF]/40 overflow-hidden"
+            >
+              <div className="absolute inset-0 -translate-x-full group-hover:translate-x-full transition-transform duration-700 bg-gradient-to-r from-transparent via-white/15 to-transparent" />
+              <span className="relative flex items-center justify-center gap-2">
+                {(isVerifying || isPolling) && (
+                  <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                )}
                 Continuar al checkout
-              </a>
-            )}
+              </span>
+            </button>
 
             {!hasToken && !success && (
               <p className="text-center text-[11px] text-white/25 leading-relaxed">
