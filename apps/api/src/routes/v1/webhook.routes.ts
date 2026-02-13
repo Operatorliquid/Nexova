@@ -53,6 +53,36 @@ function resolveInfobipBaseUrl(apiUrl?: string | null): string {
   return cleaned || defaultUrl;
 }
 
+function toPhoneDigits(value: string): string {
+  return (value || '').trim().replace(/\D/g, '');
+}
+
+function normalizeToE164(value: string | null | undefined): string | null {
+  if (!value) return null;
+  let digits = toPhoneDigits(value);
+  if (!digits) return null;
+  if (digits.startsWith('00')) digits = digits.slice(2);
+  return `+${digits}`;
+}
+
+function buildPhoneCandidates(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  const cleaned = raw.replace(/\s/g, '');
+  const e164 = normalizeToE164(raw);
+  const candidates = new Set<string>();
+
+  if (cleaned) {
+    candidates.add(cleaned);
+    if (cleaned.startsWith('+')) candidates.add(cleaned.slice(1));
+  }
+  if (e164) {
+    candidates.add(e164);
+    candidates.add(e164.slice(1));
+  }
+
+  return Array.from(candidates).filter(Boolean);
+}
+
 export async function webhookRoutes(
   app: FastifyInstance,
   opts: { queue?: Queue }
@@ -400,23 +430,56 @@ export async function webhookRoutes(
         const messageId = result?.messageId || crypto.randomUUID();
 
         // Normalize the number (remove spaces, ensure + prefix)
-        const normalizedNumber = receiverNumber.replace(/\s/g, '');
-        const searchNumber = normalizedNumber.startsWith('+') ? normalizedNumber : `+${normalizedNumber}`;
+        const receiverCandidates = buildPhoneCandidates(receiverNumber);
+        const senderRaw = result?.sender || result?.from || null;
+        const senderCandidates = buildPhoneCandidates(senderRaw);
 
-        // Find the WhatsApp number in database
-        const whatsappNumber = await app.prisma.whatsAppNumber.findFirst({
-          where: {
-            OR: [
-              { phoneNumber: searchNumber },
-              { phoneNumber: normalizedNumber },
-              { phoneNumber: normalizedNumber.replace('+', '') },
-            ],
-            isActive: true,
-          },
-        });
+        const findNumberByCandidates = async (candidates: string[]) => {
+          if (candidates.length === 0) return null;
+          const exact = await app.prisma.whatsAppNumber.findFirst({
+            where: {
+              OR: candidates.map((phoneNumber) => ({ phoneNumber })),
+              isActive: true,
+            },
+          });
+          if (exact) return exact;
+
+          // Fallback: match by digits only (handles stored formatting like +54-9-xxx or other punctuation).
+          const digitsCandidates = Array.from(
+            new Set(candidates.map(toPhoneDigits).filter((d) => d.length > 0))
+          );
+          if (digitsCandidates.length === 0) return null;
+
+          const rows = await app.prisma.$queryRaw<Array<{ id: string }>>`
+            SELECT id
+            FROM "whatsapp_numbers"
+            WHERE "is_active" = true
+              AND regexp_replace("phone_number", '\\D', '', 'g') = ANY(${digitsCandidates})
+            LIMIT 1
+          `;
+
+          const id = rows?.[0]?.id;
+          if (!id) return null;
+          return app.prisma.whatsAppNumber.findUnique({ where: { id } });
+        };
+
+        // Find the WhatsApp number in database (try receiver first; if fields are swapped, fallback to sender).
+        let whatsappNumber = await findNumberByCandidates(receiverCandidates);
+        let assumedSender = senderRaw;
+        if (!whatsappNumber && senderCandidates.length > 0) {
+          whatsappNumber = await findNumberByCandidates(senderCandidates);
+          if (whatsappNumber) {
+            // Some payloads swap from/to. If we matched "sender" as our business number,
+            // then the other side is the customer.
+            assumedSender = receiverNumber;
+          }
+        }
 
         if (!whatsappNumber) {
-          request.log.warn({ receiverNumber, searchNumber }, 'WhatsApp number not found');
+          request.log.warn(
+            { receiverNumber, receiverCandidates, senderRaw, senderCandidates },
+            'WhatsApp number not found'
+          );
           // Return 200 to prevent Infobip retries
           return reply.send({ status: 'ignored', reason: 'number_not_found' });
         }
@@ -482,8 +545,8 @@ export async function webhookRoutes(
           },
         });
 
-        // Extract sender for job payload
-        const senderNumber = result?.sender || result?.from || 'unknown';
+        // Extract sender for job payload (prefer the inferred one in case payload swaps fields)
+        const senderNumber = assumedSender || 'unknown';
 
         // Queue for agent processing (DO NOT call LLM here)
         if (agentQueue) {
