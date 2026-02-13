@@ -21,15 +21,16 @@ import { cn } from '../../lib/utils';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../stores/toast.store';
 import { getWorkspaceCommerceCapabilities } from '../../lib/commerce-plan';
+import { apiFetch } from '../../lib/api';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 const DEFAULT_LOW_STOCK_THRESHOLD = 10;
 const MAX_LOW_STOCK_THRESHOLD = 1_000_000;
 
-const fetchWithCredentials = (input: RequestInfo | URL, init?: RequestInit) => fetch(input, {
-  ...init,
-  credentials: 'include',
-});
+// Use the shared API wrapper so Settings keeps working when the access token cookie expires
+// (it will refresh and retry automatically).
+const fetchWithCredentials = (input: RequestInfo | URL, init?: RequestInit) =>
+  apiFetch(typeof input === 'string' ? input : input.toString(), init);
 
 // Navigation items - "Mi negocio" only shows for commerce business type
 const getSettingsNav = (
