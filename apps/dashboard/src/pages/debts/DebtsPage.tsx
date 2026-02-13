@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { AlertTriangle, FileText, Upload, Search, DollarSign, Users, Clock, Eye, MessageSquare, CreditCard, Send, Info } from 'lucide-react';
-import { Badge, Button, Input, Label, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Switch } from '../../components/ui';
+import { AnimatedPage, AnimatedStagger, AnimatedCard, Badge, Button, Input, Label, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Switch } from '../../components/ui';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../components/ui/dialog';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../stores/toast.store';
@@ -533,7 +533,7 @@ export default function DebtsPage() {
 
   return (
     <div className="h-full overflow-y-auto scrollbar-hide p-6">
-      <div className="max-w-7xl mx-auto space-y-6 fade-in">
+      <AnimatedPage className="max-w-7xl mx-auto space-y-6">
         {/* Header */}
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
@@ -578,16 +578,13 @@ export default function DebtsPage() {
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <AnimatedStagger className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {[
             { icon: DollarSign, value: stats?.totalDebt ?? 0, label: 'Total por cobrar', format: formatCurrency, iconBg: 'bg-primary/10', iconColor: 'text-primary' },
             { icon: Users, value: stats?.customersWithDebt ?? 0, label: 'Clientes con deuda', format: (v: number) => v.toString(), iconBg: 'bg-primary/10', iconColor: 'text-primary' },
             { icon: Clock, value: stats?.overdueDebt ?? 0, label: 'Vencido (+30 dias)', format: formatCurrency, iconBg: 'bg-red-500/10', iconColor: 'text-red-400', highlight: (v: number) => v > 0 ? 'text-red-400' : undefined },
           ].map((stat, i) => (
-            <div
-              key={i}
-              className="glass-card rounded-2xl p-5 hover:shadow-2xl transition-all duration-300 hover:-translate-y-0.5"
-            >
+            <AnimatedCard key={i}>
               <div className="flex items-start justify-between">
                 <div>
                   <p className="text-sm text-muted-foreground">{stat.label}</p>
@@ -603,9 +600,9 @@ export default function DebtsPage() {
                   <stat.icon className={`w-5 h-5 ${stat.iconColor}`} />
                 </div>
               </div>
-            </div>
+            </AnimatedCard>
           ))}
-        </div>
+        </AnimatedStagger>
 
         {/* Debts table */}
         <div className="glass-card rounded-2xl overflow-hidden">
@@ -1211,7 +1208,7 @@ export default function DebtsPage() {
             </div>
           </DialogContent>
         </Dialog>
-      </div>
+      </AnimatedPage>
     </div>
   );
 }

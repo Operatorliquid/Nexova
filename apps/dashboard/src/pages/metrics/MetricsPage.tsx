@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Area, AreaChart, Bar, BarChart, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis, PieChart, Pie, Cell } from 'recharts';
+import { ResponsiveLine } from '@nivo/line';
+import { ResponsiveBar } from '@nivo/bar';
+import { ResponsivePie } from '@nivo/pie';
 import { DollarSign, ShoppingCart, TrendingUp, CreditCard, Users, Package, CalendarDays, BarChart3, Sparkles, ReceiptText } from 'lucide-react';
 import {
   Button,
@@ -13,7 +15,13 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
+  AnimatedPage,
+  AnimatedStagger,
+  AnimatedCard,
+  AnimatedItem,
 } from '../../components/ui';
+import { ChartTooltip, TooltipLine } from '../../components/ui/chart-tooltip';
+import { getNivoTheme } from '../../lib/nivo-theme';
 import { useAuth } from '../../contexts/AuthContext';
 import { apiFetch } from '../../lib/api';
 import { getWorkspaceCommerceCapabilities } from '../../lib/commerce-plan';
@@ -93,47 +101,6 @@ const getPriorityStyle = (priority: 'alta' | 'media' | 'baja') => {
   if (priority === 'media') return 'border-primary/30 bg-primary/10 text-primary/80';
   return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200';
 };
-
-function ChartTooltip({
-  active,
-  payload,
-  label,
-}: {
-  active?: boolean;
-  payload?: Array<{ value: number; payload: MetricsSeriesPoint }>;
-  label?: string;
-}) {
-  if (!active || !payload?.length) return null;
-  const point = payload[0];
-  const orders = point.payload?.orders;
-  return (
-    <div className="rounded-xl border border-border bg-popover px-3 py-2 shadow-lg">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="text-sm font-semibold text-foreground">{formatCurrency(point.value)}</p>
-      {typeof orders === 'number' && (
-        <p className="text-[11px] text-muted-foreground">{orders} pedidos</p>
-      )}
-    </div>
-  );
-}
-
-function PieTooltip({
-  active,
-  payload,
-}: {
-  active?: boolean;
-  payload?: Array<{ value: number; payload: { label: string; total: number; count: number } }>;
-}) {
-  if (!active || !payload?.length) return null;
-  const point = payload[0].payload;
-  return (
-    <div className="rounded-xl border border-border bg-popover px-3 py-2 shadow-lg">
-      <p className="text-xs text-muted-foreground">{point.label}</p>
-      <p className="text-sm font-semibold text-foreground">{formatCurrency(point.total)}</p>
-      <p className="text-[11px] text-muted-foreground">{point.count} pagos</p>
-    </div>
-  );
-}
 
 function SkeletonPulse({ className }: { className?: string }) {
   return <div className={`animate-pulse rounded-lg bg-secondary ${className ?? ''}`} />;
@@ -225,41 +192,73 @@ export default function MetricsPage() {
   const paidRate = metrics?.summary.paidRate ?? 0;
   const pendingRate = Math.max(0, 1 - paidRate);
 
-const salesByDay = metrics?.salesByDay ?? [];
-const salesByWeekday = metrics?.salesByWeekday ?? [];
-const salesByMonth = metrics?.salesByMonth ?? [];
-const stockPurchasesByMonth = metrics?.stockPurchasesByMonth ?? [];
-const paymentsByMethod = metrics?.paymentsByMethod ?? [];
+  const salesByDay = metrics?.salesByDay ?? [];
+  const salesByWeekday = metrics?.salesByWeekday ?? [];
+  const salesByMonth = metrics?.salesByMonth ?? [];
+  const stockPurchasesByMonth = metrics?.stockPurchasesByMonth ?? [];
+  const paymentsByMethod = metrics?.paymentsByMethod ?? [];
 
-const paymentMethodLabels: Record<string, string> = {
-  cash: 'Efectivo',
-  transfer: 'Transferencia',
-  link: 'Link de pago',
-  other: 'Otros',
-};
+  const paymentMethodLabels: Record<string, string> = {
+    cash: 'Efectivo',
+    transfer: 'Transferencia',
+    link: 'Link de pago',
+    other: 'Otros',
+  };
 
-const paymentMethodColors: Record<string, string> = {
-  cash: '#22c55e',
-  transfer: '#38bdf8',
-  link: 'hsl(var(--primary))',
-  other: '#94a3b8',
-};
+  const paymentMethodColors: Record<string, string> = {
+    cash: '#22c55e',
+    transfer: '#38bdf8',
+    link: 'hsl(var(--primary))',
+    other: '#94a3b8',
+  };
 
-const paymentMethodTotals = useMemo(() => {
-  const total = paymentsByMethod.reduce((sum, entry) => sum + entry.total, 0);
-  const items = paymentsByMethod
-    .filter((entry) => entry.total > 0)
-    .map((entry) => ({
-      ...entry,
-      label: paymentMethodLabels[entry.method] || entry.method,
-      color: paymentMethodColors[entry.method] || paymentMethodColors.other,
-    }))
-    .sort((a, b) => b.total - a.total);
-  return { total, items };
-}, [paymentsByMethod]);
+  const paymentMethodTotals = useMemo(() => {
+    const total = paymentsByMethod.reduce((sum, entry) => sum + entry.total, 0);
+    const items = paymentsByMethod
+      .filter((entry) => entry.total > 0)
+      .map((entry) => ({
+        ...entry,
+        label: paymentMethodLabels[entry.method] || entry.method,
+        color: paymentMethodColors[entry.method] || paymentMethodColors.other,
+      }))
+      .sort((a, b) => b.total - a.total);
+    return { total, items };
+  }, [paymentsByMethod]);
 
-  const dayInterval = salesByDay.length > 10 ? Math.floor(salesByDay.length / 6) : 0;
-  const monthInterval = salesByMonth.length > 10 ? Math.floor(salesByMonth.length / 6) : 0;
+  // Nivo data transforms
+  const nivoSalesByDay = useMemo(() => [{
+    id: 'ventas',
+    data: salesByDay.map((d) => ({ x: d.label, y: d.total, orders: d.orders })),
+  }], [salesByDay]);
+
+  const nivoSalesByWeekday = useMemo(
+    () => salesByWeekday.map((d) => ({ day: d.label, total: d.total, orders: d.orders ?? 0 })),
+    [salesByWeekday],
+  );
+
+  const nivoSalesByMonth = useMemo(
+    () => salesByMonth.map((d) => ({ month: d.label, total: d.total, orders: d.orders ?? 0 })),
+    [salesByMonth],
+  );
+
+  const nivoStockSparkline = useMemo(() => [{
+    id: 'stock',
+    data: stockPurchasesByMonth.map((d) => ({ x: d.label, y: d.total })),
+  }], [stockPurchasesByMonth]);
+
+  const nivoPiePayments = useMemo(
+    () =>
+      paymentMethodTotals.items.map((entry) => ({
+        id: entry.label,
+        label: entry.label,
+        value: entry.total,
+        color: entry.color,
+        count: entry.count,
+      })),
+    [paymentMethodTotals.items],
+  );
+
+  const nivoTheme = useMemo(() => getNivoTheme(), []);
 
   useEffect(() => {
     if (!capabilities.showMetricsAiInsights || !isInsightsOpen || !workspace?.id) return;
@@ -286,7 +285,7 @@ const paymentMethodTotals = useMemo(() => {
 
   return (
     <div className="h-full overflow-y-auto scrollbar-hide p-6">
-      <div className="max-w-7xl mx-auto space-y-6 fade-in">
+      <AnimatedPage className="max-w-7xl mx-auto space-y-6">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <h1 className="text-2xl font-semibold text-foreground">Métricas del negocio</h1>
@@ -323,12 +322,9 @@ const paymentMethodTotals = useMemo(() => {
         </div>
 
         {/* Summary cards */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <AnimatedStagger className="grid grid-cols-1 md:grid-cols-4 gap-4">
           {summaryCards.map((card, index) => (
-            <div
-              key={index}
-              className="glass-card rounded-2xl p-5 hover:shadow-2xl transition-all duration-300 hover:-translate-y-0.5"
-            >
+            <AnimatedCard key={index}>
               <div className="flex items-start justify-between">
                 <div>
                   <p className="text-sm text-muted-foreground">{card.label}</p>
@@ -346,9 +342,9 @@ const paymentMethodTotals = useMemo(() => {
                   <card.icon className={`w-5 h-5 ${card.iconColor}`} />
                 </div>
               </div>
-            </div>
+            </AnimatedCard>
           ))}
-        </div>
+        </AnimatedStagger>
 
         {/* Sales by day + top customers */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -375,37 +371,57 @@ const paymentMethodTotals = useMemo(() => {
                     subtitle="Los datos aparecerán cuando registres pedidos"
                   />
                 ) : (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={salesByDay} margin={{ left: 0, right: 12 }}>
-                      <defs>
-                        <linearGradient id="salesGradient" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="hsl(var(--primary))" stopOpacity={0.4} />
-                          <stop offset="100%" stopColor="hsl(var(--primary))" stopOpacity={0.05} />
-                        </linearGradient>
-                      </defs>
-                      <XAxis
-                        dataKey="label"
-                        interval={dayInterval}
-                        tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
-                        axisLine={false}
-                        tickLine={false}
-                      />
-                      <YAxis
-                        tickFormatter={formatCompact}
-                        tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
-                        axisLine={false}
-                        tickLine={false}
-                      />
-                      <Tooltip content={<ChartTooltip />} cursor={{ stroke: 'hsl(var(--border))' }} />
-                      <Area
-                        type="monotone"
-                        dataKey="total"
-                        stroke="hsl(var(--primary))"
-                        strokeWidth={2}
-                        fill="url(#salesGradient)"
-                      />
-                    </AreaChart>
-                  </ResponsiveContainer>
+                  <ResponsiveLine
+                    data={nivoSalesByDay}
+                    theme={nivoTheme}
+                    margin={{ top: 10, right: 12, bottom: 30, left: 50 }}
+                    xScale={{ type: 'point' }}
+                    yScale={{ type: 'linear', min: 0, max: 'auto' }}
+                    curve="monotoneX"
+                    enableArea
+                    areaOpacity={0.15}
+                    colors={['hsl(var(--primary))']}
+                    lineWidth={2}
+                    pointSize={0}
+                    enableGridX={false}
+                    axisLeft={{
+                      tickSize: 0,
+                      tickPadding: 8,
+                      format: (v) => formatCompact(v as number),
+                    }}
+                    axisBottom={{
+                      tickSize: 0,
+                      tickPadding: 8,
+                      tickRotation: 0,
+                      tickValues: salesByDay.length > 10
+                        ? salesByDay.filter((_, i) => i % Math.floor(salesByDay.length / 6) === 0).map((d) => d.label)
+                        : undefined,
+                    }}
+                    defs={[
+                      {
+                        id: 'salesGradient',
+                        type: 'linearGradient',
+                        colors: [
+                          { offset: 0, color: 'hsl(var(--primary))', opacity: 0.4 },
+                          { offset: 100, color: 'hsl(var(--primary))', opacity: 0.05 },
+                        ],
+                      },
+                    ]}
+                    fill={[{ match: '*', id: 'salesGradient' }]}
+                    tooltip={({ point }) => {
+                      const d = point.data as { x: string; y: number; orders?: number };
+                      return (
+                        <ChartTooltip>
+                          <TooltipLine label={String(d.x)} value={formatCurrency(d.y)} />
+                          {typeof d.orders === 'number' && (
+                            <p className="text-[11px] text-muted-foreground">{d.orders} pedidos</p>
+                          )}
+                        </ChartTooltip>
+                      );
+                    }}
+                    crosshairType="x"
+                    useMesh
+                  />
                 )}
               </div>
             </div>
@@ -417,43 +433,44 @@ const paymentMethodTotals = useMemo(() => {
               <p className="text-xs text-muted-foreground">Top por monto total</p>
             </div>
             <div className="p-5">
-              <div className="space-y-3">
-                {isLoading ? (
-                  Array.from({ length: 4 }).map((_, i) => (
+              {isLoading ? (
+                <div className="space-y-3">
+                  {Array.from({ length: 4 }).map((_, i) => (
                     <SkeletonPulse key={i} className="h-14 w-full" />
-                  ))
-                ) : (metrics?.topCustomers.length ?? 0) === 0 ? (
-                  <EmptyState
-                    icon={Users}
-                    title="Sin clientes destacados"
-                    subtitle="Aparecerán cuando registres ventas"
-                  />
-                ) : (
-                  metrics?.topCustomers.map((customer, index) => (
-                    <div
-                      key={customer.id}
-                      className="flex items-center justify-between gap-3 p-3 rounded-xl bg-secondary/40 border border-border"
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <span className="flex-shrink-0 w-6 h-6 rounded-full bg-primary/10 text-primary text-xs font-semibold flex items-center justify-center">
-                          {index + 1}
-                        </span>
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium text-foreground truncate">
-                            {customer.name}
-                          </p>
-                          <p className="text-[11px] text-muted-foreground">
-                            {customer.orderCount} pedidos
-                          </p>
+                  ))}
+                </div>
+              ) : (metrics?.topCustomers.length ?? 0) === 0 ? (
+                <EmptyState
+                  icon={Users}
+                  title="Sin clientes destacados"
+                  subtitle="Aparecerán cuando registres ventas"
+                />
+              ) : (
+                <AnimatedStagger className="space-y-3">
+                  {metrics?.topCustomers.map((customer, index) => (
+                    <AnimatedItem key={customer.id}>
+                      <div className="flex items-center justify-between gap-3 p-3 rounded-xl bg-secondary/40 border border-border">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <span className="flex-shrink-0 w-6 h-6 rounded-full bg-primary/10 text-primary text-xs font-semibold flex items-center justify-center">
+                            {index + 1}
+                          </span>
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-foreground truncate">
+                              {customer.name}
+                            </p>
+                            <p className="text-[11px] text-muted-foreground">
+                              {customer.orderCount} pedidos
+                            </p>
+                          </div>
                         </div>
+                        <span className="text-sm font-semibold text-emerald-400 flex-shrink-0">
+                          {formatCurrency(customer.totalSpent)}
+                        </span>
                       </div>
-                      <span className="text-sm font-semibold text-emerald-400 flex-shrink-0">
-                        {formatCurrency(customer.totalSpent)}
-                      </span>
-                    </div>
-                  ))
-                )}
-              </div>
+                    </AnimatedItem>
+                  ))}
+                </AnimatedStagger>
+              )}
             </div>
           </div>
         </div>
@@ -478,24 +495,36 @@ const paymentMethodTotals = useMemo(() => {
                     subtitle="Se llenará con tus primeras ventas"
                   />
                 ) : (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={salesByWeekday} margin={{ left: 0, right: 12 }}>
-                      <XAxis
-                        dataKey="label"
-                        tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
-                        axisLine={false}
-                        tickLine={false}
-                      />
-                      <YAxis
-                        tickFormatter={formatCompact}
-                        tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
-                        axisLine={false}
-                        tickLine={false}
-                      />
-                      <Tooltip content={<ChartTooltip />} cursor={{ fill: 'hsl(var(--secondary))' }} />
-                      <Bar dataKey="total" fill="hsl(var(--primary))" radius={[6, 6, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
+                  <ResponsiveBar
+                    data={nivoSalesByWeekday}
+                    keys={['total']}
+                    indexBy="day"
+                    theme={nivoTheme}
+                    margin={{ top: 10, right: 12, bottom: 30, left: 50 }}
+                    padding={0.35}
+                    borderRadius={6}
+                    colors={['hsl(var(--primary))']}
+                    enableGridY
+                    enableLabel={false}
+                    axisLeft={{
+                      tickSize: 0,
+                      tickPadding: 8,
+                      format: (v) => formatCompact(v as number),
+                    }}
+                    axisBottom={{
+                      tickSize: 0,
+                      tickPadding: 8,
+                    }}
+                    tooltip={({ data }) => (
+                      <ChartTooltip>
+                        <TooltipLine
+                          label={data.day as string}
+                          value={formatCurrency(data.total as number)}
+                          sub={typeof data.orders === 'number' ? `${data.orders} pedidos` : undefined}
+                        />
+                      </ChartTooltip>
+                    )}
+                  />
                 )}
               </div>
             </div>
@@ -507,43 +536,44 @@ const paymentMethodTotals = useMemo(() => {
               <p className="text-xs text-muted-foreground">Top por unidades</p>
             </div>
             <div className="p-5">
-              <div className="space-y-3">
-                {isLoading ? (
-                  Array.from({ length: 4 }).map((_, i) => (
+              {isLoading ? (
+                <div className="space-y-3">
+                  {Array.from({ length: 4 }).map((_, i) => (
                     <SkeletonPulse key={i} className="h-14 w-full" />
-                  ))
-                ) : (metrics?.topProducts.length ?? 0) === 0 ? (
-                  <EmptyState
-                    icon={Package}
-                    title="Sin productos vendidos"
-                    subtitle="Aparecerán cuando registres ventas"
-                  />
-                ) : (
-                  metrics?.topProducts.map((product, index) => (
-                    <div
-                      key={product.id}
-                      className="flex items-center justify-between gap-3 p-3 rounded-xl bg-secondary/40 border border-border"
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-500/10 text-blue-400 text-xs font-semibold flex items-center justify-center">
-                          {index + 1}
-                        </span>
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium text-foreground truncate">
-                            {product.name}
-                          </p>
-                          <p className="text-[11px] text-muted-foreground">
-                            {product.quantity} unidades · {formatCurrency(product.revenue)}
-                          </p>
+                  ))}
+                </div>
+              ) : (metrics?.topProducts.length ?? 0) === 0 ? (
+                <EmptyState
+                  icon={Package}
+                  title="Sin productos vendidos"
+                  subtitle="Aparecerán cuando registres ventas"
+                />
+              ) : (
+                <AnimatedStagger className="space-y-3">
+                  {metrics?.topProducts.map((product, index) => (
+                    <AnimatedItem key={product.id}>
+                      <div className="flex items-center justify-between gap-3 p-3 rounded-xl bg-secondary/40 border border-border">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-500/10 text-blue-400 text-xs font-semibold flex items-center justify-center">
+                            {index + 1}
+                          </span>
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-foreground truncate">
+                              {product.name}
+                            </p>
+                            <p className="text-[11px] text-muted-foreground">
+                              {product.quantity} unidades · {formatCurrency(product.revenue)}
+                            </p>
+                          </div>
                         </div>
+                        <span className="text-sm font-semibold text-primary flex-shrink-0">
+                          {product.quantity}u
+                        </span>
                       </div>
-                      <span className="text-sm font-semibold text-primary flex-shrink-0">
-                        {product.quantity}u
-                      </span>
-                    </div>
-                  ))
-                )}
-              </div>
+                    </AnimatedItem>
+                  ))}
+                </AnimatedStagger>
+              )}
             </div>
           </div>
 
@@ -565,25 +595,39 @@ const paymentMethodTotals = useMemo(() => {
                     subtitle="Se llenará con tus primeras ventas"
                   />
                 ) : (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={salesByMonth} margin={{ left: 0, right: 12 }}>
-                      <XAxis
-                        dataKey="label"
-                        interval={monthInterval}
-                        tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
-                        axisLine={false}
-                        tickLine={false}
-                      />
-                      <YAxis
-                        tickFormatter={formatCompact}
-                        tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }}
-                        axisLine={false}
-                        tickLine={false}
-                      />
-                      <Tooltip content={<ChartTooltip />} cursor={{ fill: 'hsl(var(--secondary))' }} />
-                      <Bar dataKey="total" fill="hsl(var(--primary))" radius={[6, 6, 0, 0]} opacity={0.85} />
-                    </BarChart>
-                  </ResponsiveContainer>
+                  <ResponsiveBar
+                    data={nivoSalesByMonth}
+                    keys={['total']}
+                    indexBy="month"
+                    theme={nivoTheme}
+                    margin={{ top: 10, right: 12, bottom: 30, left: 50 }}
+                    padding={0.35}
+                    borderRadius={6}
+                    colors={['hsl(var(--primary))']}
+                    enableGridY
+                    enableLabel={false}
+                    axisLeft={{
+                      tickSize: 0,
+                      tickPadding: 8,
+                      format: (v) => formatCompact(v as number),
+                    }}
+                    axisBottom={{
+                      tickSize: 0,
+                      tickPadding: 8,
+                      tickValues: salesByMonth.length > 10
+                        ? salesByMonth.filter((_, i) => i % Math.floor(salesByMonth.length / 6) === 0).map((d) => d.label)
+                        : undefined,
+                    }}
+                    tooltip={({ data }) => (
+                      <ChartTooltip>
+                        <TooltipLine
+                          label={data.month as string}
+                          value={formatCurrency(data.total as number)}
+                          sub={typeof data.orders === 'number' ? `${data.orders} pedidos` : undefined}
+                        />
+                      </ChartTooltip>
+                    )}
+                  />
                 )}
               </div>
             </div>
@@ -609,23 +653,27 @@ const paymentMethodTotals = useMemo(() => {
                   subtitle="Se verá cuando tengas pagos completados"
                 />
               ) : (
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Tooltip content={<PieTooltip />} />
-                    <Pie
-                      data={paymentMethodTotals.items}
-                      dataKey="total"
-                      nameKey="label"
-                      innerRadius={60}
-                      outerRadius={90}
-                      paddingAngle={3}
-                    >
-                      {paymentMethodTotals.items.map((entry) => (
-                        <Cell key={entry.method} fill={entry.color} />
-                      ))}
-                    </Pie>
-                  </PieChart>
-                </ResponsiveContainer>
+                <ResponsivePie
+                  data={nivoPiePayments}
+                  theme={nivoTheme}
+                  margin={{ top: 10, right: 10, bottom: 10, left: 10 }}
+                  innerRadius={0.65}
+                  padAngle={3}
+                  cornerRadius={4}
+                  colors={{ datum: 'data.color' }}
+                  enableArcLinkLabels={false}
+                  enableArcLabels={false}
+                  tooltip={({ datum }) => (
+                    <ChartTooltip>
+                      <TooltipLine
+                        color={String(datum.color)}
+                        label={datum.label as string}
+                        value={formatCurrency(datum.value)}
+                        sub={`${(datum.data as { count?: number }).count ?? 0} pagos`}
+                      />
+                    </ChartTooltip>
+                  )}
+                />
               )}
             </div>
             <div className="space-y-3">
@@ -741,44 +789,38 @@ const paymentMethodTotals = useMemo(() => {
                       <p className="text-xs text-muted-foreground/50">Sin datos de compras</p>
                     </div>
                   ) : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={stockPurchasesByMonth} margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
-                        <defs>
-                          <linearGradient id="stockSparkGradient" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor="#f59e0b" stopOpacity={0.3} />
-                            <stop offset="100%" stopColor="#f59e0b" stopOpacity={0.05} />
-                          </linearGradient>
-                        </defs>
-                        <Tooltip
-                          content={({ active, payload, label }) => {
-                            if (!active || !payload?.length) return null;
-                            return (
-                              <div className="rounded-xl border border-border bg-popover px-3 py-2 shadow-lg">
-                                <p className="text-xs text-muted-foreground">{label}</p>
-                                <p className="text-sm font-semibold text-amber-400">{formatCurrency(payload[0].value as number)}</p>
-                              </div>
-                            );
-                          }}
-                        />
-                        <XAxis dataKey="label" hide />
-                        <YAxis hide />
-                        <Line
-                          type="monotone"
-                          dataKey="total"
-                          stroke="#f59e0b"
-                          strokeWidth={2}
-                          dot={false}
-                          activeDot={{ r: 3, fill: '#f59e0b' }}
-                        />
-                      </LineChart>
-                    </ResponsiveContainer>
+                    <ResponsiveLine
+                      data={nivoStockSparkline}
+                      theme={nivoTheme}
+                      margin={{ top: 4, right: 4, bottom: 4, left: 4 }}
+                      xScale={{ type: 'point' }}
+                      yScale={{ type: 'linear', min: 0, max: 'auto' }}
+                      curve="monotoneX"
+                      colors={['#f59e0b']}
+                      lineWidth={2}
+                      pointSize={0}
+                      enableGridX={false}
+                      enableGridY={false}
+                      axisLeft={null}
+                      axisBottom={null}
+                      enableCrosshair={false}
+                      tooltip={({ point }) => {
+                        const d = point.data as { x: string; y: number };
+                        return (
+                          <ChartTooltip>
+                            <TooltipLine label={String(d.x)} value={formatCurrency(d.y)} />
+                          </ChartTooltip>
+                        );
+                      }}
+                      useMesh
+                    />
                   )}
                 </div>
               </div>
             </div>
           )}
         </div>
-      </div>
+      </AnimatedPage>
 
       {capabilities.showMetricsAiInsights && (
         <Dialog open={isInsightsOpen} onOpenChange={setIsInsightsOpen}>

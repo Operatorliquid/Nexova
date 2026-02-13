@@ -1,9 +1,9 @@
-import { Button, Input } from '../../components/ui';
+import { Button, Input, AnimatedPage, AnimatedStagger, AnimatedCard } from '../../components/ui';
 
 export default function ReceiptsPage() {
   return (
     <div className="h-full overflow-y-auto scrollbar-hide p-6">
-      <div className="max-w-7xl mx-auto space-y-6 fade-in">
+      <AnimatedPage className="max-w-7xl mx-auto space-y-6">
         {/* Header actions */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -34,24 +34,21 @@ export default function ReceiptsPage() {
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <AnimatedStagger className="grid grid-cols-1 md:grid-cols-4 gap-4">
           {[
             { value: '0', label: 'Total comprobantes' },
             { value: '0', label: 'Este mes' },
             { value: '$0', label: 'Facturado' },
             { value: '0', label: 'Pendientes' },
           ].map((stat, i) => (
-            <div
-              key={i}
-              className="glass-card rounded-2xl p-5 hover:shadow-2xl transition-all duration-300 hover:-translate-y-0.5"
-            >
+            <AnimatedCard key={i}>
               <div className="text-center">
                 <p className="text-2xl font-bold text-muted-foreground">{stat.value}</p>
                 <p className="text-sm text-muted-foreground">{stat.label}</p>
               </div>
-            </div>
+            </AnimatedCard>
           ))}
-        </div>
+        </AnimatedStagger>
 
         {/* Receipts table - Empty state */}
         <div className="glass-card rounded-2xl overflow-hidden">
@@ -98,7 +95,7 @@ export default function ReceiptsPage() {
             </div>
           </div>
         </div>
-      </div>
+      </AnimatedPage>
     </div>
   );
 }

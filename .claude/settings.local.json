@@ -65,7 +65,10 @@
       "Bash(npx vite:*)",
       "Bash(export NVM_DIR=\"$HOME/.nvm\")",
       "Bash([ -s \"$NVM_DIR/nvm.sh\" ])",
-      "Bash(. \"$NVM_DIR/nvm.sh\")"
+      "Bash(. \"$NVM_DIR/nvm.sh\")",
+      "Bash(wc:*)",
+      "Bash(pnpm run typecheck:*)",
+      "Bash(pnpm tsc:*)"
     ]
   }
 }

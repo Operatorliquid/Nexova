@@ -135,7 +135,7 @@ export function ProductCard({
 
         {/* Select checkbox */}
         {isSelectMode && (
-          <div className="absolute top-3 left-3 z-10 fade-in">
+          <div className="absolute top-3 left-3 z-10">
             <div className="flex items-center justify-center w-7 h-7 rounded-lg bg-black/40 backdrop-blur-sm">
               <Checkbox
                 checked={isSelected}

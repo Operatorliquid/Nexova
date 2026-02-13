@@ -2,6 +2,7 @@ import { AlertTriangle, CreditCard, Lock, LogOut, RefreshCw } from 'lucide-react
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/Card';
+import { AnimatedPage } from '@/components/ui/motion';
 import { useAuth } from '@/contexts/AuthContext';
 
 export function normalizeWorkspaceStatus(status?: string | null) {
@@ -125,7 +126,7 @@ export default function WorkspaceSuspendedPage() {
       </div>
 
       <div className="min-h-screen flex items-center justify-center p-6">
-        <div className="w-full max-w-2xl space-y-6 fade-in">
+        <AnimatedPage className="w-full max-w-2xl space-y-6">
           <div className="flex items-center justify-center">
             <div className="px-4 py-2 rounded-xl border border-border bg-card/60 text-xs tracking-wide text-muted-foreground uppercase">
               Nexova · Estado de suscripcion
@@ -137,7 +138,7 @@ export default function WorkspaceSuspendedPage() {
             onRetry={refreshUser}
             onLogout={logout}
           />
-        </div>
+        </AnimatedPage>
       </div>
     </div>
   );

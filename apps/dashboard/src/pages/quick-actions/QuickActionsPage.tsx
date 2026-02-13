@@ -4,7 +4,7 @@
  */
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Button, Input } from '../../components/ui';
+import { Button, Input, AnimatedPage } from '../../components/ui';
 import { useAuth } from '../../contexts/AuthContext';
 import { cn } from '../../lib/utils';
 import { QuickActionToolResult } from '../../components/quick-actions/QuickActionToolResult';
@@ -281,7 +281,7 @@ export default function QuickActionsPage() {
 
   return (
     <div className="h-full overflow-y-auto scrollbar-hide p-6">
-      <div className="max-w-4xl mx-auto space-y-6 fade-in">
+      <AnimatedPage className="max-w-4xl mx-auto space-y-6">
         {/* Header */}
         <div>
           <h1 className="text-2xl font-bold text-foreground">Quick Actions</h1>
@@ -590,7 +590,7 @@ export default function QuickActionsPage() {
             )}
           </div>
         </div>
-      </div>
+      </AnimatedPage>
     </div>
   );
 }

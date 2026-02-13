@@ -15,6 +15,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
+  AnimatedPage,
 } from '../../components/ui';
 import { businessTypes } from '../../config/modules';
 import { apiFetch } from '../../lib/api';
@@ -269,7 +270,7 @@ export default function WhatsAppNumbersPage() {
   }
 
   return (
-    <div className="space-y-6 fade-in">
+    <AnimatedPage className="space-y-6">
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
           <h2 className="text-2xl font-semibold text-foreground">Números WhatsApp</h2>
@@ -521,6 +522,6 @@ export default function WhatsAppNumbersPage() {
           </div>
         </DialogContent>
       </Dialog>
-    </div>
+    </AnimatedPage>
   );
 }

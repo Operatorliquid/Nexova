@@ -15,6 +15,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
   Input,
+  AnimatedPage,
+  AnimatedStagger,
+  AnimatedCard,
 } from '../../components/ui';
 import {
   ProductModal,
@@ -598,7 +601,7 @@ export default function StockPage() {
 
   return (
     <div className="h-full overflow-y-auto scrollbar-hide p-6">
-      <div className="max-w-7xl mx-auto space-y-6 fade-in">
+      <AnimatedPage className="max-w-7xl mx-auto space-y-6">
         {/* Header */}
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
@@ -649,12 +652,9 @@ export default function StockPage() {
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <AnimatedStagger className="grid grid-cols-1 md:grid-cols-4 gap-4">
           {statsData.map((stat, i) => (
-            <div
-              key={i}
-              className="glass-card rounded-2xl p-5 hover:shadow-2xl transition-all duration-300 hover:-translate-y-0.5"
-            >
+            <AnimatedCard key={i}>
               <div className="flex items-start justify-between">
                 <div>
                   <p className="text-sm text-muted-foreground">{stat.label}</p>
@@ -670,9 +670,9 @@ export default function StockPage() {
                   <stat.icon className={`w-5 h-5 ${stat.iconColor}`} />
                 </div>
               </div>
-            </div>
+            </AnimatedCard>
           ))}
-        </div>
+        </AnimatedStagger>
 
         {/* Filters */}
         <StockFilters
@@ -694,7 +694,7 @@ export default function StockPage() {
 
         {/* Selection actions bar */}
         {selectedProductIds.size > 0 && (
-          <div className="flex items-center justify-between p-4 rounded-xl bg-primary/10 border border-primary/20 fade-in">
+          <div className="flex items-center justify-between p-4 rounded-xl bg-primary/10 border border-primary/20">
             <div className="flex items-center gap-3">
               <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-primary/20">
                 <span className="text-sm font-bold text-primary">{selectedProductIds.size}</span>
@@ -967,7 +967,7 @@ export default function StockPage() {
             </div>
           </div>
         )}
-      </div>
+      </AnimatedPage>
 
       {/* Modals - Outside max-w-7xl container for proper full-screen overlay */}
       <ProductModal

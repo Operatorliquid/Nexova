@@ -6,6 +6,7 @@ import { modules } from '../../config/modules';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { getWorkspaceCommerceCapabilities } from '../../lib/commerce-plan';
+import { AnimatePresence, motion } from '../ui/motion';
 
 export function DashboardLayout() {
   const location = useLocation();
@@ -41,7 +42,18 @@ export function DashboardLayout() {
       <div className="flex-1 flex flex-col overflow-hidden">
         <Header title={title} />
         <main className="flex-1 overflow-hidden">
-          <Outlet />
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={location.pathname}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.15 }}
+              className="h-full"
+            >
+              <Outlet />
+            </motion.div>
+          </AnimatePresence>
         </main>
       </div>
 

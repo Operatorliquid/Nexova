@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Package, User, CreditCard, ShoppingCart, Plus, Minus, Search, Trash2, RotateCcw, AlertTriangle, FileText, Calendar, Printer, ChevronDown, Receipt, DollarSign, TrendingUp, Clock, Upload, Eye } from 'lucide-react';
-import { Badge, Button, Input, Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Switch } from '../../components/ui';
+import { Badge, Button, Input, Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Switch, AnimatedPage, AnimatedStagger, AnimatedCard, AnimatedTableBody, AnimatedTableRow } from '../../components/ui';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../../components/ui/dialog';
 import { DeleteConfirmModal } from '../../components/stock';
 import { useAuth } from '../../contexts/AuthContext';
@@ -1234,7 +1234,7 @@ export default function OrdersPage() {
 
   return (
     <div className="h-full overflow-y-auto scrollbar-hide p-6">
-      <div className="max-w-7xl mx-auto space-y-6 fade-in">
+      <AnimatedPage className="max-w-7xl mx-auto space-y-6">
         {/* Page header */}
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
@@ -1307,17 +1307,14 @@ export default function OrdersPage() {
         )}
 
         {/* Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <AnimatedStagger className="grid grid-cols-1 md:grid-cols-4 gap-4">
           {[
             { value: stats?.totalOrders ?? 0, label: 'Total pedidos', format: (v: number) => v.toString(), icon: ShoppingCart, iconBg: 'bg-primary/10', iconColor: 'text-primary' },
             { value: stats?.pendingOrders ?? 0, label: 'Pendientes de aprobación', format: (v: number) => v.toString(), highlight: 'amber', icon: Clock, iconBg: 'bg-amber-500/10', iconColor: 'text-amber-400' },
             { value: stats?.totalRevenue ?? 0, label: 'Ingresos', format: formatCurrency, icon: DollarSign, iconBg: 'bg-emerald-500/10', iconColor: 'text-emerald-400' },
             { value: stats?.avgOrderValue ?? 0, label: 'Ticket promedio', format: formatCurrency, icon: TrendingUp, iconBg: 'bg-cyan-500/10', iconColor: 'text-cyan-400' },
           ].map((stat, i) => (
-            <div
-              key={i}
-              className="glass-card rounded-2xl p-5 hover:shadow-2xl transition-all duration-300 hover:-translate-y-0.5"
-            >
+            <AnimatedCard key={i}>
               <div className="flex items-start justify-between">
                 <div>
                   <p className="text-sm text-muted-foreground">{stat.label}</p>
@@ -1333,9 +1330,9 @@ export default function OrdersPage() {
                   <stat.icon className={`w-5 h-5 ${stat.iconColor}`} />
                 </div>
               </div>
-            </div>
+            </AnimatedCard>
           ))}
-        </div>
+        </AnimatedStagger>
 
         {/* Orders table */}
         <div className="glass-card rounded-2xl overflow-hidden">
@@ -1382,9 +1379,9 @@ export default function OrdersPage() {
                   </th>
                 </tr>
               </thead>
-              <tbody>
+              <AnimatedTableBody>
                 {orders.map((order) => (
-                  <tr
+                  <AnimatedTableRow
                     key={order.id}
                     onClick={() => handleSelectOrder(order)}
                     className="border-b border-border hover:bg-secondary transition-colors cursor-pointer group"
@@ -1432,14 +1429,14 @@ export default function OrdersPage() {
                         </button>
                       </div>
                     </td>
-                  </tr>
+                  </AnimatedTableRow>
                 ))}
-              </tbody>
+              </AnimatedTableBody>
             </table>
           )}
         </div>
 
-      </div>
+      </AnimatedPage>
 
       {/* Order detail sheet */}
       <Sheet open={!!selectedOrder} onOpenChange={(open) => !open && setSelectedOrder(null)}>

@@ -16,6 +16,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
+  AnimatedPage,
 } from '../../components/ui';
 import { cn } from '../../lib/utils';
 import { useAuth } from '../../contexts/AuthContext';
@@ -128,7 +129,7 @@ function ProfileSettings() {
   };
 
   return (
-    <div className="space-y-6 fade-in">
+    <div className="space-y-6">
       <div className="glass-card rounded-2xl overflow-hidden">
         <div className="p-5 border-b border-border">
           <h3 className="font-semibold text-foreground">Mi perfil</h3>
@@ -556,7 +557,7 @@ function BusinessSettings() {
   }
 
   return (
-    <div className="space-y-6 fade-in">
+    <div className="space-y-6">
       {/* Images section */}
       <div className="glass-card rounded-2xl overflow-hidden">
         <div className="p-5 border-b border-border">
@@ -1521,7 +1522,7 @@ function ApplicationsSettings() {
   }
 
   return (
-    <div className="space-y-6 fade-in">
+    <div className="space-y-6">
       {/* Global messages */}
       {canUseMercadoPago && mpSuccess && (
         <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
@@ -2089,7 +2090,7 @@ function NotificationsSettings() {
   ];
 
   return (
-    <div className="glass-card rounded-2xl overflow-hidden fade-in">
+    <div className="glass-card rounded-2xl overflow-hidden">
       <div className="p-5 border-b border-border">
         <h3 className="font-semibold text-foreground">Notificaciones por WhatsApp al owner</h3>
         <p className="text-xs text-muted-foreground mt-1">
@@ -2222,7 +2223,7 @@ function StockSettings() {
   }
 
   return (
-    <div className="glass-card rounded-2xl overflow-hidden fade-in">
+    <div className="glass-card rounded-2xl overflow-hidden">
       <div className="p-5 border-b border-border">
         <h3 className="font-semibold text-foreground">Stock</h3>
         <p className="text-sm text-muted-foreground mt-1">
@@ -2382,7 +2383,7 @@ function PaymentSettings() {
   }
 
   return (
-    <div className="glass-card rounded-2xl overflow-hidden fade-in">
+    <div className="glass-card rounded-2xl overflow-hidden">
       <div className="p-5 border-b border-border">
         <h3 className="font-semibold text-foreground">Pagos</h3>
         <p className="text-sm text-muted-foreground mt-1">
@@ -2425,7 +2426,7 @@ export default function SettingsPage() {
 
   return (
     <div className="h-full overflow-y-auto scrollbar-hide p-6">
-      <div className="max-w-5xl mx-auto space-y-6 fade-in">
+      <AnimatedPage className="max-w-5xl mx-auto space-y-6">
         <div>
           <h1 className="text-2xl font-semibold text-foreground">Configuración</h1>
           <p className="text-sm text-muted-foreground">Gestiona tu perfil, negocio e integraciones</p>
@@ -2503,7 +2504,7 @@ export default function SettingsPage() {
             </Routes>
           </div>
         </div>
-      </div>
+      </AnimatedPage>
     </div>
   );
 }

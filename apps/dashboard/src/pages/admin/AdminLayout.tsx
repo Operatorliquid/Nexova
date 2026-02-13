@@ -2,10 +2,11 @@
  * Admin Panel Layout
  * Same aesthetic as main dashboard but with admin navigation
  */
-import { Outlet, NavLink, Navigate } from 'react-router-dom';
+import { Outlet, NavLink, Navigate, useLocation } from 'react-router-dom';
 import { LayoutDashboard, Users, MessageCircle, Building2, Settings, LogOut, Shield, CreditCard } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useAuth } from '../../contexts/AuthContext';
+import { AnimatePresence, motion } from '../../components/ui/motion';
 
 const adminNav = [
   { name: 'Dashboard', href: '/admin', icon: LayoutDashboard },
@@ -18,6 +19,7 @@ const adminNav = [
 
 export default function AdminLayout() {
   const { user, logout } = useAuth();
+  const location = useLocation();
 
   // Redirect non-admins
   if (!user?.isSuperAdmin) {
@@ -119,7 +121,17 @@ export default function AdminLayout() {
           </div>
         </header>
         <main className="flex-1 overflow-y-auto scrollbar-hide p-6">
-          <Outlet />
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={location.pathname}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.15 }}
+            >
+              <Outlet />
+            </motion.div>
+          </AnimatePresence>
         </main>
       </div>
     </div>

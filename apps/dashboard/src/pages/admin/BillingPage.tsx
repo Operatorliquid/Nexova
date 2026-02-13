@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CreditCard, CalendarClock, Receipt, RefreshCw } from 'lucide-react';
-import { Badge, Button, Input } from '../../components/ui';
+import { Badge, Button, Input, AnimatedPage } from '../../components/ui';
 import { apiFetch } from '../../lib/api';
 import { useToastStore } from '../../stores/toast.store';
 
@@ -134,7 +134,7 @@ export default function BillingPage() {
   }, [rows]);
 
   return (
-    <div className="space-y-6 fade-in">
+    <AnimatedPage className="space-y-6">
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
           <h2 className="text-2xl font-semibold text-foreground">Cobros</h2>
@@ -280,6 +280,6 @@ export default function BillingPage() {
           </div>
         )}
       </div>
-    </div>
+    </AnimatedPage>
   );
 }

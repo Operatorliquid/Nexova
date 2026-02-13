@@ -1,15 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import {
-  Area,
-  AreaChart,
-  Cell,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
+import { ResponsiveLine } from '@nivo/line';
+import { ResponsivePie } from '@nivo/pie';
 import {
   Bell,
   CalendarDays,
@@ -27,7 +18,13 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
+  AnimatedPage,
+  AnimatedStagger,
+  AnimatedCard,
+  AnimatedItem,
 } from '../../components/ui';
+import { ChartTooltip, TooltipLine } from '../../components/ui/chart-tooltip';
+import { getNivoTheme } from '../../lib/nivo-theme';
 import { useAuth } from '../../contexts/AuthContext';
 import { apiFetch } from '../../lib/api';
 import { Link } from 'react-router-dom';
@@ -186,28 +183,6 @@ const truncateText = (value: string, max = 80) => {
   return `${value.slice(0, max - 1).trim()}…`;
 };
 
-function ChartTooltip({
-  active,
-  payload,
-  label,
-}: {
-  active?: boolean;
-  payload?: Array<{ value: number; payload: { orders?: number } }>;
-  label?: string;
-}) {
-  if (!active || !payload?.length) return null;
-  const point = payload[0];
-  return (
-    <div className="rounded-xl border border-border bg-popover px-3 py-2 shadow-lg">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="text-sm font-semibold text-foreground">{formatCurrency(point.value)}</p>
-      {typeof point.payload?.orders === 'number' && (
-        <p className="text-[11px] text-muted-foreground">{point.payload.orders} pedidos</p>
-      )}
-    </div>
-  );
-}
-
 export default function DashboardHome() {
   const { user, workspace } = useAuth();
   const [range, setRange] = useState('today');
@@ -314,6 +289,11 @@ export default function DashboardHome() {
     return buckets;
   }, [orders, rangeMeta.from, rangeMeta.to, rangeMeta.mode]);
 
+  const nivoLineData = useMemo(() => [{
+    id: 'revenue',
+    data: chartData.map((d) => ({ x: d.label, y: d.total, orders: d.orders })),
+  }], [chartData]);
+
   const statusBreakdown = useMemo(() => {
     const counts = new Map<string, number>();
     orders.forEach((order) => {
@@ -322,6 +302,17 @@ export default function DashboardHome() {
     });
     return Array.from(counts.entries()).map(([label, value]) => ({ label, value }));
   }, [orders]);
+
+  const nivoPieData = useMemo(
+    () =>
+      statusBreakdown.map((entry, index) => ({
+        id: entry.label,
+        label: entry.label,
+        value: entry.value,
+        color: STATUS_COLORS[index % STATUS_COLORS.length],
+      })),
+    [statusBreakdown],
+  );
 
   const topProducts = useMemo(() => {
     const totals = new Map<string, { quantity: number; revenue: number }>();
@@ -346,9 +337,11 @@ export default function DashboardHome() {
     return '';
   };
 
+  const nivoTheme = useMemo(() => getNivoTheme(), []);
+
   return (
     <div className="h-full overflow-y-auto scrollbar-hide p-6">
-      <div className="max-w-7xl mx-auto space-y-6 fade-in">
+      <AnimatedPage className="max-w-7xl mx-auto space-y-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h1 className="text-2xl font-semibold text-foreground">
@@ -398,7 +391,7 @@ export default function DashboardHome() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-4">
+        <AnimatedStagger className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-4">
           {[
             {
               label: 'Ventas',
@@ -438,7 +431,7 @@ export default function DashboardHome() {
           ].map((stat, index) => {
             const Icon = stat.icon;
             return (
-              <div key={index} className="glass-card rounded-2xl p-5 hover:shadow-2xl transition-all duration-300 hover:-translate-y-0.5">
+              <AnimatedCard key={index}>
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm text-muted-foreground">{stat.label}</p>
@@ -452,10 +445,10 @@ export default function DashboardHome() {
                     <Icon className={`w-5 h-5 ${stat.tone}`} />
                   </div>
                 </div>
-              </div>
+              </AnimatedCard>
             );
           })}
-        </div>
+        </AnimatedStagger>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <div className="lg:col-span-2 glass-card rounded-2xl overflow-hidden">
@@ -479,26 +472,51 @@ export default function DashboardHome() {
                   <p className="text-sm text-muted-foreground/50 mt-1">Las ventas aparecerán acá</p>
                 </div>
               ) : (
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={chartData} margin={{ left: 8, right: 8, top: 10, bottom: 0 }}>
-                    <defs>
-                      <linearGradient id="revenueGlow" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.4} />
-                        <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0.05} />
-                      </linearGradient>
-                    </defs>
-                    <XAxis dataKey="label" tickLine={false} axisLine={false} fontSize={11} tick={{ fill: 'hsl(var(--muted-foreground))' }} />
-                    <YAxis hide />
-                    <Tooltip content={<ChartTooltip />} />
-                    <Area
-                      type="monotone"
-                      dataKey="total"
-                      stroke="hsl(var(--primary))"
-                      fill="url(#revenueGlow)"
-                      strokeWidth={2}
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
+                <ResponsiveLine
+                  data={nivoLineData}
+                  theme={nivoTheme}
+                  margin={{ top: 10, right: 12, bottom: 30, left: 12 }}
+                  xScale={{ type: 'point' }}
+                  yScale={{ type: 'linear', min: 0, max: 'auto' }}
+                  curve="monotoneX"
+                  enableArea
+                  areaOpacity={0.15}
+                  colors={['hsl(var(--primary))']}
+                  lineWidth={2}
+                  pointSize={0}
+                  enableGridX={false}
+                  enableGridY={false}
+                  axisLeft={null}
+                  axisBottom={{
+                    tickSize: 0,
+                    tickPadding: 8,
+                    tickRotation: 0,
+                  }}
+                  defs={[
+                    {
+                      id: 'areaGradient',
+                      type: 'linearGradient',
+                      colors: [
+                        { offset: 0, color: 'hsl(var(--primary))', opacity: 0.4 },
+                        { offset: 100, color: 'hsl(var(--primary))', opacity: 0.05 },
+                      ],
+                    },
+                  ]}
+                  fill={[{ match: '*', id: 'areaGradient' }]}
+                  tooltip={({ point }) => {
+                    const d = point.data as { x: string; y: number; orders?: number };
+                    return (
+                      <ChartTooltip>
+                        <TooltipLine label={String(d.x)} value={formatCurrency(d.y)} />
+                        {typeof d.orders === 'number' && (
+                          <p className="text-[11px] text-muted-foreground">{d.orders} pedidos</p>
+                        )}
+                      </ChartTooltip>
+                    );
+                  }}
+                  crosshairType="x"
+                  useMesh
+                />
               )}
             </div>
           </div>
@@ -520,15 +538,27 @@ export default function DashboardHome() {
               ) : (
                 <>
                   <div className="h-40">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie data={statusBreakdown} dataKey="value" innerRadius={45} outerRadius={70} paddingAngle={4}>
-                          {statusBreakdown.map((entry, index) => (
-                            <Cell key={entry.label} fill={STATUS_COLORS[index % STATUS_COLORS.length]} />
-                          ))}
-                        </Pie>
-                      </PieChart>
-                    </ResponsiveContainer>
+                    <ResponsivePie
+                      data={nivoPieData}
+                      theme={nivoTheme}
+                      margin={{ top: 10, right: 10, bottom: 10, left: 10 }}
+                      innerRadius={0.65}
+                      padAngle={3}
+                      cornerRadius={4}
+                      colors={{ datum: 'data.color' }}
+                      enableArcLinkLabels={false}
+                      enableArcLabels={false}
+                      tooltip={({ datum }) => (
+                        <ChartTooltip>
+                          <TooltipLine
+                            color={String(datum.color)}
+                            label={datum.label as string}
+                            value={String(datum.value)}
+                            sub="pedidos"
+                          />
+                        </ChartTooltip>
+                      )}
+                    />
                   </div>
                   <div className="space-y-2 mt-2">
                     {statusBreakdown.map((entry, index) => (
@@ -558,7 +588,7 @@ export default function DashboardHome() {
                 Ver todos
               </Link>
             </div>
-            <div className="p-5 space-y-3">
+            <div className="p-5">
               {isLoading ? (
                 <div className="space-y-3">
                   {[1, 2, 3].map((item) => (
@@ -576,23 +606,24 @@ export default function DashboardHome() {
                   </p>
                 </div>
               ) : (
-                orders.slice(0, 6).map((order) => (
-                  <div
-                    key={order.id}
-                    className="flex items-center justify-between rounded-xl border border-border bg-secondary/50 px-4 py-3"
-                  >
-                    <div>
-                      <p className="text-sm font-medium text-foreground">Pedido {order.orderNumber}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {order.customer.name} · {timeAgo(order.createdAt)}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-sm font-semibold text-foreground">{formatCurrency(order.total)}</p>
-                      <p className="text-xs text-muted-foreground">{order.itemCount} items</p>
-                    </div>
-                  </div>
-                ))
+                <AnimatedStagger className="space-y-3">
+                  {orders.slice(0, 6).map((order) => (
+                    <AnimatedItem key={order.id}>
+                      <div className="flex items-center justify-between rounded-xl border border-border bg-secondary/50 px-4 py-3">
+                        <div>
+                          <p className="text-sm font-medium text-foreground">Pedido {order.orderNumber}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {order.customer.name} · {timeAgo(order.createdAt)}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-sm font-semibold text-foreground">{formatCurrency(order.total)}</p>
+                          <p className="text-xs text-muted-foreground">{order.itemCount} items</p>
+                        </div>
+                      </div>
+                    </AnimatedItem>
+                  ))}
+                </AnimatedStagger>
               )}
             </div>
           </div>
@@ -602,7 +633,7 @@ export default function DashboardHome() {
               <h3 className="font-semibold text-foreground">Top productos</h3>
               <p className="text-sm text-muted-foreground">Lo más vendido en el periodo</p>
             </div>
-            <div className="p-5 space-y-3">
+            <div className="p-5">
               {topProducts.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-10 text-center">
                   <div className="w-14 h-14 rounded-2xl bg-secondary flex items-center justify-center mb-4">
@@ -614,32 +645,36 @@ export default function DashboardHome() {
                   </p>
                 </div>
               ) : (
-                topProducts.map((product, index) => {
-                  const maxRevenue = topProducts[0]?.revenue || 1;
-                  const pct = Math.round((product.revenue / maxRevenue) * 100);
-                  return (
-                    <div key={product.name} className="space-y-1.5">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className="text-xs font-medium text-muted-foreground w-4 shrink-0">{index + 1}</span>
-                          <p className="text-sm font-medium text-foreground truncate">{product.name}</p>
+                <AnimatedStagger className="space-y-3">
+                  {topProducts.map((product, index) => {
+                    const maxRevenue = topProducts[0]?.revenue || 1;
+                    const pct = Math.round((product.revenue / maxRevenue) * 100);
+                    return (
+                      <AnimatedItem key={product.name}>
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="text-xs font-medium text-muted-foreground w-4 shrink-0">{index + 1}</span>
+                              <p className="text-sm font-medium text-foreground truncate">{product.name}</p>
+                            </div>
+                            <span className="text-sm font-semibold text-foreground shrink-0 ml-3">
+                              {formatCurrency(product.revenue)}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="flex-1 h-1.5 rounded-full bg-secondary overflow-hidden">
+                              <div
+                                className="h-full rounded-full bg-primary/60"
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                            <span className="text-[11px] text-muted-foreground shrink-0">{product.quantity} uds</span>
+                          </div>
                         </div>
-                        <span className="text-sm font-semibold text-foreground shrink-0 ml-3">
-                          {formatCurrency(product.revenue)}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="flex-1 h-1.5 rounded-full bg-secondary overflow-hidden">
-                          <div
-                            className="h-full rounded-full bg-primary/60"
-                            style={{ width: `${pct}%` }}
-                          />
-                        </div>
-                        <span className="text-[11px] text-muted-foreground shrink-0">{product.quantity} uds</span>
-                      </div>
-                    </div>
-                  );
-                })
+                      </AnimatedItem>
+                    );
+                  })}
+                </AnimatedStagger>
               )}
             </div>
           </div>
@@ -652,7 +687,7 @@ export default function DashboardHome() {
               Abrir inbox
             </Link>
           </div>
-          <div className="p-5 space-y-3">
+          <div className="p-5">
             {isMessagesLoading ? (
               <div className="space-y-3">
                 {[1, 2, 3].map((item) => (
@@ -670,29 +705,30 @@ export default function DashboardHome() {
                 </p>
               </div>
             ) : (
-              recentMessages.map((conversation) => (
-                <div
-                  key={conversation.id}
-                  className="flex items-start justify-between rounded-xl border border-border bg-secondary/50 px-4 py-3"
-                >
-                  <div>
-                    <p className="text-sm font-medium text-foreground">{conversation.customerName}</p>
-                    <p className="text-xs text-muted-foreground">{conversation.customerPhone}</p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {truncateText(
-                        `${resolveMessagePrefix(conversation.lastMessageRole)}${conversation.lastMessage || 'Sin mensajes'}`,
-                        90
-                      )}
-                    </p>
-                  </div>
-                  <div className="text-xs text-muted-foreground">{timeAgo(conversation.lastActivityAt)}</div>
-                </div>
-              ))
+              <AnimatedStagger className="space-y-3">
+                {recentMessages.map((conversation) => (
+                  <AnimatedItem key={conversation.id}>
+                    <div className="flex items-start justify-between rounded-xl border border-border bg-secondary/50 px-4 py-3">
+                      <div>
+                        <p className="text-sm font-medium text-foreground">{conversation.customerName}</p>
+                        <p className="text-xs text-muted-foreground">{conversation.customerPhone}</p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {truncateText(
+                            `${resolveMessagePrefix(conversation.lastMessageRole)}${conversation.lastMessage || 'Sin mensajes'}`,
+                            90
+                          )}
+                        </p>
+                      </div>
+                      <div className="text-xs text-muted-foreground">{timeAgo(conversation.lastActivityAt)}</div>
+                    </div>
+                  </AnimatedItem>
+                ))}
+              </AnimatedStagger>
             )}
           </div>
         </div>
 
-      </div>
+      </AnimatedPage>
     </div>
   );
 }

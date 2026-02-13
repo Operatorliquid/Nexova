@@ -3,7 +3,7 @@ import {
   Users, UserCheck, Shield, UserX, RefreshCw, Trash2,
   ChevronRight, Building2, Calendar, Mail, Clock, ShieldCheck, ShieldOff,
 } from 'lucide-react';
-import { Badge, Button, Input } from '../../components/ui';
+import { Badge, Button, Input, AnimatedPage, AnimatedStagger, AnimatedCard } from '../../components/ui';
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription,
 } from '../../components/ui/sheet';
@@ -330,7 +330,7 @@ export default function UsersPage() {
   ];
 
   return (
-    <div className="space-y-6 fade-in">
+    <AnimatedPage className="space-y-6">
       {/* Header */}
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
@@ -355,12 +355,9 @@ export default function UsersPage() {
       </div>
 
       {/* Stat cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <AnimatedStagger className="grid grid-cols-1 md:grid-cols-4 gap-4">
         {statCards.map((card) => (
-          <div
-            key={card.label}
-            className="glass-card rounded-2xl p-5 hover:shadow-2xl transition-all duration-300 hover:-translate-y-0.5"
-          >
+          <AnimatedCard key={card.label}>
             <div className="flex items-start justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">{card.label}</p>
@@ -374,9 +371,9 @@ export default function UsersPage() {
                 <card.icon className={`w-5 h-5 ${card.iconColor}`} />
               </div>
             </div>
-          </div>
+          </AnimatedCard>
         ))}
-      </div>
+      </AnimatedStagger>
 
       {/* Users table */}
       <div className="glass-card rounded-2xl overflow-hidden">
@@ -719,6 +716,6 @@ export default function UsersPage() {
         itemCount={1}
         isLoading={isDeletingUser}
       />
-    </div>
+    </AnimatedPage>
   );
 }

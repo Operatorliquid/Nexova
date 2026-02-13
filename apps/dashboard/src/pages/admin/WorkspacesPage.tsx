@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Building2, Users, Package, ShoppingCart, Bot, RefreshCw } from 'lucide-react';
-import { Badge, Button, Input } from '../../components/ui';
+import { Badge, Button, Input, AnimatedPage, AnimatedStagger, AnimatedCard } from '../../components/ui';
 import { apiFetch } from '../../lib/api';
 import { useToastStore } from '../../stores/toast.store';
 import { normalizeCommercePlan, type CommercePlan } from '@nexova/shared';
@@ -178,7 +178,7 @@ export default function WorkspacesPage() {
   ]), [stats]);
 
   return (
-    <div className="space-y-6 fade-in">
+    <AnimatedPage className="space-y-6">
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
           <h2 className="text-2xl font-semibold text-foreground">Negocios</h2>
@@ -199,12 +199,9 @@ export default function WorkspacesPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <AnimatedStagger className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {statCards.map((card) => (
-          <div
-            key={card.label}
-            className="glass-card rounded-2xl p-5 hover:shadow-2xl transition-all duration-300 hover:-translate-y-0.5"
-          >
+          <AnimatedCard key={card.label}>
             <div className="flex items-start justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">{card.label}</p>
@@ -221,9 +218,9 @@ export default function WorkspacesPage() {
                 <card.icon className={`w-5 h-5 ${card.iconColor}`} />
               </div>
             </div>
-          </div>
+          </AnimatedCard>
         ))}
-      </div>
+      </AnimatedStagger>
 
       <div className="glass-card rounded-2xl overflow-hidden">
         <div className="p-5 border-b border-border flex items-center justify-between">
@@ -318,6 +315,6 @@ export default function WorkspacesPage() {
           </div>
         )}
       </div>
-    </div>
+    </AnimatedPage>
   );
 }

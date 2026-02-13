@@ -4,6 +4,7 @@ import {
   Badge,
   Button,
   Input,
+  AnimatedPage,
 } from '../../components/ui';
 import { useAuth } from '../../contexts/AuthContext';
 import { apiFetch } from '../../lib/api';
@@ -735,7 +736,7 @@ export default function InvoicesPage() {
 
   return (
     <div className="h-full overflow-y-auto scrollbar-hide p-6">
-      <div className="max-w-7xl mx-auto space-y-6 fade-in">
+      <AnimatedPage className="max-w-7xl mx-auto space-y-6">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <h1 className="text-2xl font-semibold text-foreground">Facturación</h1>
@@ -1146,7 +1147,7 @@ export default function InvoicesPage() {
             </div>
           </div>
         </div>
-      </div>
+      </AnimatedPage>
     </div>
   );
 }

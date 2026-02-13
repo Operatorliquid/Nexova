@@ -1015,6 +1015,7 @@ function AnalyticsSection() {
                       <Tooltip
                         contentStyle={{ background: '#1a1a2e', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', fontSize: '13px' }}
                         labelStyle={{ color: 'rgba(255,255,255,0.5)' }}
+                        itemStyle={{ color: 'rgba(255,255,255,0.8)' }}
                         formatter={(value) => [`$${(Number(value) / 100).toLocaleString('es-AR')}`, '']}
                       />
                       <Bar dataKey="anterior" fill="rgba(255,255,255,0.06)" radius={[6, 6, 0, 0]} />
@@ -1047,6 +1048,8 @@ function AnalyticsSection() {
                         </Pie>
                         <Tooltip
                           contentStyle={{ background: '#1a1a2e', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', fontSize: '13px' }}
+                          labelStyle={{ color: 'rgba(255,255,255,0.5)' }}
+                          itemStyle={{ color: 'rgba(255,255,255,0.8)' }}
                           formatter={(value) => [`${value}%`, '']}
                         />
                       </PieChart>
@@ -1203,13 +1206,15 @@ function PricingSection() {
 
                 <a
                   href={`/cart?plan=${encodeURIComponent(p.code)}`}
-                  className={`w-full py-3 rounded-xl text-sm font-medium transition-all duration-300 ${
+                  className={`group relative w-full py-3 rounded-xl text-sm font-medium transition-all duration-300 flex items-center justify-center gap-2 overflow-hidden ${
                     p.highlighted
                       ? 'bg-[#4D7CFF] text-white hover:bg-[#3D6BEE] shadow-lg shadow-[#4D7CFF]/25 hover:shadow-[#4D7CFF]/40'
                       : 'border border-white/10 text-white/60 hover:text-white hover:border-white/20 hover:bg-white/[0.03]'
                   }`}
                 >
-                  {p.cta}
+                  <div className="absolute inset-0 -translate-x-full group-hover:translate-x-full transition-transform duration-700 bg-gradient-to-r from-transparent via-white/20 to-transparent" />
+                  <span className="relative">{p.cta}</span>
+                  <ArrowRight className="relative w-4 h-4 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300" />
                 </a>
               </div>
             </Reveal>

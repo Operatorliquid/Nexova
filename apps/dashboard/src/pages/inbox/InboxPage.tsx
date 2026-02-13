@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { MessageSquare, Trash2, Send, Loader2, AlertTriangle, MessagesSquare } from 'lucide-react';
-import { Button, Input } from '../../components/ui';
+import { Button, Input, AnimatedPage } from '../../components/ui';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
 import { useAuth } from '../../contexts/AuthContext';
 import { cn } from '../../lib/utils';
@@ -263,7 +263,7 @@ export default function InboxPage() {
   }
 
   return (
-    <div className="flex h-full gap-4 p-4 fade-in overflow-hidden">
+    <AnimatedPage className="flex h-full gap-4 p-4 overflow-hidden">
       {/* Conversations list */}
       <div className="w-80 flex-shrink-0 glass-card rounded-2xl flex flex-col overflow-hidden">
         <div className="p-4 border-b border-border">
@@ -554,6 +554,6 @@ export default function InboxPage() {
           </div>
         </DialogContent>
       </Dialog>
-    </div>
+    </AnimatedPage>
   );
 }

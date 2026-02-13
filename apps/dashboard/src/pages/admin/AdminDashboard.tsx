@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Users, Building2, MessageSquare, Phone, RefreshCw, AlertTriangle } from 'lucide-react';
-import { Badge, Button } from '../../components/ui';
+import { Badge, Button, AnimatedPage, AnimatedStagger, AnimatedCard } from '../../components/ui';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../components/ui/dialog';
 import { apiFetch } from '../../lib/api';
 import { useToastStore } from '../../stores/toast.store';
@@ -202,7 +202,7 @@ export default function AdminDashboard() {
   };
 
   return (
-    <div className="space-y-6 fade-in">
+    <AnimatedPage className="space-y-6">
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
           <h2 className="text-2xl font-semibold text-foreground">Dashboard</h2>
@@ -214,12 +214,9 @@ export default function AdminDashboard() {
         </Button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <AnimatedStagger className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {statCards.map((card) => (
-          <div
-            key={card.label}
-            className="glass-card rounded-2xl p-5 hover:shadow-2xl transition-all duration-300 hover:-translate-y-0.5"
-          >
+          <AnimatedCard key={card.label}>
             <div className="flex items-start justify-between">
               <div>
                 <p className="text-sm text-muted-foreground">{card.label}</p>
@@ -236,9 +233,9 @@ export default function AdminDashboard() {
                 <card.icon className={`w-5 h-5 ${card.iconColor}`} />
               </div>
             </div>
-          </div>
+          </AnimatedCard>
         ))}
-      </div>
+      </AnimatedStagger>
 
       <div className="glass-card rounded-2xl p-5 space-y-4">
         <div className="flex flex-col gap-1">
@@ -439,6 +436,6 @@ export default function AdminDashboard() {
           </div>
         </DialogContent>
       </Dialog>
-    </div>
+    </AnimatedPage>
   );
 }

@@ -58,6 +58,21 @@ export {
 } from './select';
 export { Switch } from './Switch';
 export {
+  AnimatedPage,
+  AnimatedStagger,
+  AnimatedItem,
+  AnimatedCard,
+  AnimatedTableBody,
+  AnimatedTableRow,
+  ContentTransition,
+  motion,
+  AnimatePresence,
+  fadeSlideUp,
+  fadeIn,
+  scaleIn,
+} from './motion';
+export { ChartTooltip, TooltipLine } from './chart-tooltip';
+export {
   Sheet,
   SheetPortal,
   SheetOverlay,

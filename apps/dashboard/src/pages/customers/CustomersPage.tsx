@@ -37,6 +37,11 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
+  AnimatedPage,
+  AnimatedStagger,
+  AnimatedCard,
+  AnimatedTableBody,
+  AnimatedTableRow,
 } from '../../components/ui';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../stores/toast.store';
@@ -669,7 +674,7 @@ export default function CustomersPage() {
 
   return (
     <div className="h-full overflow-y-auto scrollbar-hide p-6">
-      <div className="max-w-7xl mx-auto space-y-6 fade-in">
+      <AnimatedPage className="max-w-7xl mx-auto space-y-6">
         {/* Page header */}
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
@@ -691,17 +696,14 @@ export default function CustomersPage() {
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <AnimatedStagger className="grid grid-cols-1 md:grid-cols-4 gap-4">
           {[
             { value: stats?.totalCustomers ?? 0, label: 'Total clientes', format: (v: number) => v.toString(), icon: Users, iconBg: 'bg-primary/10', iconColor: 'text-primary' },
             { value: stats?.activeCustomers ?? 0, label: 'Activos (30 dias)', format: (v: number) => v.toString(), icon: Clock, iconBg: 'bg-emerald-500/10', iconColor: 'text-emerald-400' },
             { value: stats?.newCustomers ?? 0, label: 'Nuevos este mes', format: (v: number) => v.toString(), icon: UserPlus, iconBg: 'bg-blue-500/10', iconColor: 'text-blue-400' },
             { value: stats?.averageSpent ?? 0, label: 'Valor promedio', format: formatCurrency, icon: DollarSign, iconBg: 'bg-cyan-500/10', iconColor: 'text-cyan-400' },
           ].map((stat, i) => (
-            <div
-              key={i}
-              className="glass-card rounded-2xl p-5 hover:shadow-2xl transition-all duration-300 hover:-translate-y-0.5"
-            >
+            <AnimatedCard key={i}>
               <div className="flex items-start justify-between">
                 <div>
                   <p className="text-sm text-muted-foreground">{stat.label}</p>
@@ -717,9 +719,9 @@ export default function CustomersPage() {
                   <stat.icon className={`w-5 h-5 ${stat.iconColor}`} />
                 </div>
               </div>
-            </div>
+            </AnimatedCard>
           ))}
-        </div>
+        </AnimatedStagger>
 
         {/* Customers table */}
         <div className="glass-card rounded-2xl overflow-hidden">
@@ -761,9 +763,9 @@ export default function CustomersPage() {
                     <th className="text-right px-5 py-3 text-sm font-medium text-muted-foreground">Ultima visita</th>
                   </tr>
                 </thead>
-                <tbody>
+                <AnimatedTableBody>
                   {customers.map((customer) => (
-                    <tr
+                    <AnimatedTableRow
                       key={customer.id}
                       onClick={() => handleSelectCustomer(customer)}
                       className="border-b border-border hover:bg-secondary/50 transition-colors cursor-pointer"
@@ -806,14 +808,14 @@ export default function CustomersPage() {
                       <td className="px-5 py-4 text-right">
                         <span className="text-sm text-muted-foreground">{timeAgo(customer.lastSeenAt)}</span>
                       </td>
-                    </tr>
+                    </AnimatedTableRow>
                   ))}
-                </tbody>
+                </AnimatedTableBody>
               </table>
             </div>
           )}
         </div>
-      </div>
+      </AnimatedPage>
 
       {/* Create customer modal */}
       <Dialog open={showCreateModal} onOpenChange={setShowCreateModal}>
