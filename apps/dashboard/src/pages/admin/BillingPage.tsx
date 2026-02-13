@@ -47,6 +47,8 @@ const formatMoney = (amountCents: number, currency: string) =>
     currency: currency || 'USD',
   }).format((amountCents || 0) / 100);
 
+const formatCurrencyCode = (value?: string | null) => (value || 'USD').toUpperCase();
+
 const formatDateTime = (value?: string | null) => {
   if (!value) return '—';
   return new Intl.DateTimeFormat('es-AR', {
@@ -227,7 +229,7 @@ export default function BillingPage() {
                   </div>
                   <div className="flex items-center">
                     <p className="text-sm font-semibold text-foreground">
-                      {formatMoney(row.amount, row.currency)}
+                      {formatMoney(row.amount, row.currency)} {formatCurrencyCode(row.currency)}
                     </p>
                   </div>
                   <div className="flex items-center">{getPaymentStatusBadge(row.status)}</div>
@@ -281,4 +283,3 @@ export default function BillingPage() {
     </div>
   );
 }
-
