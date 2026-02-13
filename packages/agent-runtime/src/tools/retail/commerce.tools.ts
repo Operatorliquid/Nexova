@@ -575,9 +575,20 @@ export class SendCatalogPdfTool extends BaseTool<typeof SendCatalogPdfInput> {
     return `+${digits}`;
   }
 
-  private resolveWhatsAppApiKey(number: { apiKeyEnc?: string | null; apiKeyIv?: string | null }): string {
-    if (!number.apiKeyEnc || !number.apiKeyIv) return '';
-    return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
+  private resolveWhatsAppApiKey(number: {
+    apiKeyEnc?: string | null;
+    apiKeyIv?: string | null;
+    provider?: string | null;
+  }): string {
+    if (number.apiKeyEnc && number.apiKeyIv) {
+      return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
+    }
+
+    const provider = (number.provider || 'infobip').toLowerCase();
+    if (provider === 'infobip') {
+      return (process.env.INFOBIP_API_KEY || '').trim();
+    }
+    return '';
   }
 
   private async resolvePublicBaseUrl(): Promise<string | null> {
@@ -904,9 +915,20 @@ export class SendOrderPdfTool extends BaseTool<typeof SendOrderPdfInput> {
     return `+${digits}`;
   }
 
-  private resolveWhatsAppApiKey(number: { apiKeyEnc?: string | null; apiKeyIv?: string | null }): string {
-    if (!number.apiKeyEnc || !number.apiKeyIv) return '';
-    return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
+  private resolveWhatsAppApiKey(number: {
+    apiKeyEnc?: string | null;
+    apiKeyIv?: string | null;
+    provider?: string | null;
+  }): string {
+    if (number.apiKeyEnc && number.apiKeyIv) {
+      return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
+    }
+
+    const provider = (number.provider || 'infobip').toLowerCase();
+    if (provider === 'infobip') {
+      return (process.env.INFOBIP_API_KEY || '').trim();
+    }
+    return '';
   }
 
   private async resolvePublicBaseUrl(): Promise<string | null> {

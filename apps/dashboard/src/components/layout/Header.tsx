@@ -145,7 +145,7 @@ export function Header({ title }: HeaderProps) {
 
     const fetchWhatsAppNumber = async () => {
       try {
-        const response = await apiFetch(`/api/v1/workspace/${workspace.id}/whatsapp-numbers`, {}, workspace.id);
+        const response = await apiFetch(`/api/v1/workspaces/${workspace.id}/whatsapp-numbers`, {}, workspace.id);
         if (!response.ok) {
           setWhatsappNumber(null);
           return;
@@ -301,7 +301,7 @@ export function Header({ title }: HeaderProps) {
   };
 
   return (
-    <header className="h-16 flex-shrink-0 border-b border-border bg-background/80 backdrop-blur-sm">
+    <header className="relative z-50 h-16 flex-shrink-0 border-b border-border bg-background/80 backdrop-blur-sm">
       <div className="flex items-center justify-between h-full px-6">
         {/* Left side */}
         <div className="flex items-center gap-4">
@@ -418,28 +418,42 @@ export function Header({ title }: HeaderProps) {
           </DropdownMenu>
 
           {/* Agent status */}
-          <div
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border ${
-              whatsappNumber
-                ? 'bg-emerald-500/10 border-emerald-500/20'
-                : 'bg-zinc-500/10 border-zinc-500/20'
-            }`}
-            title={whatsappNumber ? undefined : 'Conectá un número de WhatsApp para comenzar.'}
-          >
-            <span
-              className={`w-2 h-2 rounded-full ${
+          <div className="relative group">
+            <div
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border ${
                 whatsappNumber
-                  ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.6)]'
-                  : 'bg-zinc-400 shadow-[0_0_8px_rgba(161,161,170,0.35)]'
-              }`}
-            />
-            <span
-              className={`text-xs font-medium ${
-                whatsappNumber ? 'text-emerald-400' : 'text-zinc-300'
+                  ? 'bg-emerald-500/10 border-emerald-500/20'
+                  : 'bg-zinc-500/10 border-zinc-500/20'
               }`}
             >
-              {whatsappNumber ? 'Agente activo' : 'Agente inactivo'}
-            </span>
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  whatsappNumber
+                    ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.6)]'
+                    : 'bg-zinc-400 shadow-[0_0_8px_rgba(161,161,170,0.35)]'
+                }`}
+              />
+              <span
+                className={`text-xs font-medium ${
+                  whatsappNumber ? 'text-emerald-400' : 'text-zinc-300'
+                }`}
+              >
+                {whatsappNumber ? 'Agente activo' : 'Agente inactivo'}
+              </span>
+            </div>
+
+            {!whatsappNumber && (
+              <div
+                role="tooltip"
+                className="pointer-events-none absolute right-0 top-full mt-2 z-50 w-[260px] opacity-0 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-200"
+              >
+                <div className="rounded-xl border border-border bg-secondary/95 px-3 py-2 shadow-lg shadow-black/20">
+                  <p className="text-xs text-muted-foreground">
+                    Conectá un número de WhatsApp para comenzar.
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>

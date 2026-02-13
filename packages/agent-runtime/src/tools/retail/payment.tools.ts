@@ -482,9 +482,20 @@ export class ExtractReceiptAmountTool extends BaseTool<typeof ExtractReceiptAmou
     this.prisma = prisma;
   }
 
-  private resolveWhatsAppApiKey(number: { apiKeyEnc?: string | null; apiKeyIv?: string | null }): string {
-    if (!number.apiKeyEnc || !number.apiKeyIv) return '';
-    return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
+  private resolveWhatsAppApiKey(number: {
+    apiKeyEnc?: string | null;
+    apiKeyIv?: string | null;
+    provider?: string | null;
+  }): string {
+    if (number.apiKeyEnc && number.apiKeyIv) {
+      return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
+    }
+
+    const provider = (number.provider || 'infobip').toLowerCase();
+    if (provider === 'infobip') {
+      return (process.env.INFOBIP_API_KEY || '').trim();
+    }
+    return '';
   }
 
   private async fetchReceiptBuffer(
@@ -525,7 +536,7 @@ export class ExtractReceiptAmountTool extends BaseTool<typeof ExtractReceiptAmou
 
     const whatsappNumber = await this.prisma.whatsAppNumber.findFirst({
       where: { workspaceId: context.workspaceId, isActive: true },
-      select: { apiKeyEnc: true, apiKeyIv: true },
+      select: { apiKeyEnc: true, apiKeyIv: true, provider: true },
     });
 
     const apiKey =

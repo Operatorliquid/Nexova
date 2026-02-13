@@ -7,6 +7,31 @@ import { z } from 'zod';
 import { encrypt } from '@nexova/core';
 import { Redis } from 'ioredis';
 
+function hasGlobalInfobipApiKey(): boolean {
+  return (process.env.INFOBIP_API_KEY || '').trim().length > 0;
+}
+
+function getWhatsAppCredentialsStatus(number: { provider?: string | null; apiKeyEnc?: string | null; apiKeyIv?: string | null }): {
+  hasCredentials: boolean;
+  credentialsSource: 'global' | 'number' | 'missing';
+} {
+  const provider = (number.provider || 'infobip').toLowerCase();
+  const hasPerNumber = Boolean(number.apiKeyEnc && number.apiKeyIv);
+
+  if (provider === 'infobip') {
+    const hasGlobal = hasGlobalInfobipApiKey();
+    return {
+      hasCredentials: hasPerNumber || hasGlobal,
+      credentialsSource: hasPerNumber ? 'number' : hasGlobal ? 'global' : 'missing',
+    };
+  }
+
+  return {
+    hasCredentials: hasPerNumber,
+    credentialsSource: hasPerNumber ? 'number' : 'missing',
+  };
+}
+
 const createWhatsAppNumberSchema = z.object({
   phoneNumber: z.string().min(8, 'El número debe tener al menos 8 dígitos').transform((val) => {
     // Auto-add + if missing
@@ -310,7 +335,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     // Don't expose API keys
     const sanitized = numbers.map(({ apiKeyEnc, apiKeyIv, ...n }) => ({
       ...n,
-      hasCredentials: !!apiKeyEnc && !!apiKeyIv,
+      ...getWhatsAppCredentialsStatus({ provider: n.provider, apiKeyEnc, apiKeyIv }),
     }));
 
     reply.send({ numbers: sanitized });
@@ -352,7 +377,12 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     // Don't expose API key in response
     const { apiKeyEnc: _, apiKeyIv: __, ...sanitized } = number;
 
-    reply.code(201).send({ number: sanitized });
+    reply.code(201).send({
+      number: {
+        ...sanitized,
+        ...getWhatsAppCredentialsStatus(number),
+      },
+    });
   });
 
   // Update WhatsApp number
@@ -388,7 +418,12 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     // Don't expose API key in response
     const { apiKeyEnc: _, apiKeyIv: __, ...sanitized } = number;
 
-    reply.send({ number: sanitized });
+    reply.send({
+      number: {
+        ...sanitized,
+        ...getWhatsAppCredentialsStatus(number),
+      },
+    });
   });
 
   // Delete WhatsApp number
@@ -447,7 +482,8 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       where: { id },
     });
 
-    if (!number || !number.apiKeyEnc || !number.apiKeyIv || !number.apiUrl) {
+    const credentialStatus = number ? getWhatsAppCredentialsStatus(number) : null;
+    if (!number || !credentialStatus?.hasCredentials || !number.apiUrl) {
       return reply.code(400).send({
         error: 'BAD_REQUEST',
         message: 'Number has no credentials configured',

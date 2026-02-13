@@ -18,7 +18,6 @@ import {
   MessageSquare,
   Package,
   ShoppingCart,
-  Sparkles,
   TrendingUp,
 } from 'lucide-react';
 import {
@@ -421,13 +420,6 @@ export default function DashboardHome() {
               icon: Bell,
               tone: summary.newOrders.length > 0 ? 'text-primary' : 'text-muted-foreground',
               bg: summary.newOrders.length > 0 ? 'bg-primary/10' : 'bg-secondary',
-            },
-            {
-              label: 'Ticket promedio',
-              value: formatCurrency(summary.avgOrderValue),
-              icon: Sparkles,
-              tone: 'text-sky-400',
-              bg: 'bg-sky-500/10',
             },
             {
               label: 'Pagado',

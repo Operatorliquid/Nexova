@@ -45,11 +45,18 @@ realtimePublisher.on('error', (err) => {
 function resolveWhatsAppApiKey(number: {
   apiKeyEnc?: string | null;
   apiKeyIv?: string | null;
+  provider?: string | null;
 }): string {
-  if (!number.apiKeyEnc || !number.apiKeyIv) {
-    return '';
+  if (number.apiKeyEnc && number.apiKeyIv) {
+    return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
   }
-  return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
+
+  // Default: use a single global Infobip API key (configured in env vars).
+  const provider = (number.provider || 'infobip').toLowerCase();
+  if (provider === 'infobip') {
+    return (process.env.INFOBIP_API_KEY || '').trim();
+  }
+  return '';
 }
 
 function resolveInfobipBaseUrl(apiUrl?: string | null): string {

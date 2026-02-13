@@ -15,7 +15,6 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-  Textarea,
 } from '../../components/ui';
 import { businessTypes } from '../../config/modules';
 import { apiFetch } from '../../lib/api';
@@ -93,25 +92,13 @@ export default function WhatsAppNumbersPage() {
   const [error, setError] = useState('');
   const [formData, setFormData] = useState({
     phoneNumber: '',
-    displayName: '',
     businessType: 'commerce',
-    provider: 'infobip',
-    apiKey: '',
-    apiUrl: '',
-    webhookSecret: '',
-    notes: '',
   });
 
   const resetCreateForm = () => {
     setFormData({
       phoneNumber: '',
-      displayName: '',
       businessType: 'commerce',
-      provider: 'infobip',
-      apiKey: '',
-      apiUrl: '',
-      webhookSecret: '',
-      notes: '',
     });
     setError('');
   };
@@ -163,13 +150,7 @@ export default function WhatsAppNumbersPage() {
     try {
       const payload = {
         phoneNumber: formData.phoneNumber.trim(),
-        displayName: formData.displayName.trim() || undefined,
         businessType: formData.businessType,
-        provider: formData.provider,
-        apiKey: formData.apiKey.trim() || undefined,
-        apiUrl: formData.apiUrl.trim() || undefined,
-        webhookSecret: formData.webhookSecret.trim() || undefined,
-        notes: formData.notes.trim() || undefined,
       };
 
       const res = await apiFetch('/api/v1/admin/whatsapp-numbers', {
@@ -444,7 +425,7 @@ export default function WhatsAppNumbersPage() {
               <div>
                 <DialogTitle>Agregar número WhatsApp</DialogTitle>
                 <DialogDescription>
-                  Configurá el número y sus credenciales de proveedor
+                  Cargá el número y el tipo de comercio. El proveedor por defecto es Infobip.
                 </DialogDescription>
               </div>
             </div>
@@ -458,98 +439,32 @@ export default function WhatsAppNumbersPage() {
               </div>
             )}
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Número de teléfono</Label>
-                <Input
-                  placeholder="5491155550000"
-                  value={formData.phoneNumber}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, phoneNumber: e.target.value }))}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Nombre visible</Label>
-                <Input
-                  placeholder="Mi línea principal"
-                  value={formData.displayName}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, displayName: e.target.value }))}
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Proveedor</Label>
-                <Select
-                  value={formData.provider}
-                  onValueChange={(value) => setFormData((prev) => ({ ...prev, provider: value }))}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="infobip">Infobip</SelectItem>
-                    <SelectItem value="twilio">Twilio</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Tipo de negocio</Label>
-                <Select
-                  value={formData.businessType}
-                  onValueChange={(value) => setFormData((prev) => ({ ...prev, businessType: value }))}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {Object.values(businessTypes).map((type) => (
-                      <SelectItem key={type.id} value={type.id}>
-                        {type.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
             <div className="space-y-2">
-              <Label>API Key (opcional)</Label>
+              <Label>Número de teléfono</Label>
               <Input
-                type="password"
-                placeholder="apikey..."
-                value={formData.apiKey}
-                onChange={(e) => setFormData((prev) => ({ ...prev, apiKey: e.target.value }))}
+                placeholder="5491155550000"
+                value={formData.phoneNumber}
+                onChange={(e) => setFormData((prev) => ({ ...prev, phoneNumber: e.target.value }))}
               />
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>API URL (opcional)</Label>
-                <Input
-                  placeholder="https://api.infobip.com"
-                  value={formData.apiUrl}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, apiUrl: e.target.value }))}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Webhook secret (opcional)</Label>
-                <Input
-                  placeholder="secret..."
-                  value={formData.webhookSecret}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, webhookSecret: e.target.value }))}
-                />
-              </div>
             </div>
 
             <div className="space-y-2">
-              <Label>Notas</Label>
-              <Textarea
-                value={formData.notes}
-                onChange={(e) => setFormData((prev) => ({ ...prev, notes: e.target.value }))}
-                placeholder="Notas internas para administración"
-                rows={3}
-              />
+              <Label>Tipo de comercio</Label>
+              <Select
+                value={formData.businessType}
+                onValueChange={(value) => setFormData((prev) => ({ ...prev, businessType: value }))}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.values(businessTypes).map((type) => (
+                    <SelectItem key={type.id} value={type.id}>
+                      {type.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
 

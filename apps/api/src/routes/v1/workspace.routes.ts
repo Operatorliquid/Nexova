@@ -479,21 +479,7 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
     { preHandler: [fastify.authenticate] },
     async (request, reply) => {
       const { id, numberId } = request.params as { id: string; numberId: string };
-      const userId = request.user!.sub;
       if (!assertWorkspaceAccess(request, reply, id)) return;
-
-      // Verify user is owner of this workspace
-      const membership = await fastify.prisma.membership.findUnique({
-        where: { userId_workspaceId: { userId, workspaceId: id } },
-        include: { role: true },
-      });
-
-      if (!membership || !membership.role.permissions.includes('*')) {
-        return reply.code(403).send({
-          error: 'FORBIDDEN',
-          message: 'Only owners can connect WhatsApp numbers',
-        });
-      }
 
       // Check if workspace already has a number
       const existingNumber = await fastify.prisma.whatsAppNumber.findFirst({
@@ -575,21 +561,7 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
     { preHandler: [fastify.authenticate] },
     async (request, reply) => {
       const { id } = request.params as { id: string };
-      const userId = request.user!.sub;
       if (!assertWorkspaceAccess(request, reply, id)) return;
-
-      // Verify user is owner of this workspace
-      const membership = await fastify.prisma.membership.findUnique({
-        where: { userId_workspaceId: { userId, workspaceId: id } },
-        include: { role: true },
-      });
-
-      if (!membership || !membership.role.permissions.includes('*')) {
-        return reply.code(403).send({
-          error: 'FORBIDDEN',
-          message: 'Only owners can disconnect WhatsApp numbers',
-        });
-      }
 
       // Find and release the number
       const number = await fastify.prisma.whatsAppNumber.findFirst({

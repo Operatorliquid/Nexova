@@ -20,18 +20,31 @@ const OWNER_WHATSAPP_NOTIFICATION_EVENT = 'owner.whatsapp_notification';
 function resolveWhatsAppApiKey(number: {
   apiKeyEnc?: string | null;
   apiKeyIv?: string | null;
+  provider?: string | null;
 }): string {
-  if (!number.apiKeyEnc || !number.apiKeyIv) {
-    return '';
+  if (number.apiKeyEnc && number.apiKeyIv) {
+    return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
   }
-  return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
+
+  const provider = (number.provider || 'infobip').toLowerCase();
+  if (provider === 'infobip') {
+    return (process.env.INFOBIP_API_KEY || '').trim();
+  }
+  return '';
 }
 
 function resolveInfobipBaseUrl(apiUrl?: string | null): string {
-  if (apiUrl && apiUrl.trim().length > 0) {
-    return apiUrl.replace(/\/$/, '');
+  const cleaned = (apiUrl || '').trim().replace(/\/$/, '');
+  const envUrl = (process.env.INFOBIP_BASE_URL || '').trim().replace(/\/$/, '');
+  const defaultUrl = 'https://api.infobip.com';
+
+  if (cleaned && cleaned.toLowerCase() !== defaultUrl) {
+    return cleaned;
   }
-  return 'https://api.infobip.com';
+  if (envUrl) {
+    return envUrl;
+  }
+  return cleaned || defaultUrl;
 }
 
 async function sendOwnerWhatsAppNotification(
@@ -40,7 +53,7 @@ async function sendOwnerWhatsAppNotification(
 ): Promise<void> {
   const whatsappNumber = await prisma.whatsAppNumber.findFirst({
     where: { workspaceId: params.workspaceId, isActive: true },
-    select: { apiKeyEnc: true, apiKeyIv: true, apiUrl: true, phoneNumber: true },
+    select: { apiKeyEnc: true, apiKeyIv: true, apiUrl: true, phoneNumber: true, provider: true },
   });
 
   if (!whatsappNumber) {

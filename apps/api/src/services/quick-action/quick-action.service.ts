@@ -930,7 +930,7 @@ export class QuickActionService {
 
     const whatsappNumber = await this.prisma.whatsAppNumber.findFirst({
       where: { workspaceId, isActive: true },
-      select: { apiKeyEnc: true, apiKeyIv: true, apiUrl: true, phoneNumber: true },
+      select: { apiKeyEnc: true, apiKeyIv: true, apiUrl: true, phoneNumber: true, provider: true },
     });
 
     if (!whatsappNumber) {
@@ -979,7 +979,7 @@ export class QuickActionService {
   private async toolSendDebtRemindersBulk(workspaceId: string) {
     const whatsappNumber = await this.prisma.whatsAppNumber.findFirst({
       where: { workspaceId, isActive: true },
-      select: { apiKeyEnc: true, apiKeyIv: true, apiUrl: true, phoneNumber: true },
+      select: { apiKeyEnc: true, apiKeyIv: true, apiUrl: true, phoneNumber: true, provider: true },
     });
 
     if (!whatsappNumber) {
@@ -5121,11 +5121,20 @@ export class QuickActionService {
     };
   }
 
-  private resolveWhatsAppApiKey(number: { apiKeyEnc?: string | null; apiKeyIv?: string | null }): string {
-    if (!number.apiKeyEnc || !number.apiKeyIv) {
-      return '';
+  private resolveWhatsAppApiKey(number: {
+    apiKeyEnc?: string | null;
+    apiKeyIv?: string | null;
+    provider?: string | null;
+  }): string {
+    if (number.apiKeyEnc && number.apiKeyIv) {
+      return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
     }
-    return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
+
+    const provider = (number.provider || 'infobip').toLowerCase();
+    if (provider === 'infobip') {
+      return (process.env.INFOBIP_API_KEY || '').trim();
+    }
+    return '';
   }
 
   private resolveInfobipBaseUrl(apiUrl?: string | null): string {
