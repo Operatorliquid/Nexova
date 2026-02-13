@@ -1,5 +1,5 @@
 /**
- * Authentication Routes
+** Authentication Routes
  */
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
