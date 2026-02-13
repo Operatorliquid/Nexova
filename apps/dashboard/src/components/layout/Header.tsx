@@ -27,6 +27,14 @@ interface HeaderProps {
   title?: string;
 }
 
+type WorkspaceWhatsAppNumber = {
+  id: string;
+  phoneNumber: string;
+  displayName?: string | null;
+  status?: string | null;
+  healthStatus?: string | null;
+};
+
 interface NotificationItem {
   id: string;
   type: string;
@@ -47,6 +55,7 @@ export function Header({ title }: HeaderProps) {
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [isNotificationsLoading, setIsNotificationsLoading] = useState(true);
+  const [whatsappNumber, setWhatsappNumber] = useState<WorkspaceWhatsAppNumber | null>(null);
   const seenIdsRef = useRef<Set<string>>(new Set());
   const initializedRef = useRef(false);
 
@@ -134,8 +143,27 @@ export function Header({ title }: HeaderProps) {
       }
     };
 
-    fetchNotifications();
-    const interval = setInterval(fetchNotifications, 10000);
+    const fetchWhatsAppNumber = async () => {
+      try {
+        const response = await apiFetch(`/api/v1/workspace/${workspace.id}/whatsapp-numbers`, {}, workspace.id);
+        if (!response.ok) {
+          setWhatsappNumber(null);
+          return;
+        }
+        const data = await response.json().catch(() => ({}));
+        setWhatsappNumber((data?.number as WorkspaceWhatsAppNumber | null) || null);
+      } catch (error) {
+        console.error('Failed to fetch WhatsApp number:', error);
+        setWhatsappNumber(null);
+      }
+    };
+
+    const fetchAll = async () => {
+      await Promise.all([fetchNotifications(), fetchWhatsAppNumber()]);
+    };
+
+    fetchAll();
+    const interval = setInterval(fetchAll, 10000);
     return () => clearInterval(interval);
   }, [workspace?.id]);
 
@@ -390,10 +418,27 @@ export function Header({ title }: HeaderProps) {
           </DropdownMenu>
 
           {/* Agent status */}
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.6)]" />
-            <span className="text-xs font-medium text-emerald-400">
-              Agente activo
+          <div
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border ${
+              whatsappNumber
+                ? 'bg-emerald-500/10 border-emerald-500/20'
+                : 'bg-zinc-500/10 border-zinc-500/20'
+            }`}
+            title={whatsappNumber ? undefined : 'Conectá un número de WhatsApp para comenzar.'}
+          >
+            <span
+              className={`w-2 h-2 rounded-full ${
+                whatsappNumber
+                  ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.6)]'
+                  : 'bg-zinc-400 shadow-[0_0_8px_rgba(161,161,170,0.35)]'
+              }`}
+            />
+            <span
+              className={`text-xs font-medium ${
+                whatsappNumber ? 'text-emerald-400' : 'text-zinc-300'
+              }`}
+            >
+              {whatsappNumber ? 'Agente activo' : 'Agente inactivo'}
             </span>
           </div>
         </div>
