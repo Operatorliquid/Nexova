@@ -33,19 +33,23 @@ export function validatePasswordStrength(password: string): {
   const errors: string[] = [];
 
   if (password.length < 8) {
-    errors.push('Password must be at least 8 characters long');
+    errors.push('La contraseña debe tener al menos 8 caracteres');
   }
   if (password.length > 128) {
-    errors.push('Password must be at most 128 characters long');
+    errors.push('La contraseña debe tener como máximo 128 caracteres');
   }
-  if (!/[a-z]/.test(password)) {
-    errors.push('Password must contain at least one lowercase letter');
-  }
-  if (!/[A-Z]/.test(password)) {
-    errors.push('Password must contain at least one uppercase letter');
-  }
-  if (!/[0-9]/.test(password)) {
-    errors.push('Password must contain at least one number');
+
+  const missing: string[] = [];
+  if (!/[a-z]/.test(password)) missing.push('una letra minúscula');
+  if (!/[A-Z]/.test(password)) missing.push('una letra mayúscula');
+  if (!/[0-9]/.test(password)) missing.push('un número');
+
+  if (missing.length === 1) {
+    errors.push(`La contraseña debe contener al menos ${missing[0]}`);
+  } else if (missing.length === 2) {
+    errors.push(`La contraseña debe contener al menos ${missing[0]} y ${missing[1]}`);
+  } else if (missing.length >= 3) {
+    errors.push(`La contraseña debe contener al menos ${missing[0]}, ${missing[1]} y ${missing[2]}`);
   }
 
   return {

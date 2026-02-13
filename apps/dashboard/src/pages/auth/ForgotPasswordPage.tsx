@@ -59,9 +59,16 @@ export default function ForgotPasswordPage() {
       <div className="glass-card rounded-2xl w-full max-w-md overflow-hidden">
         <div className="p-8 text-center border-b border-border">
           <div className="flex justify-center mb-4">
-            <div className="w-12 h-12 rounded-xl bg-primary flex items-center justify-center shadow-lg shadow-primary/30">
-              <span className="text-white font-bold text-xl">N</span>
-            </div>
+            <img
+              src="/brand/logo-light.svg"
+              alt="Nexova"
+              className="h-10 w-auto block dark:hidden"
+            />
+            <img
+              src="/brand/logo-dark.svg"
+              alt="Nexova"
+              className="h-10 w-auto hidden dark:block"
+            />
           </div>
           <h1 className="text-2xl font-semibold text-foreground">Recuperar contraseña</h1>
           <p className="text-muted-foreground mt-1">
@@ -114,4 +121,3 @@ export default function ForgotPasswordPage() {
     </div>
   );
 }
-

@@ -100,9 +100,16 @@ export default function OnboardingPage() {
 
       <div className="max-w-2xl mx-auto pt-10">
         <div className="flex justify-center mb-8">
-          <div className="w-12 h-12 rounded-xl bg-primary flex items-center justify-center shadow-lg shadow-primary/30">
-            <span className="text-white font-bold text-xl">N</span>
-          </div>
+          <img
+            src="/brand/logo-light.svg"
+            alt="Nexova"
+            className="h-10 w-auto block dark:hidden"
+          />
+          <img
+            src="/brand/logo-dark.svg"
+            alt="Nexova"
+            className="h-10 w-auto hidden dark:block"
+          />
         </div>
 
         {currentStep !== 'complete' && (
