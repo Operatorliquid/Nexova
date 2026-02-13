@@ -39,7 +39,7 @@ export interface AuthState {
 }
 
 export interface AuthContextValue extends AuthState {
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string, rememberMe?: boolean) => Promise<void>;
   register: (data: RegisterData) => Promise<void>;
   logout: () => Promise<void>;
   switchWorkspace: (workspaceId: string) => void;
@@ -174,13 +174,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [checkAuth]);
 
-  async function login(email: string, password: string) {
+  async function login(email: string, password: string, rememberMe: boolean = true) {
     const response = await fetch(`${API_URL}/api/v1/auth/login`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ email, password, rememberMe }),
       credentials: 'include',
     });
 

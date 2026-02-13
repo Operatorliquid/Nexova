@@ -3,7 +3,16 @@
  */
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { AuthService, WorkspaceService } from '@nexova/core';
+import {
+  AuthService,
+  WorkspaceService,
+  generateSecureToken,
+  hashPassword,
+  hashToken,
+  validatePasswordStrength,
+} from '@nexova/core';
+import { getDashboardUrl } from '../../utils/billing.js';
+import { isMailerConfigured, sendMail } from '../../utils/mailer.js';
 
 const registerSchema = z.object({
   email: z.string().email(),
@@ -15,10 +24,20 @@ const registerSchema = z.object({
 const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(1),
+  rememberMe: z.boolean().optional(),
 });
 
 const refreshSchema = z.object({
   refreshToken: z.string().min(1).optional(),
+});
+
+const forgotPasswordSchema = z.object({
+  email: z.string().email(),
+});
+
+const resetPasswordSchema = z.object({
+  token: z.string().min(16).max(256),
+  password: z.string().min(8).max(128),
 });
 
 export const authRoutes: FastifyPluginAsync = async (fastify) => {
@@ -33,8 +52,10 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
 
   const setAuthCookies = (
     reply: import('fastify').FastifyReply,
-    tokens: { accessToken: string; refreshToken: string; accessTokenExpiresAt: Date; refreshTokenExpiresAt: Date }
+    tokens: { accessToken: string; refreshToken: string; accessTokenExpiresAt: Date; refreshTokenExpiresAt: Date },
+    options?: { rememberMe?: boolean }
   ) => {
+    const rememberMe = options?.rememberMe ?? true;
     const base = {
       httpOnly: true,
       secure: cookieSecure,
@@ -45,10 +66,18 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       ...base,
       expires: tokens.accessTokenExpiresAt,
     });
-    reply.setCookie('refreshToken', tokens.refreshToken, {
-      ...base,
-      expires: tokens.refreshTokenExpiresAt,
-    });
+
+    const refreshOptions: Record<string, unknown> = { ...base };
+    if (rememberMe) {
+      refreshOptions.expires = tokens.refreshTokenExpiresAt;
+    }
+    reply.setCookie('refreshToken', tokens.refreshToken, refreshOptions as any);
+
+    const rememberOptions: Record<string, unknown> = { ...base };
+    if (rememberMe) {
+      rememberOptions.expires = tokens.refreshTokenExpiresAt;
+    }
+    reply.setCookie('rememberMe', rememberMe ? '1' : '0', rememberOptions as any);
   };
 
   const clearAuthCookies = (reply: import('fastify').FastifyReply) => {
@@ -62,7 +91,29 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       secure: cookieSecure,
       sameSite: cookieSameSite,
     });
+    reply.clearCookie('rememberMe', {
+      path: '/',
+      secure: cookieSecure,
+      sameSite: cookieSameSite,
+    });
   };
+
+  const readRememberMeCookie = (request: import('fastify').FastifyRequest): boolean => {
+    const raw =
+      typeof (request as any).cookies?.rememberMe === 'string' ? (request as any).cookies.rememberMe : undefined;
+    if (!raw) return true; // Backwards compatible default.
+    const normalized = raw.toLowerCase().trim();
+    if (normalized === '0' || normalized === 'false' || normalized === 'no') return false;
+    return true;
+  };
+
+  const escapeHtml = (value: string) =>
+    value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
 
   const buildWorkspaceName = (user: { firstName?: string | null; email?: string | null }) => {
     if (user.firstName?.trim()) {
@@ -206,7 +257,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       throw new Error('Failed to create workspace membership');
     }
 
-    setAuthCookies(reply, result.tokens);
+    setAuthCookies(reply, result.tokens, { rememberMe: true });
 
     reply.code(201).send({
       user: result.user,
@@ -221,6 +272,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
   // Login
   fastify.post('/login', async (request, reply) => {
     const body = loginSchema.parse(request.body);
+    const rememberMe = typeof body.rememberMe === 'boolean' ? body.rememberMe : true;
 
     const result = await authService.login({
       email: body.email,
@@ -233,7 +285,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
     const workspaces = mapWorkspaces(memberships);
     const workspace = workspaces[0] || null;
 
-    setAuthCookies(reply, result.tokens);
+    setAuthCookies(reply, result.tokens, { rememberMe });
 
     reply.send({
       user: result.user,
@@ -243,6 +295,136 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       refreshToken: result.tokens.refreshToken,
       expiresAt: result.tokens.accessTokenExpiresAt,
     });
+  });
+
+  // Forgot password (send reset email)
+  fastify.post('/forgot-password', async (request, reply) => {
+    const body = forgotPasswordSchema.parse(request.body);
+
+    if (!isMailerConfigured()) {
+      return reply.code(500).send({
+        error: 'MAIL_NOT_CONFIGURED',
+        message: 'El servicio de email no está configurado',
+      });
+    }
+
+    const email = body.email.trim().toLowerCase();
+    const user = await fastify.prisma.user.findUnique({
+      where: { email },
+      select: { id: true, email: true, firstName: true },
+    });
+
+    // Always return success when the email is not registered to avoid account enumeration.
+    if (!user) {
+      return reply.send({ success: true });
+    }
+
+    const token = generateSecureToken(32);
+    const tokenHash = hashToken(token);
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+    await fastify.prisma.passwordReset.create({
+      data: {
+        userId: user.id,
+        tokenHash,
+        expiresAt,
+      },
+    });
+
+    const dashboardBase = getDashboardUrl().replace(/\/$/, '');
+    const resetUrl = `${dashboardBase}/reset-password?token=${encodeURIComponent(token)}`;
+    const displayName = user.firstName?.trim() || user.email;
+    const displayNameHtml = escapeHtml(displayName);
+
+    const mailResult = await sendMail({
+      to: user.email,
+      subject: 'Recuperación de contraseña - Nexova',
+      text: [
+        `Hola ${displayName},`,
+        '',
+        'Recibimos una solicitud para restablecer tu contraseña.',
+        `Abrí este enlace para elegir una nueva contraseña: ${resetUrl}`,
+        '',
+        'Este enlace vence en 1 hora.',
+        'Si no lo solicitaste, podés ignorar este email.',
+      ].join('\n'),
+      html: [
+        `<p>Hola <strong>${displayNameHtml}</strong>,</p>`,
+        `<p>Recibimos una solicitud para restablecer tu contraseña.</p>`,
+        `<p><a href="${resetUrl}">Restablecer contraseña</a></p>`,
+        `<p style="color:#6b7280;font-size:12px">Este enlace vence en 1 hora. Si no lo solicitaste, podés ignorar este email.</p>`,
+      ].join(''),
+    });
+
+    if (!mailResult.sent) {
+      fastify.log.info(
+        { email: user.email, mailError: mailResult.error },
+        'Password reset email send failed'
+      );
+      return reply.code(500).send({
+        error: 'MAIL_SEND_FAILED',
+        message: 'No se pudo enviar el email de recuperación. Intenta nuevamente.',
+      });
+    }
+
+    return reply.send({ success: true });
+  });
+
+  // Reset password (consume token)
+  fastify.post('/reset-password', async (request, reply) => {
+    const body = resetPasswordSchema.parse(request.body);
+    const tokenHash = hashToken(body.token);
+
+    const reset = await fastify.prisma.passwordReset.findFirst({
+      where: {
+        tokenHash,
+        usedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+      select: { id: true, userId: true },
+    });
+
+    if (!reset) {
+      return reply.code(400).send({
+        error: 'INVALID_TOKEN',
+        message: 'El código es inválido o expiró',
+      });
+    }
+
+    const validation = validatePasswordStrength(body.password);
+    if (!validation.valid) {
+      return reply.code(400).send({
+        error: 'WEAK_PASSWORD',
+        message: validation.errors.join('. '),
+      });
+    }
+
+    const passwordHash = await hashPassword(body.password);
+
+    await fastify.prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: reset.userId },
+        data: {
+          passwordHash,
+          failedLoginCount: 0,
+          lockedUntil: null,
+        },
+      });
+
+      await tx.passwordReset.update({
+        where: { id: reset.id },
+        data: { usedAt: new Date() },
+      });
+
+      // Revoke sessions so the new password takes effect everywhere.
+      await tx.refreshToken.updateMany({
+        where: { userId: reset.userId, revokedAt: null },
+        data: { revokedAt: new Date(), revokeReason: 'password_reset' },
+      });
+    });
+
+    clearAuthCookies(reply);
+    return reply.send({ success: true });
   });
 
   // Refresh token
@@ -264,7 +446,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       request.headers['user-agent']
     );
 
-    setAuthCookies(reply, result.tokens);
+    setAuthCookies(reply, result.tokens, { rememberMe: readRememberMeCookie(request) });
 
     reply.send({
       user: result.user,

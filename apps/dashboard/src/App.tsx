@@ -11,6 +11,8 @@ import WorkspaceSuspendedPage from './pages/paywall/WorkspaceSuspendedPage';
 // Lazy load pages
 const LoginPage = lazy(() => import('./pages/auth/LoginPage'));
 const RegisterPage = lazy(() => import('./pages/auth/RegisterPage'));
+const ForgotPasswordPage = lazy(() => import('./pages/auth/ForgotPasswordPage'));
+const ResetPasswordPage = lazy(() => import('./pages/auth/ResetPasswordPage'));
 const OnboardingPage = lazy(() => import('./pages/onboarding/OnboardingPage'));
 const DashboardHome = lazy(() => import('./pages/dashboard/DashboardHome'));
 const InboxPage = lazy(() => import('./pages/inbox/InboxPage'));
@@ -148,6 +150,8 @@ function AppRoutes() {
             </PublicRoute>
           }
         />
+        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
 
         {/* Onboarding route */}
         <Route

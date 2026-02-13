@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Button, Input } from '../../components/ui';
+import { Eye, EyeOff } from 'lucide-react';
+import { Button, Input, Label } from '../../components/ui';
 import { useAuth } from '../../contexts/AuthContext';
 
 export default function LoginPage() {
@@ -9,6 +10,7 @@ export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
@@ -18,10 +20,10 @@ export default function LoginPage() {
     setIsLoading(true);
 
     try {
-      await login(email, password);
+      await login(email, password, rememberMe);
       // Navigation is handled by route guards based on user type
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error al iniciar sesion');
+      setError(err instanceof Error ? err.message : 'Error al iniciar sesión');
     } finally {
       setIsLoading(false);
     }
@@ -57,14 +59,34 @@ export default function LoginPage() {
               onChange={(e) => setEmail(e.target.value)}
               required
             />
-            <Input
-              type="password"
-              label="Contrasena"
-              placeholder="••••••••"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
+            <div className="space-y-2">
+              <Label className="text-foreground">Contraseña</Label>
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  className={[
+                    'flex h-10 w-full rounded-xl border border-input bg-background px-4 py-2.5 text-sm text-foreground shadow-sm transition-all duration-200',
+                    'placeholder:text-muted-foreground',
+                    'focus:outline-none focus:ring-2 focus:ring-ring focus:border-ring',
+                    'hover:border-muted-foreground/30',
+                    'disabled:cursor-not-allowed disabled:opacity-50',
+                    'pr-12',
+                  ].join(' ')}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((prev) => !prev)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                  aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
 
             {error && (
               <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
@@ -86,20 +108,13 @@ export default function LoginPage() {
                 to="/forgot-password"
                 className="text-primary hover:text-primary/80 transition-colors"
               >
-                Olvidaste tu contrasena?
+                Olvidaste tu contraseña?
               </Link>
             </div>
 
             <Button type="submit" className="w-full" isLoading={isLoading}>
               Ingresar
             </Button>
-
-            <p className="text-center text-sm text-muted-foreground">
-              No tenes cuenta?{' '}
-              <Link to="/register" className="text-primary hover:text-primary/80 transition-colors">
-                Registrate
-              </Link>
-            </p>
           </form>
         </div>
       </div>
