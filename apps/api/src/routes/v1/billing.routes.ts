@@ -874,7 +874,12 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
   });
 
   fastify.get('/auth/google/start', async (request, reply) => {
-    const { flowToken, companyName } = request.query as { flowToken?: string; companyName?: string };
+    const { flowToken, companyName, firstName, lastName } = request.query as {
+      flowToken?: string;
+      companyName?: string;
+      firstName?: string;
+      lastName?: string;
+    };
     if (!flowToken) {
       return reply.code(400).send({
         error: 'FLOW_TOKEN_REQUIRED',
@@ -893,7 +898,22 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
       });
     }
 
+    const normalizedFirstName = typeof firstName === 'string' ? firstName.trim() : '';
+    const normalizedLastName = typeof lastName === 'string' ? lastName.trim() : '';
     const normalizedCompany = typeof companyName === 'string' ? companyName.trim() : '';
+
+    if (!normalizedFirstName) {
+      return reply.code(400).send({
+        error: 'FIRST_NAME_REQUIRED',
+        message: 'Ingresá tu nombre para continuar.',
+      });
+    }
+    if (!normalizedLastName) {
+      return reply.code(400).send({
+        error: 'LAST_NAME_REQUIRED',
+        message: 'Ingresá tu apellido para continuar.',
+      });
+    }
     if (!normalizedCompany || normalizedCompany.length < 2) {
       return reply.code(400).send({
         error: 'COMPANY_NAME_REQUIRED',
@@ -908,6 +928,8 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
         metadata: {
           ...currentIntentMetadata,
           companyName: normalizedCompany,
+          firstName: normalizedFirstName,
+          lastName: normalizedLastName,
         } as Prisma.InputJsonValue,
       },
     });
@@ -1029,6 +1051,20 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
       });
     }
 
+    const checkoutIntent = oauthState.flowToken
+      ? await fastify.prisma.billingCheckoutIntent.findUnique({
+          where: { flowToken: oauthState.flowToken },
+          select: { id: true, plan: true, metadata: true },
+        })
+      : null;
+    const checkoutMetadata = checkoutIntent ? readIntentMetadata(checkoutIntent.metadata) : {};
+    const checkoutCompanyName =
+      typeof checkoutMetadata.companyName === 'string' ? checkoutMetadata.companyName : null;
+    const checkoutFirstName =
+      typeof checkoutMetadata.firstName === 'string' ? checkoutMetadata.firstName : null;
+    const checkoutLastName =
+      typeof checkoutMetadata.lastName === 'string' ? checkoutMetadata.lastName : null;
+
     let user = await fastify.prisma.user.findUnique({
       where: { email },
       select: {
@@ -1045,8 +1081,8 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
         data: {
           email,
           passwordHash: await hashPassword(randomUUID()),
-          firstName: profile.given_name || null,
-          lastName: profile.family_name || null,
+          firstName: checkoutFirstName || profile.given_name || null,
+          lastName: checkoutLastName || profile.family_name || null,
           status: 'active',
           emailVerifiedAt: new Date(),
         },
@@ -1064,28 +1100,15 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
         data: {
           status: 'active',
           emailVerifiedAt: new Date(),
-          firstName: user.firstName || profile.given_name || null,
-          lastName: user.lastName || profile.family_name || null,
+          firstName: user.firstName || checkoutFirstName || profile.given_name || null,
+          lastName: user.lastName || checkoutLastName || profile.family_name || null,
         },
       });
     }
 
-    const checkoutIntent = oauthState.flowToken
-      ? await fastify.prisma.billingCheckoutIntent.findUnique({
-          where: { flowToken: oauthState.flowToken },
-          select: { id: true, plan: true, metadata: true },
-        })
-      : null;
-    const checkoutCompanyName = checkoutIntent
-      ? (() => {
-          const meta = readIntentMetadata(checkoutIntent.metadata);
-          return typeof meta.companyName === 'string' ? meta.companyName : null;
-        })()
-      : null;
-
     const memberships = await ensureWorkspaceForUser({
       id: user.id,
-      firstName: user.firstName,
+      firstName: user.firstName || checkoutFirstName || profile.given_name || null,
       companyName: checkoutCompanyName,
       email: user.email,
       isSuperAdmin: user.isSuperAdmin,
