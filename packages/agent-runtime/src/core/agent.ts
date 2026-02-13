@@ -7030,34 +7030,66 @@ export class RetailAgent {
     }
 
     if (!customer) {
-      customer = await this.prisma.customer.create({
-        data: {
-          workspaceId,
-          phone: normalizedPhone,
-          status: 'active',
-          deletedAt: options?.deletedAt ?? null,
-          metadata: (options?.metadata ?? {}) as Prisma.InputJsonValue,
-        },
-      });
-
       try {
-        if (!options?.silent) {
-          await createNotificationIfEnabled(this.prisma, {
+        customer = await this.prisma.customer.create({
+          data: {
             workspaceId,
-            type: 'customer.new',
-            title: 'Nuevo cliente',
-            message: `Cliente ${normalizedPhone} registrado`,
-            entityType: 'Customer',
-            entityId: customer.id,
-            metadata: {
-              customerId: customer.id,
-              phone: normalizedPhone,
-              sessionId: null,
-            },
-          });
+            phone: normalizedPhone,
+            status: 'active',
+            deletedAt: options?.deletedAt ?? null,
+            metadata: (options?.metadata ?? {}) as Prisma.InputJsonValue,
+          },
+        });
+
+        try {
+          if (!options?.silent) {
+            await createNotificationIfEnabled(this.prisma, {
+              workspaceId,
+              type: 'customer.new',
+              title: 'Nuevo cliente',
+              message: `Cliente ${normalizedPhone} registrado`,
+              entityType: 'Customer',
+              entityId: customer.id,
+              metadata: {
+                customerId: customer.id,
+                phone: normalizedPhone,
+                sessionId: null,
+              },
+            });
+          }
+        } catch {
+          // Non-blocking
         }
       } catch (error) {
-        // Non-blocking
+        // Race condition: concurrent inbound messages can attempt to create the same customer.
+        // In that case, fetch the existing row and continue instead of failing the whole job.
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+          customer = await this.prisma.customer.findFirst({
+            where: { workspaceId, phone: normalizedPhone },
+          });
+
+          if (!customer && normalizedDigits) {
+            const suffixLength = Math.min(7, normalizedDigits.length);
+            const suffix = normalizedDigits.slice(-suffixLength);
+            const fuzzyCandidates = await this.prisma.customer.findMany({
+              where: {
+                workspaceId,
+                phone: { endsWith: suffix },
+              },
+            });
+
+            customer =
+              fuzzyCandidates.find((candidate) =>
+                this.normalizePhoneDigits(candidate.phone) === normalizedDigits
+              ) || null;
+          }
+
+          if (!customer) {
+            throw error;
+          }
+        } else {
+          throw error;
+        }
       }
     }
 

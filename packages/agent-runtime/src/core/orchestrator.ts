@@ -810,13 +810,26 @@ export class AgentOrchestrator {
     });
 
     if (!customer) {
-      customer = await this.prisma.customer.create({
-        data: {
-          workspaceId,
-          phone,
-          status: 'active',
-        },
-      });
+      try {
+        customer = await this.prisma.customer.create({
+          data: {
+            workspaceId,
+            phone,
+            status: 'active',
+          },
+        });
+      } catch (error) {
+        // Concurrency guard: if another worker created the customer concurrently,
+        // fetch it instead of failing (prevents P2002 unique constraint errors).
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+          customer = await this.prisma.customer.findUnique({
+            where: { workspaceId_phone: { workspaceId, phone } },
+          });
+          if (!customer) throw error;
+        } else {
+          throw error;
+        }
+      }
 
       try {
         await createNotificationIfEnabled(this.prisma, {
