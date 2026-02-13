@@ -454,7 +454,7 @@ export async function webhookRoutes(
             SELECT id
             FROM "whatsapp_numbers"
             WHERE "is_active" = true
-              AND regexp_replace("phone_number", '\\D', '', 'g') = ANY(${digitsCandidates})
+              AND regexp_replace("phone_number", '[^0-9]', '', 'g') = ANY(${digitsCandidates})
             LIMIT 1
           `;
 
