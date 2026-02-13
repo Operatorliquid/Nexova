@@ -71,8 +71,9 @@ export class InfobipClient {
   constructor(config: InfobipConfig) {
     this.baseUrl = config.baseUrl.replace(/\/$/, '');
     this.apiKey = config.apiKey;
-    // Infobip requires numbers WITHOUT the + prefix
-    this.senderNumber = config.senderNumber.replace(/^\+/, '');
+    // Infobip requires numbers WITHOUT the + prefix. Also strip any invisible/unicode
+    // marks or formatting characters to avoid REJECTED_SOURCE errors.
+    this.senderNumber = (config.senderNumber || '').replace(/\D/g, '');
   }
 
   /**

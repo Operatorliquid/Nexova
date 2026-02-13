@@ -33,11 +33,15 @@ function getWhatsAppCredentialsStatus(number: { provider?: string | null; apiKey
 }
 
 const createWhatsAppNumberSchema = z.object({
-  phoneNumber: z.string().min(8, 'El número debe tener al menos 8 dígitos').transform((val) => {
-    // Auto-add + if missing
-    const cleaned = val.replace(/\s/g, '');
-    return cleaned.startsWith('+') ? cleaned : `+${cleaned}`;
-  }),
+  phoneNumber: z
+    .string()
+    .transform((val) => {
+      // Keep canonical E.164-like storage: + + digits only.
+      // This strips formatting and any invisible unicode marks (e.g. RTL/LTR chars).
+      const digits = (val || '').replace(/\D/g, '');
+      return digits ? `+${digits}` : val;
+    })
+    .refine((val) => val.replace(/\D/g, '').length >= 8, 'El número debe tener al menos 8 dígitos'),
   displayName: z.string().min(1).max(255).optional(),
   businessType: z.enum(['commerce', 'bookings']),
   provider: z.enum(['infobip', 'twilio']).default('infobip'),
