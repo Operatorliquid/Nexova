@@ -4,6 +4,7 @@
 import { FastifyPluginAsync, FastifyError } from 'fastify';
 import fp from 'fastify-plugin';
 import { AuthError, WorkspaceError, logger } from '@nexova/core';
+import { ZodError } from 'zod';
 
 interface ErrorResponse {
   error: string;
@@ -39,6 +40,15 @@ const errorPluginCallback: FastifyPluginAsync = async (fastify) => {
       return reply.code(getWorkspaceErrorStatusCode(error.code)).send({
         error: error.code,
         message: error.message,
+      } as ErrorResponse);
+    }
+
+    // Handle Zod validation errors (many routes use zod.parse directly)
+    if (error instanceof ZodError) {
+      return reply.code(400).send({
+        error: 'VALIDATION_ERROR',
+        message: 'Request validation failed',
+        details: error.flatten(),
       } as ErrorResponse);
     }
 

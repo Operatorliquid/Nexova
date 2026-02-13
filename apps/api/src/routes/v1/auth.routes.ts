@@ -529,14 +529,50 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
     {
       preHandler: [fastify.authenticate],
       config: { allowMissingWorkspace: true, allowSuspendedWorkspace: true },
+      // The dashboard currently sends avatar as a data URL (base64) in JSON.
+      // Fastify's default bodyLimit (1MB) is too small for ~2MB images once encoded.
+      bodyLimit: 6 * 1024 * 1024,
     },
     async (request, reply) => {
       const userId = request.user!.sub;
+      const optionalName = z.preprocess(
+        (value) => {
+          if (value === undefined) return undefined;
+          if (value === null) return null;
+          if (typeof value === 'string') {
+            const trimmed = value.trim();
+            return trimmed.length === 0 ? null : trimmed;
+          }
+          return value;
+        },
+        z.string().min(1).max(100).nullable().optional()
+      );
+
+      const optionalAvatarUrl = z.preprocess(
+        (value) => {
+          if (value === undefined) return undefined;
+          if (value === null) return null;
+          if (typeof value === 'string') {
+            const trimmed = value.trim();
+            return trimmed.length === 0 ? null : trimmed;
+          }
+          return value;
+        },
+        z
+          .union([
+            z.string().url(),
+            // Allow data URLs used by the dashboard avatar uploader.
+            z.string().startsWith('data:image/').max(4_000_000),
+          ])
+          .nullable()
+          .optional()
+      );
+
       const body = z
         .object({
-          firstName: z.string().min(1).max(100).optional(),
-          lastName: z.string().min(1).max(100).optional(),
-          avatarUrl: z.string().url().nullable().optional(),
+          firstName: optionalName,
+          lastName: optionalName,
+          avatarUrl: optionalAvatarUrl,
         })
         .parse(request.body);
 
