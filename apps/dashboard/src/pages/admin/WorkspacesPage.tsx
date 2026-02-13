@@ -3,11 +3,13 @@ import { Building2, Users, Package, ShoppingCart, Bot, RefreshCw } from 'lucide-
 import { Badge, Button, Input } from '../../components/ui';
 import { apiFetch } from '../../lib/api';
 import { useToastStore } from '../../stores/toast.store';
+import { normalizeCommercePlan, type CommercePlan } from '@nexova/shared';
 
 interface WorkspaceRow {
   id: string;
   name: string;
   slug: string;
+  plan: string;
   status: 'active' | 'inactive' | 'suspended';
   createdAt: string;
   _count: {
@@ -52,6 +54,26 @@ const getStatusBadge = (status: WorkspaceRow['status']) => {
   if (status === 'active') return <Badge variant="success">Activo</Badge>;
   if (status === 'suspended') return <Badge variant="warning">Suspendido</Badge>;
   return <Badge variant="secondary">Inactivo</Badge>;
+};
+
+const formatPlanLabel = (plan: CommercePlan) => {
+  if (plan === 'basic') return 'Basic';
+  if (plan === 'standard') return 'Standard';
+  return 'Pro';
+};
+
+const getPlanVariant = (plan: CommercePlan) => {
+  if (plan === 'basic') return 'secondary' as const;
+  if (plan === 'standard') return 'info' as const;
+  return 'success' as const;
+};
+
+const getPlanBadge = (rawPlan: string) => {
+  const normalized = normalizeCommercePlan(rawPlan);
+  if (!normalized) {
+    return <Badge variant="outline">Plan {rawPlan || 'N/D'}</Badge>;
+  }
+  return <Badge variant={getPlanVariant(normalized)}>Plan {formatPlanLabel(normalized)}</Badge>;
 };
 
 const formatDate = (value: string) =>
@@ -243,6 +265,7 @@ export default function WorkspacesPage() {
 
                   <div className="flex items-center gap-2">
                     {getStatusBadge(workspace.status)}
+                    {getPlanBadge(workspace.plan)}
                   </div>
 
                   <div className="flex items-center gap-3 text-xs text-muted-foreground">

@@ -4,6 +4,7 @@ import { Badge, Button, Input } from '../../components/ui';
 import { apiFetch } from '../../lib/api';
 import { useToastStore } from '../../stores/toast.store';
 import { useAuth } from '../../contexts/AuthContext';
+import { normalizeCommercePlan, type CommercePlan } from '@nexova/shared';
 
 interface AdminUser {
   id: string;
@@ -91,6 +92,41 @@ const getRoleVariant = (roleName: string) => {
   if (normalized === 'pro') return 'success' as const;
   if (normalized === 'standard' || normalized === 'standar') return 'info' as const;
   return 'secondary' as const;
+};
+
+const formatPlanLabel = (plan: CommercePlan) => {
+  if (plan === 'basic') return 'Basic';
+  if (plan === 'standard') return 'Standard';
+  return 'Pro';
+};
+
+const getPlanVariant = (plan: CommercePlan) => {
+  if (plan === 'basic') return 'secondary' as const;
+  if (plan === 'standard') return 'info' as const;
+  return 'success' as const;
+};
+
+const getUserPlanBadges = (user: AdminUser) => {
+  const rawPlans = user.memberships
+    .map((membership) => membership.workspace?.plan?.trim())
+    .filter((plan): plan is string => Boolean(plan));
+
+  const unique = Array.from(new Set(rawPlans));
+  if (unique.length === 0) {
+    return [{ key: 'unknown', label: 'Plan N/D', variant: 'outline' as const }];
+  }
+
+  return unique.map((raw) => {
+    const normalized = normalizeCommercePlan(raw);
+    if (!normalized) {
+      return { key: raw.toLowerCase(), label: `Plan ${raw}`, variant: 'outline' as const };
+    }
+    return {
+      key: normalized,
+      label: `Plan ${formatPlanLabel(normalized)}`,
+      variant: getPlanVariant(normalized),
+    };
+  });
 };
 
 const getUserRoleNames = (user: AdminUser) => {
@@ -295,6 +331,14 @@ export default function UsersPage() {
                       <p className="font-medium text-foreground truncate">{formatUserName(adminUser)}</p>
                       <p className="text-sm text-muted-foreground truncate">{adminUser.email}</p>
                       <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                        {getUserPlanBadges(adminUser).map((planBadge) => (
+                          <Badge
+                            key={`${adminUser.id}-plan-${planBadge.key}`}
+                            variant={planBadge.variant}
+                          >
+                            {planBadge.label}
+                          </Badge>
+                        ))}
                         {getUserRoleNames(adminUser).map((roleName) => (
                           <Badge key={`${adminUser.id}-${roleName}`} variant={getRoleVariant(roleName)}>
                             {roleName}
