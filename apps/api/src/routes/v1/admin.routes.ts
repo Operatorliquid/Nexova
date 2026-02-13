@@ -220,6 +220,75 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     reply.send({ user });
   });
 
+  // Delete user (hard delete). Cascades memberships/tokens; keeps billing/audit rows with userId set null.
+  fastify.delete('/users/:id', async (request, reply) => {
+    const { id } = request.params as { id: string };
+
+    if (id === request.user!.sub) {
+      return reply.code(400).send({
+        error: 'BAD_REQUEST',
+        message: 'No podés eliminar tu propio usuario',
+      });
+    }
+
+    const target = await fastify.prisma.user.findUnique({
+      where: { id },
+      select: { id: true, email: true, isSuperAdmin: true },
+    });
+
+    if (!target) {
+      return reply.code(404).send({
+        error: 'NOT_FOUND',
+        message: 'Usuario no encontrado',
+      });
+    }
+
+    if (target.isSuperAdmin) {
+      const superAdmins = await fastify.prisma.user.count({
+        where: { isSuperAdmin: true },
+      });
+      if (superAdmins <= 1) {
+        return reply.code(400).send({
+          error: 'BAD_REQUEST',
+          message: 'No podés eliminar el último super admin',
+        });
+      }
+    }
+
+    await fastify.prisma.$transaction(async (tx) => {
+      const memberships = await tx.membership.findMany({
+        where: {
+          userId: id,
+          status: { in: ['ACTIVE', 'active'] },
+        },
+        select: { workspaceId: true },
+      });
+
+      const workspaceIds = Array.from(new Set(memberships.map((m) => m.workspaceId)));
+      for (const workspaceId of workspaceIds) {
+        const remainingMembers = await tx.membership.count({
+          where: {
+            workspaceId,
+            status: { in: ['ACTIVE', 'active'] },
+            userId: { not: id },
+          },
+        });
+
+        if (remainingMembers === 0) {
+          // This avoids leaving orphan workspaces that no one can access.
+          await tx.workspace.update({
+            where: { id: workspaceId },
+            data: { status: 'cancelled' },
+          });
+        }
+      }
+
+      await tx.user.delete({ where: { id } });
+    });
+
+    return reply.send({ success: true });
+  });
+
   // ═══════════════════════════════════════════════════════════════════════════
   // WHATSAPP NUMBERS MANAGEMENT
   // ═══════════════════════════════════════════════════════════════════════════
