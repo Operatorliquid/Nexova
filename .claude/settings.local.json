@@ -70,7 +70,8 @@
       "Bash(pnpm run typecheck:*)",
       "Bash(pnpm tsc:*)",
       "Bash(pnpm --filter dashboard build:*)",
-      "Bash(pnpm --filter landing add:*)"
+      "Bash(pnpm --filter landing add:*)",
+      "Bash(pnpm --filter landing build:*)"
     ]
   }
 }
