@@ -86,9 +86,13 @@ function resolveInfobipBaseUrl(apiUrl?: string | null): string {
 }
 
 function resolveEvolutionBaseUrl(apiUrl?: string | null): string {
-  const cleaned = (apiUrl || '').trim().replace(/\/$/, '');
-  const envUrl = (process.env.EVOLUTION_BASE_URL || '').trim().replace(/\/$/, '');
-  return cleaned || envUrl;
+  const cleaned = (apiUrl || '').trim().replace(/\/+$/, '');
+  const envUrl = (process.env.EVOLUTION_BASE_URL || '').trim().replace(/\/+$/, '');
+  let out = cleaned || envUrl;
+  if (out && !/^https?:\/\//i.test(out)) {
+    out = `https://${out}`;
+  }
+  return out;
 }
 
 function getEvolutionInstanceName(providerConfig: unknown): string {
