@@ -70,7 +70,10 @@ export interface EvolutionInteractiveButtonsPayload {
 }
 
 function stripTrailingSlash(url: string): string {
-  return (url || '').trim().replace(/\/$/, '');
+  const trimmed = (url || '').trim();
+  if (!trimmed) return '';
+  const normalized = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  return normalized.replace(/\/+$/, '');
 }
 
 function toDigits(value: string): string {
