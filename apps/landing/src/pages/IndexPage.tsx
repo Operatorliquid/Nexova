@@ -211,7 +211,7 @@ function Navbar() {
               {links.map((l) => (<a key={l.href} href={l.href} onClick={() => setMobileOpen(false)} className="block text-sm text-white/60 hover:text-white py-2">{l.label}</a>))}
               <div className="flex gap-3 pt-3 border-t border-white/[0.06]">
                 <a href={`${DASHBOARD_URL}/login`} className="text-sm text-white/70 py-2">Iniciar sesión</a>
-                <a href="/cart?plan=standard" className="text-sm font-medium text-white bg-[#4D7CFF] px-5 py-2.5 rounded-xl">Empezar gratis</a>
+                <a href="/cart?plan=standard" className="text-sm font-medium text-white bg-gradient-to-r from-[#4D7CFF] to-[#8B5CF6] px-5 py-2.5 rounded-xl">Empezar gratis</a>
               </div>
             </motion.div>
           )}
@@ -333,7 +333,7 @@ function HeroSection() {
               </div>
 
               {/* AI Agent */}
-              <div className="lg:col-span-3 lg:row-span-1 rounded-2xl border border-emerald-500/10 bg-emerald-500/[0.03] backdrop-blur-md p-4 flex items-center gap-3 overflow-hidden hover:border-emerald-500/20 transition-all duration-500">
+              <div className="lg:col-span-3 lg:row-span-1 rounded-2xl border border-emerald-500/15 bg-emerald-500/[0.05] backdrop-blur-md p-4 flex items-center gap-3 overflow-hidden hover:border-emerald-500/25 transition-all duration-500">
                 <div className="w-11 h-11 rounded-xl bg-emerald-500/10 flex items-center justify-center flex-shrink-0 relative"><Bot className="w-5 h-5 text-emerald-400" /><div className="absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full bg-emerald-400 border-2 border-[#0d0d14]" /></div>
                 <div className="flex-1 min-w-0"><p className="text-xs text-emerald-400/60">Agente IA</p><div className="flex items-center gap-2"><span className="text-sm font-semibold text-emerald-400">Activo</span><span className="text-[11px] text-white/20">·</span><span className="text-xs text-white/30">{responseRate}% respuestas</span></div></div>
                 <div className="flex gap-1 items-center">{[0, 1, 2].map((i) => <div key={i} className="w-1.5 h-1.5 rounded-full bg-emerald-400/60" style={{ animation: 'pulse-dot 1.4s ease-in-out infinite', animationDelay: `${i * 200}ms` }} />)}</div>
@@ -579,10 +579,10 @@ function AnalyticsSection() {
 
           <Reveal delay={200}>
             <div className="space-y-4">
-              <div className="rounded-2xl border border-white/[0.08] bg-white/[0.02] backdrop-blur-sm p-5">
+              <div className="rounded-2xl border border-white/[0.12] bg-white/[0.04] backdrop-blur-sm p-5">
                 <div className="flex items-center justify-between mb-4">
                   <div><p className="text-sm font-medium text-white">Crecimiento mensual</p><p className="text-xs text-white/30">Comparado con el período anterior</p></div>
-                  <div className="flex items-center gap-4 text-xs"><span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-[#4D7CFF]" /><span className="text-white/40">Actual</span></span><span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-white/10" /><span className="text-white/40">Anterior</span></span></div>
+                  <div className="flex items-center gap-4 text-xs"><span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-[#00FFD1]" /><span className="text-white/40">Actual</span></span><span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-white/10" /><span className="text-white/40">Anterior</span></span></div>
                 </div>
                 <div className="h-52">
                   <ResponsiveContainer width="100%" height="100%">
@@ -592,14 +592,14 @@ function AnalyticsSection() {
                       <YAxis stroke="rgba(255,255,255,0.2)" tick={{ fontSize: 12 }} tickFormatter={(v) => `${(v / 1000000).toFixed(1)}M`} />
                       <Tooltip contentStyle={{ background: '#1a1a2e', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', fontSize: '13px' }} labelStyle={{ color: 'rgba(255,255,255,0.5)' }} itemStyle={{ color: 'rgba(255,255,255,0.8)' }} formatter={(value) => [`$${(Number(value) / 100).toLocaleString('es-AR')}`, '']} />
                       <Bar dataKey="anterior" fill="rgba(255,255,255,0.06)" radius={[6, 6, 0, 0]} />
-                      <Bar dataKey="actual" fill="#4D7CFF" radius={[6, 6, 0, 0]} />
+                      <Bar dataKey="actual" fill="#00FFD1" radius={[6, 6, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="rounded-2xl border border-white/[0.08] bg-white/[0.02] backdrop-blur-sm p-5">
+                <div className="rounded-2xl border border-white/[0.12] bg-white/[0.04] backdrop-blur-sm p-5">
                   <p className="text-sm font-medium text-white mb-3">Cobros por método</p>
                   <div className="h-36">
                     <ResponsiveContainer width="100%" height="100%">
@@ -609,7 +609,7 @@ function AnalyticsSection() {
                   <div className="space-y-1.5 mt-2">{paymentMethodData.map((c, i) => (<div key={i} className="flex items-center justify-between text-xs"><span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full" style={{ background: c.color }} /><span className="text-white/40">{c.name}</span></span><span className="text-white/60 font-medium">{c.value}%</span></div>))}</div>
                 </div>
 
-                <div className="rounded-2xl border border-white/[0.08] bg-white/[0.02] backdrop-blur-sm p-5 flex flex-col justify-between">
+                <div className="rounded-2xl border border-white/[0.12] bg-white/[0.04] backdrop-blur-sm p-5 flex flex-col justify-between">
                   <div><p className="text-sm font-medium text-white mb-1">Insight IA</p><div className="flex items-center gap-1 mb-3"><Sparkles className="w-3 h-3 text-purple-400" /><span className="text-[11px] text-purple-400 font-medium">Generado automáticamente</span></div></div>
                   <div className="space-y-3">
                     <div className="px-3 py-2 rounded-lg bg-emerald-500/5 border border-emerald-500/10"><p className="text-[11px] text-emerald-400/70 mb-0.5">Oportunidad</p><p className="text-xs text-white/60">Los sábados representan un 22% de las ventas semanales. Considerá ampliar stock.</p></div>
@@ -639,8 +639,8 @@ function SolutionsSection() {
         </Reveal>
         <div className="grid md:grid-cols-3 gap-6">
           {solutions.map((s, i) => (
-            <motion.div key={i} initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: '-40px' }} transition={{ duration: 0.5, delay: i * 0.12 }} whileHover={{ y: -4, transition: { duration: 0.2 } }} className="group relative h-full rounded-2xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm p-7 hover:border-[#4D7CFF]/20 transition-all duration-500">
-              <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-[#4D7CFF]/[0.03] to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+            <motion.div key={i} initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: '-40px' }} transition={{ duration: 0.5, delay: i * 0.12 }} whileHover={{ y: -4, transition: { duration: 0.2 } }} className="group relative h-full rounded-2xl border border-white/[0.08] bg-white/[0.04] backdrop-blur-sm p-7 hover:border-[#00FFD1]/20 transition-all duration-500">
+              <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-[#00FFD1]/[0.04] to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
               <div className="relative">
                 <div className="w-14 h-14 rounded-2xl bg-[#4D7CFF]/10 flex items-center justify-center mb-5"><s.icon className="w-7 h-7 text-[#4D7CFF]" /></div>
                 <h3 className="text-xl font-semibold text-white mb-3">{s.title}</h3>
@@ -669,15 +669,15 @@ function PricingSection() {
         </Reveal>
         <div className="grid md:grid-cols-3 gap-6 max-w-5xl mx-auto">
           {plans.map((p, i) => (
-            <motion.div key={i} initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: '-40px' }} transition={{ duration: 0.5, delay: i * 0.12 }} whileHover={{ y: -6, boxShadow: p.highlighted ? '0 25px 60px -12px rgba(77,124,255,0.25)' : '0 25px 60px -12px rgba(0,0,0,0.3)', transition: { duration: 0.2 } }} className={`relative h-full rounded-2xl border p-7 transition-colors duration-500 flex flex-col ${p.highlighted ? 'border-[#4D7CFF]/30 bg-gradient-to-b from-[#4D7CFF]/[0.06] to-transparent shadow-2xl shadow-[#4D7CFF]/10' : 'border-white/[0.06] bg-white/[0.02]'}`}>
-              {p.highlighted && <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-4 py-1 rounded-full bg-[#4D7CFF] text-xs font-semibold text-white shadow-lg shadow-[#4D7CFF]/30">Más popular</div>}
+            <motion.div key={i} initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: '-40px' }} transition={{ duration: 0.5, delay: i * 0.12 }} whileHover={{ y: -6, boxShadow: p.highlighted ? '0 25px 60px -12px rgba(0,255,209,0.2), 0 0 40px rgba(139,92,246,0.15)' : '0 25px 60px -12px rgba(0,0,0,0.3)', transition: { duration: 0.2 } }} className={`relative h-full rounded-2xl border p-7 transition-colors duration-500 flex flex-col ${p.highlighted ? 'gradient-border border-transparent bg-gradient-to-b from-white/[0.06] to-transparent shadow-2xl shadow-[#8B5CF6]/10' : 'border-white/[0.08] bg-white/[0.04] hover:border-white/[0.15]'}`}>
+              {p.highlighted && <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-4 py-1 rounded-full bg-gradient-to-r from-[#00FFD1] to-[#4D7CFF] text-xs font-semibold text-white shadow-lg shadow-[#00FFD1]/30">Más popular</div>}
               <div className="mb-6">
                 <h3 className="text-lg font-semibold text-white mb-1">{p.name}</h3>
                 <p className="text-sm text-white/30 mb-4">{p.description}</p>
-                <div className="flex items-baseline gap-1"><span className="text-sm text-white/40">USD</span><span className="text-4xl font-bold text-white">{p.price}</span><span className="text-sm text-white/40">{p.period}</span></div>
+                <div className="flex items-baseline gap-1"><span className="text-sm text-white/40">USD</span><span className={`text-4xl font-bold ${p.highlighted ? 'bg-gradient-to-r from-[#00FFD1] to-[#8B5CF6] bg-clip-text text-transparent' : 'text-white'}`}>{p.price}</span><span className="text-sm text-white/40">{p.period}</span></div>
               </div>
               <ul className="space-y-3 mb-8 flex-1">{p.features.map((f, j) => <li key={j} className="flex items-start gap-2.5 text-sm text-white/50"><Check className={`w-4 h-4 mt-0.5 flex-shrink-0 ${p.highlighted ? 'text-[#4D7CFF]' : 'text-white/20'}`} />{f}</li>)}</ul>
-              <a href={`/cart?plan=${encodeURIComponent(p.code)}`} className={`group relative w-full py-3 rounded-xl text-sm font-medium transition-all duration-300 flex items-center justify-center gap-2 overflow-hidden ${p.highlighted ? 'bg-[#4D7CFF] text-white hover:bg-[#3D6BEE] shadow-lg shadow-[#4D7CFF]/25 hover:shadow-[#4D7CFF]/40' : 'border border-white/10 text-white/60 hover:text-white hover:border-white/20 hover:bg-white/[0.03]'}`}>
+              <a href={`/cart?plan=${encodeURIComponent(p.code)}`} className={`group relative w-full py-3 rounded-xl text-sm font-medium transition-all duration-300 flex items-center justify-center gap-2 overflow-hidden ${p.highlighted ? 'text-white shadow-lg shadow-[#00FFD1]/20 hover:shadow-[#00FFD1]/35' : 'border border-white/10 text-white/60 hover:text-white hover:border-white/20 hover:bg-white/[0.03]'}`} style={p.highlighted ? { background: 'linear-gradient(90deg, #00FFD1, #4D7CFF, #8B5CF6)', backgroundSize: '200% 100%', animation: 'gradient-shift 4s ease-in-out infinite' } : undefined}>
                 <div className="absolute inset-0 -translate-x-full group-hover:translate-x-full transition-transform duration-700 bg-gradient-to-r from-transparent via-white/20 to-transparent" />
                 <span className="relative">{p.cta}</span>
                 <ArrowRight className="relative w-4 h-4 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300" />
@@ -709,7 +709,8 @@ function TestimonialsSection() {
         <div className="absolute right-0 top-0 bottom-0 w-24 bg-gradient-to-l from-[#08080d] to-transparent z-10 pointer-events-none" />
         <div className="flex gap-4 hover:[animation-play-state:paused]" style={{ animation: 'marquee 40s linear infinite', width: 'max-content' }}>
           {doubled.map((t, i) => (
-            <div key={i} className="w-[360px] flex-shrink-0 rounded-2xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm p-6">
+            <div key={i} className="w-[360px] flex-shrink-0 rounded-2xl border border-white/[0.08] bg-white/[0.04] backdrop-blur-sm p-6 relative overflow-hidden">
+              <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-[#4D7CFF]/30 to-transparent" />
               <div className="flex gap-0.5 mb-4">{Array.from({ length: t.stars }).map((_, j) => <Star key={j} className="w-4 h-4 text-amber-400 fill-amber-400" />)}</div>
               <p className="text-sm text-white/50 leading-relaxed mb-5 italic">"{t.text}"</p>
               <div className="flex items-center gap-3">
@@ -727,7 +728,8 @@ function TestimonialsSection() {
         <div className="absolute right-0 top-0 bottom-0 w-24 bg-gradient-to-l from-[#08080d] to-transparent z-10 pointer-events-none" />
         <div className="flex gap-4 hover:[animation-play-state:paused]" style={{ animation: 'marquee 40s linear infinite reverse', width: 'max-content' }}>
           {[...doubled].reverse().map((t, i) => (
-            <div key={i} className="w-[360px] flex-shrink-0 rounded-2xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm p-6">
+            <div key={i} className="w-[360px] flex-shrink-0 rounded-2xl border border-white/[0.08] bg-white/[0.04] backdrop-blur-sm p-6 relative overflow-hidden">
+              <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-[#4D7CFF]/30 to-transparent" />
               <div className="flex gap-0.5 mb-4">{Array.from({ length: t.stars }).map((_, j) => <Star key={j} className="w-4 h-4 text-amber-400 fill-amber-400" />)}</div>
               <p className="text-sm text-white/50 leading-relaxed mb-5 italic">"{t.text}"</p>
               <div className="flex items-center gap-3">
@@ -755,10 +757,11 @@ function FAQSection() {
         </Reveal>
         <div className="space-y-3">
           {faqs.map((faq, i) => (
-            <motion.div key={i} initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: '-20px' }} transition={{ duration: 0.4, delay: i * 0.06 }} className={`rounded-2xl border transition-colors duration-300 overflow-hidden ${openIndex === i ? 'border-[#4D7CFF]/20 bg-[#4D7CFF]/[0.03]' : 'border-white/[0.06] bg-white/[0.02] hover:border-white/[0.1]'}`}>
+            <motion.div key={i} initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: '-20px' }} transition={{ duration: 0.4, delay: i * 0.06 }} className={`rounded-2xl border transition-colors duration-300 overflow-hidden relative ${openIndex === i ? 'border-[#00FFD1]/20 bg-[#00FFD1]/[0.03]' : 'border-white/[0.08] bg-white/[0.03] hover:border-white/[0.12]'}`}>
+              {openIndex === i && <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-gradient-to-b from-[#00FFD1] via-[#4D7CFF] to-[#8B5CF6]" />}
               <button className="w-full flex items-center justify-between p-5 text-left" onClick={() => setOpenIndex(openIndex === i ? null : i)}>
                 <span className="text-sm font-medium text-white pr-4">{faq.q}</span>
-                <motion.div animate={{ rotate: openIndex === i ? 180 : 0 }} transition={{ duration: 0.3 }}><ChevronDown className={`w-5 h-5 flex-shrink-0 transition-colors duration-300 ${openIndex === i ? 'text-[#4D7CFF]' : 'text-white/30'}`} /></motion.div>
+                <motion.div animate={{ rotate: openIndex === i ? 180 : 0 }} transition={{ duration: 0.3 }}><ChevronDown className={`w-5 h-5 flex-shrink-0 transition-colors duration-300 ${openIndex === i ? 'text-[#00FFD1]' : 'text-white/30'}`} /></motion.div>
               </button>
               <AnimatePresence initial={false}>
                 {openIndex === i && (
@@ -779,20 +782,25 @@ function CTASection() {
   return (
     <section className="relative py-24 overflow-hidden">
       <div className="absolute inset-0">
-        <div className="absolute inset-0 opacity-30" style={{ background: 'linear-gradient(135deg, #4D7CFF, #A78BFA, #4D7CFF, #7B9FFF)', backgroundSize: '400% 400%', animation: 'gradient-shift 8s ease-in-out infinite', filter: 'blur(80px)' }} />
-        <div className="absolute top-1/4 left-1/4 w-2 h-2 rounded-full bg-white/20 blur-[1px]" style={{ animation: 'float 8s ease-in-out infinite' }} />
-        <div className="absolute top-1/3 right-1/3 w-1.5 h-1.5 rounded-full bg-white/15 blur-[1px]" style={{ animation: 'float 10s ease-in-out infinite reverse' }} />
-        <div className="absolute bottom-1/3 left-1/3 w-2 h-2 rounded-full bg-[#4D7CFF]/30 blur-[1px]" style={{ animation: 'float 12s ease-in-out infinite', animationDelay: '2s' }} />
-        <div className="absolute top-1/2 right-1/4 w-1 h-1 rounded-full bg-purple-400/25 blur-[1px]" style={{ animation: 'float 9s ease-in-out infinite', animationDelay: '4s' }} />
+        <div className="absolute w-[600px] h-[600px] bg-[#00FFD1]/[0.30] rounded-full blur-[140px] top-[-20%] left-[10%]" style={{ animation: 'float 12s ease-in-out infinite' }} />
+        <div className="absolute w-[500px] h-[500px] bg-[#8B5CF6]/[0.35] rounded-full blur-[130px] bottom-[-10%] right-[10%]" style={{ animation: 'float 10s ease-in-out infinite reverse' }} />
+        <div className="absolute w-[400px] h-[400px] bg-[#EC4899]/[0.20] rounded-full blur-[120px] top-[30%] right-[30%]" style={{ animation: 'float 14s ease-in-out infinite', animationDelay: '3s' }} />
+        <div className="absolute top-1/4 left-1/4 w-2 h-2 rounded-full bg-[#00FFD1]/40 blur-[1px]" style={{ animation: 'float 8s ease-in-out infinite' }} />
+        <div className="absolute top-1/3 right-1/3 w-2 h-2 rounded-full bg-white/25 blur-[1px]" style={{ animation: 'float 10s ease-in-out infinite reverse' }} />
+        <div className="absolute bottom-1/3 left-1/3 w-2.5 h-2.5 rounded-full bg-[#4D7CFF]/40 blur-[1px]" style={{ animation: 'float 12s ease-in-out infinite', animationDelay: '2s' }} />
+        <div className="absolute top-1/2 right-1/4 w-1.5 h-1.5 rounded-full bg-[#EC4899]/35 blur-[1px]" style={{ animation: 'float 9s ease-in-out infinite', animationDelay: '4s' }} />
+        <div className="absolute top-2/3 left-[15%] w-2 h-2 rounded-full bg-[#8B5CF6]/35 blur-[1px]" style={{ animation: 'float 11s ease-in-out infinite', animationDelay: '1s' }} />
+        <div className="absolute top-[20%] right-[15%] w-1.5 h-1.5 rounded-full bg-[#00FFD1]/30 blur-[1px]" style={{ animation: 'float 7s ease-in-out infinite', animationDelay: '3s' }} />
       </div>
       <div className="relative max-w-4xl mx-auto px-6 text-center">
         <Reveal><h2 className="text-3xl sm:text-4xl lg:text-5xl font-bold text-white mb-6">Llevá tu negocio al siguiente nivel</h2></Reveal>
-        <Reveal delay={100}><p className="text-lg text-white/40 mb-10 max-w-2xl mx-auto">Sumate a los comercios que ya usan inteligencia artificial para vender más, atender mejor y crecer sin límites.</p></Reveal>
+        <Reveal delay={100}><p className="text-lg text-white/50 mb-10 max-w-2xl mx-auto">Sumate a los comercios que ya usan inteligencia artificial para vender más, atender mejor y crecer sin límites.</p></Reveal>
         <Reveal delay={200}>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <a href="/cart?plan=standard" className="group flex items-center gap-2 bg-[#4D7CFF] hover:bg-[#3D6BEE] text-white font-medium px-8 py-4 rounded-2xl text-base transition-all duration-300 shadow-2xl shadow-[#4D7CFF]/30 hover:shadow-[#4D7CFF]/50 hover:-translate-y-0.5">
-              Empezar ahora — Es gratis
-              <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+            <a href="/cart?plan=standard" className="group relative flex items-center gap-2 text-white font-medium px-8 py-4 rounded-2xl text-base transition-all duration-300 shadow-[0_0_50px_rgba(0,255,209,0.3)] hover:shadow-[0_0_70px_rgba(0,255,209,0.4)] hover:-translate-y-0.5 overflow-hidden" style={{ background: 'linear-gradient(90deg, #00FFD1, #4D7CFF, #8B5CF6)', backgroundSize: '200% 100%', animation: 'gradient-shift 4s ease-in-out infinite' }}>
+              <div className="absolute inset-0 -translate-x-full group-hover:translate-x-full transition-transform duration-700 bg-gradient-to-r from-transparent via-white/25 to-transparent" />
+              <span className="relative">Empezar ahora — Es gratis</span>
+              <ArrowRight className="relative w-4 h-4 group-hover:translate-x-1 transition-transform" />
             </a>
           </div>
         </Reveal>
@@ -831,7 +839,8 @@ function Footer() {
   };
 
   return (
-    <footer className="border-t border-white/[0.04] py-16">
+    <footer className="relative py-16">
+      <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-[#4D7CFF]/20 to-transparent" />
       <div className="max-w-7xl mx-auto px-6">
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-10 mb-12">
           <div className="sm:col-span-2 md:col-span-1">

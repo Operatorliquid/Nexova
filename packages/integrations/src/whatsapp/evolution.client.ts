@@ -1,7 +1,7 @@
 /**
  * Evolution API (v2) WhatsApp Client
  * Sends WhatsApp messages through an Evolution API server (Baileys / WhatsApp Business engine).
- *
+ **
  * Docs: https://doc.evolution-api.com/v2/en/get-started/introduction
  */
 
