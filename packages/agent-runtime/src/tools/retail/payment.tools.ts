@@ -220,6 +220,17 @@ function inferMediaType(fileRef: string): string {
   return 'image/jpeg';
 }
 
+function shouldAttachInfobipAuth(fileRef: string): boolean {
+  try {
+    const url = new URL(fileRef);
+    const host = url.hostname.toLowerCase();
+    return host === 'infobip.com' || host.endsWith('.infobip.com');
+  } catch {
+    // Relative URLs (/uploads/...) or invalid URLs should not receive auth headers.
+    return false;
+  }
+}
+
 async function extractReceiptAmountWithClaude(params: {
   buffer: Buffer;
   mediaType: string;
@@ -543,10 +554,12 @@ export class ExtractReceiptAmountTool extends BaseTool<typeof ExtractReceiptAmou
       select: { apiKeyEnc: true, apiKeyIv: true, provider: true },
     });
 
-    const apiKey =
-      (whatsappNumber ? this.resolveWhatsAppApiKey(whatsappNumber) : '') ||
-      process.env.INFOBIP_API_KEY ||
-      '';
+    const wantsInfobipAuth = shouldAttachInfobipAuth(fileRef);
+    const apiKey = wantsInfobipAuth
+      ? ((whatsappNumber ? this.resolveWhatsAppApiKey(whatsappNumber) : '')
+        || process.env.INFOBIP_API_KEY
+        || '')
+      : '';
 
     try {
       const { buffer, contentType } = await this.fetchReceiptBuffer(fileRef, apiKey);

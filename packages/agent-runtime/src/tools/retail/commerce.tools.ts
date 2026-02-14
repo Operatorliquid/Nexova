@@ -9,7 +9,7 @@ import { BaseTool } from '../base.js';
 import { ToolCategory, ToolContext, ToolResult, CommerceProfile } from '../../types/index.js';
 import { CatalogPdfService, CatalogOptions, CatalogProductFilter, OrderReceiptPdfService, decrypt } from '@nexova/core';
 import { withVisibleOrders } from '../../utils/orders.js';
-import { InfobipClient, type MercadoPagoIntegrationService } from '@nexova/integrations';
+import { EvolutionClient, InfobipClient, type MercadoPagoIntegrationService } from '@nexova/integrations';
 import { promises as fs, existsSync } from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
@@ -503,15 +503,26 @@ export class SendCatalogPdfTool extends BaseTool<typeof SendCatalogPdfInput> {
         return { success: false, error: 'La API key de WhatsApp no está configurada' };
       }
 
-      const client = new InfobipClient({
-        apiKey,
-        baseUrl: this.resolveInfobipBaseUrl(whatsappNumber.apiUrl),
-        senderNumber: whatsappNumber.phoneNumber,
-      });
-
       const to = this.normalizePhone(customer.phone);
       const caption = `📋 ${catalog.filename}`;
-      const result = await client.sendDocument(to, mediaUrl, caption);
+      const provider = (whatsappNumber.provider || 'infobip').toLowerCase();
+      let result: { messageId: string; status: string; to: string };
+      if (provider === 'evolution') {
+        const baseUrl = this.resolveEvolutionBaseUrl(whatsappNumber.apiUrl);
+        const instanceName = this.getEvolutionInstanceName(whatsappNumber.providerConfig);
+        if (!baseUrl || !instanceName) {
+          return { success: false, error: 'Evolution no está configurado (baseUrl / instanceName).' };
+        }
+        const client = new EvolutionClient({ apiKey, baseUrl, instanceName });
+        result = await client.sendDocument(to, mediaUrl, caption);
+      } else {
+        const client = new InfobipClient({
+          apiKey,
+          baseUrl: this.resolveInfobipBaseUrl(whatsappNumber.apiUrl),
+          senderNumber: whatsappNumber.phoneNumber,
+        });
+        result = await client.sendDocument(to, mediaUrl, caption);
+      }
 
       try {
         await this.prisma.eventOutbox.create({
@@ -589,6 +600,14 @@ export class SendCatalogPdfTool extends BaseTool<typeof SendCatalogPdfInput> {
       }
       return '';
     }
+    if (provider === 'evolution') {
+      const envKey = (process.env.EVOLUTION_API_KEY || '').trim();
+      if (envKey) return envKey;
+      if (number.apiKeyEnc && number.apiKeyIv) {
+        return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
+      }
+      return '';
+    }
     if (number.apiKeyEnc && number.apiKeyIv) {
       return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
     }
@@ -657,6 +676,19 @@ export class SendCatalogPdfTool extends BaseTool<typeof SendCatalogPdfInput> {
       return envUrl;
     }
     return cleaned || defaultUrl;
+  }
+
+  private resolveEvolutionBaseUrl(apiUrl?: string | null): string {
+    const cleaned = (apiUrl || '').trim().replace(/\/$/, '');
+    const envUrl = (process.env.EVOLUTION_BASE_URL || '').trim().replace(/\/$/, '');
+    return cleaned || envUrl;
+  }
+
+  private getEvolutionInstanceName(providerConfig: unknown): string {
+    if (!providerConfig || typeof providerConfig !== 'object') return '';
+    const cfg = providerConfig as Record<string, unknown>;
+    const value = cfg.instanceName ?? cfg.instance ?? cfg.name;
+    return typeof value === 'string' ? value.trim() : '';
   }
 }
 
@@ -848,15 +880,27 @@ export class SendOrderPdfTool extends BaseTool<typeof SendOrderPdfInput> {
         return { success: false, error: 'La API key de WhatsApp no está configurada' };
       }
 
-      const client = new InfobipClient({
-        apiKey,
-        baseUrl: this.resolveInfobipBaseUrl(whatsappNumber.apiUrl),
-        senderNumber: whatsappNumber.phoneNumber,
-      });
-
       const to = this.normalizePhone(customer.phone);
       const caption = `🧾 Pedido ${orderData.orderNumber}`;
-      const result = await client.sendDocument(to, mediaUrl, caption);
+      const provider = (whatsappNumber.provider || 'infobip').toLowerCase();
+
+      let result: { messageId: string; status: string; to: string };
+      if (provider === 'evolution') {
+        const baseUrl = this.resolveEvolutionBaseUrl(whatsappNumber.apiUrl);
+        const instanceName = this.getEvolutionInstanceName(whatsappNumber.providerConfig);
+        if (!baseUrl || !instanceName) {
+          return { success: false, error: 'Evolution no está configurado (baseUrl / instanceName).' };
+        }
+        const client = new EvolutionClient({ apiKey, baseUrl, instanceName });
+        result = await client.sendDocument(to, mediaUrl, caption);
+      } else {
+        const client = new InfobipClient({
+          apiKey,
+          baseUrl: this.resolveInfobipBaseUrl(whatsappNumber.apiUrl),
+          senderNumber: whatsappNumber.phoneNumber,
+        });
+        result = await client.sendDocument(to, mediaUrl, caption);
+      }
 
       try {
         await this.prisma.eventOutbox.create({
@@ -933,6 +977,14 @@ export class SendOrderPdfTool extends BaseTool<typeof SendOrderPdfInput> {
       }
       return '';
     }
+    if (provider === 'evolution') {
+      const envKey = (process.env.EVOLUTION_API_KEY || '').trim();
+      if (envKey) return envKey;
+      if (number.apiKeyEnc && number.apiKeyIv) {
+        return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
+      }
+      return '';
+    }
     if (number.apiKeyEnc && number.apiKeyIv) {
       return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
     }
@@ -985,6 +1037,19 @@ export class SendOrderPdfTool extends BaseTool<typeof SendOrderPdfInput> {
       return envUrl;
     }
     return cleaned || defaultUrl;
+  }
+
+  private resolveEvolutionBaseUrl(apiUrl?: string | null): string {
+    const cleaned = (apiUrl || '').trim().replace(/\/$/, '');
+    const envUrl = (process.env.EVOLUTION_BASE_URL || '').trim().replace(/\/$/, '');
+    return cleaned || envUrl;
+  }
+
+  private getEvolutionInstanceName(providerConfig: unknown): string {
+    if (!providerConfig || typeof providerConfig !== 'object') return '';
+    const cfg = providerConfig as Record<string, unknown>;
+    const value = cfg.instanceName ?? cfg.instance ?? cfg.name;
+    return typeof value === 'string' ? value.trim() : '';
   }
 
   private findRepoRoot(startDir: string): string | null {

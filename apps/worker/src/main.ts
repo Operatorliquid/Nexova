@@ -12,7 +12,7 @@ import {
   WebhookRetryPayload,
 } from '@nexova/shared';
 import { AgentWorker } from '@nexova/agent-runtime';
-import { InfobipClient } from '@nexova/integrations';
+import { EvolutionClient, InfobipClient } from '@nexova/integrations';
 import { decrypt, applyTenantPrismaMiddleware } from '@nexova/core';
 import { createDebtReminderProcessor } from './jobs/debt-reminder.job.js';
 import { createOutboxRelayProcessor } from './jobs/outbox-relay.job.js';
@@ -57,6 +57,14 @@ function resolveWhatsAppApiKey(number: {
     }
     return '';
   }
+  if (provider === 'evolution') {
+    const envKey = (process.env.EVOLUTION_API_KEY || '').trim();
+    if (envKey) return envKey;
+    if (number.apiKeyEnc && number.apiKeyIv) {
+      return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
+    }
+    return '';
+  }
   if (number.apiKeyEnc && number.apiKeyIv) {
     return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
   }
@@ -75,6 +83,19 @@ function resolveInfobipBaseUrl(apiUrl?: string | null): string {
     return envUrl;
   }
   return cleaned || defaultUrl;
+}
+
+function resolveEvolutionBaseUrl(apiUrl?: string | null): string {
+  const cleaned = (apiUrl || '').trim().replace(/\/$/, '');
+  const envUrl = (process.env.EVOLUTION_BASE_URL || '').trim().replace(/\/$/, '');
+  return cleaned || envUrl;
+}
+
+function getEvolutionInstanceName(providerConfig: unknown): string {
+  if (!providerConfig || typeof providerConfig !== 'object') return '';
+  const cfg = providerConfig as Record<string, unknown>;
+  const value = cfg.instanceName ?? cfg.instance ?? cfg.name;
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 function getUsagePeriod(date: Date): { start: Date; end: Date } {
@@ -176,71 +197,141 @@ async function processSendJob(job: Job<MessageSendPayload>): Promise<void> {
     throw new Error('No active WhatsApp number for workspace');
   }
 
+  const provider = (whatsappNumber.provider || 'infobip').toLowerCase();
   const apiKey = resolveWhatsAppApiKey(whatsappNumber);
-  if (!apiKey) {
-    throw new Error('WhatsApp API key not configured');
-  }
-
-  const client = new InfobipClient({
-    apiKey,
-    baseUrl: resolveInfobipBaseUrl(whatsappNumber.apiUrl),
-    senderNumber: whatsappNumber.phoneNumber,
-  });
 
   let result: { messageId: string; status: string; to: string };
   let usageMessageType: string = messageType;
 
-  if (messageType === 'text') {
-    result = await client.sendText(normalizedTo, content.text || '');
-  } else if (messageType === 'template') {
-    result = await client.sendTemplate(
-      normalizedTo,
-      content.templateId || '',
-      content.templateParams || {}
-    );
-  } else if (messageType === 'media') {
-    if (content.mediaType === 'image' && content.mediaUrl) {
-      result = await client.sendImage(normalizedTo, content.mediaUrl, content.text);
-    } else if (content.mediaType === 'document' && content.mediaUrl) {
-      result = await client.sendDocument(normalizedTo, content.mediaUrl, content.text);
-    } else {
-      throw new Error(`Unsupported media type: ${content.mediaType}`);
+  if (provider === 'evolution') {
+    const baseUrl = resolveEvolutionBaseUrl(whatsappNumber.apiUrl);
+    if (!baseUrl) {
+      throw new Error('Evolution baseUrl not configured');
     }
-  } else if (messageType === 'interactive') {
-    if (content.buttons && content.buttons.length > 0) {
-      const payload = {
-        body: content.text || '',
-        buttons: content.buttons.map((button) => ({
-          ...button,
-          title: truncateButtonTitle(button.title, 20),
-        })),
-        ...(content.header ? { header: content.header } : {}),
-        ...(content.footer ? { footer: content.footer } : {}),
-      };
-      result = await client.sendInteractiveButtons(normalizedTo, payload);
-      usageMessageType = 'interactive-buttons';
-    } else if (content.listSections && content.listSections.length > 0) {
-      const payload = {
-        body: truncateText(content.text || '', 1024),
-        buttonText: truncateText(content.buttonText || 'Ver opciones', 20),
-        sections: content.listSections.map((section) => ({
-          ...(section.title ? { title: truncateText(section.title, 24) } : {}),
-          rows: section.rows.map((row) => ({
-            id: row.id,
-            title: truncateText(row.title, 24),
-            ...(row.description ? { description: truncateText(row.description, 72) } : {}),
+    if (!apiKey) {
+      throw new Error('Evolution API key not configured');
+    }
+    const instanceName = getEvolutionInstanceName(whatsappNumber.providerConfig);
+    if (!instanceName) {
+      throw new Error('Evolution instanceName not configured');
+    }
+
+    const client = new EvolutionClient({ apiKey, baseUrl, instanceName });
+
+    if (messageType === 'text') {
+      result = await client.sendText(normalizedTo, content.text || '');
+    } else if (messageType === 'template') {
+      throw new Error('Template messages are not supported for Evolution provider');
+    } else if (messageType === 'media') {
+      if (content.mediaType === 'image' && content.mediaUrl) {
+        result = await client.sendImage(normalizedTo, content.mediaUrl, content.text);
+      } else if (content.mediaType === 'document' && content.mediaUrl) {
+        result = await client.sendDocument(normalizedTo, content.mediaUrl, content.text);
+      } else {
+        throw new Error(`Unsupported media type: ${content.mediaType}`);
+      }
+    } else if (messageType === 'interactive') {
+      if (content.buttons && content.buttons.length > 0) {
+        const payload = {
+          body: content.text || '',
+          buttons: content.buttons.map((button) => ({
+            ...button,
+            title: truncateButtonTitle(button.title, 20),
           })),
-        })),
-        ...(content.header ? { header: content.header } : {}),
-        ...(content.footer ? { footer: content.footer } : {}),
-      };
-      result = await client.sendInteractiveList(normalizedTo, payload);
-      usageMessageType = 'interactive-list';
+          ...(content.header ? { header: content.header } : {}),
+          ...(content.footer ? { footer: content.footer } : {}),
+        };
+        result = await client.sendInteractiveButtons(normalizedTo, payload);
+        usageMessageType = 'interactive-buttons';
+      } else if (content.listSections && content.listSections.length > 0) {
+        const payload = {
+          body: truncateText(content.text || '', 1024),
+          buttonText: truncateText(content.buttonText || 'Ver opciones', 20),
+          sections: content.listSections.map((section) => ({
+            ...(section.title ? { title: truncateText(section.title, 24) } : {}),
+            rows: section.rows.map((row) => ({
+              id: row.id,
+              title: truncateText(row.title, 24),
+              ...(row.description ? { description: truncateText(row.description, 72) } : {}),
+            })),
+          })),
+          ...(content.header ? { header: content.header } : {}),
+          ...(content.footer ? { footer: content.footer } : {}),
+        };
+        result = await client.sendInteractiveList(normalizedTo, payload);
+        usageMessageType = 'interactive-list';
+      } else {
+        throw new Error('Interactive message requires buttons or listSections');
+      }
     } else {
-      throw new Error('Interactive message requires buttons or listSections');
+      throw new Error(`Unsupported message type: ${messageType}`);
     }
   } else {
-    throw new Error(`Unsupported message type: ${messageType}`);
+    if (!apiKey) {
+      throw new Error('WhatsApp API key not configured');
+    }
+    if (!whatsappNumber.phoneNumber) {
+      throw new Error('WhatsApp sender number not configured');
+    }
+
+    const client = new InfobipClient({
+      apiKey,
+      baseUrl: resolveInfobipBaseUrl(whatsappNumber.apiUrl),
+      senderNumber: whatsappNumber.phoneNumber,
+    });
+
+    if (messageType === 'text') {
+      result = await client.sendText(normalizedTo, content.text || '');
+    } else if (messageType === 'template') {
+      result = await client.sendTemplate(
+        normalizedTo,
+        content.templateId || '',
+        content.templateParams || {}
+      );
+    } else if (messageType === 'media') {
+      if (content.mediaType === 'image' && content.mediaUrl) {
+        result = await client.sendImage(normalizedTo, content.mediaUrl, content.text);
+      } else if (content.mediaType === 'document' && content.mediaUrl) {
+        result = await client.sendDocument(normalizedTo, content.mediaUrl, content.text);
+      } else {
+        throw new Error(`Unsupported media type: ${content.mediaType}`);
+      }
+    } else if (messageType === 'interactive') {
+      if (content.buttons && content.buttons.length > 0) {
+        const payload = {
+          body: content.text || '',
+          buttons: content.buttons.map((button) => ({
+            ...button,
+            title: truncateButtonTitle(button.title, 20),
+          })),
+          ...(content.header ? { header: content.header } : {}),
+          ...(content.footer ? { footer: content.footer } : {}),
+        };
+        result = await client.sendInteractiveButtons(normalizedTo, payload);
+        usageMessageType = 'interactive-buttons';
+      } else if (content.listSections && content.listSections.length > 0) {
+        const payload = {
+          body: truncateText(content.text || '', 1024),
+          buttonText: truncateText(content.buttonText || 'Ver opciones', 20),
+          sections: content.listSections.map((section) => ({
+            ...(section.title ? { title: truncateText(section.title, 24) } : {}),
+            rows: section.rows.map((row) => ({
+              id: row.id,
+              title: truncateText(row.title, 24),
+              ...(row.description ? { description: truncateText(row.description, 72) } : {}),
+            })),
+          })),
+          ...(content.header ? { header: content.header } : {}),
+          ...(content.footer ? { footer: content.footer } : {}),
+        };
+        result = await client.sendInteractiveList(normalizedTo, payload);
+        usageMessageType = 'interactive-list';
+      } else {
+        throw new Error('Interactive message requires buttons or listSections');
+      }
+    } else {
+      throw new Error(`Unsupported message type: ${messageType}`);
+    }
   }
 
   await prisma.eventOutbox.create({

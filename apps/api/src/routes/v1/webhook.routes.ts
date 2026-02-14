@@ -8,6 +8,10 @@ import { Prisma } from '@prisma/client';
 import { QUEUES, AgentProcessPayload } from '@nexova/shared';
 import { InfobipClient } from '@nexova/integrations';
 import { decrypt } from '@nexova/core';
+import * as crypto from 'crypto';
+import { promises as fs } from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 // BullMQ queue - initialized when routes are registered
 let agentQueue: Queue;
@@ -53,6 +57,25 @@ function resolveInfobipBaseUrl(apiUrl?: string | null): string {
   return cleaned || defaultUrl;
 }
 
+function resolveEvolutionBaseUrl(apiUrl?: string | null): string {
+  const cleaned = (apiUrl || '').trim().replace(/\/$/, '');
+  const envUrl = (process.env.EVOLUTION_BASE_URL || '').trim().replace(/\/$/, '');
+  return cleaned || envUrl;
+}
+
+function resolveEvolutionApiKey(number: {
+  apiKeyEnc?: string | null;
+  apiKeyIv?: string | null;
+  provider?: string | null;
+}): string {
+  const envKey = (process.env.EVOLUTION_API_KEY || '').trim();
+  if (envKey) return envKey;
+  if (number.apiKeyEnc && number.apiKeyIv) {
+    return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
+  }
+  return '';
+}
+
 function toPhoneDigits(value: string): string {
   return (value || '').trim().replace(/\D/g, '');
 }
@@ -83,10 +106,193 @@ function buildPhoneCandidates(raw: string | null | undefined): string[] {
   return Array.from(candidates).filter(Boolean);
 }
 
+function extractEvolutionMessages(payload: any): any[] {
+  const data = payload?.data ?? payload?.message ?? payload?.messages;
+  if (!data) return [];
+  if (Array.isArray(data)) return data;
+  return [data];
+}
+
+function evolutionRemoteJidToE164(remoteJid: string | null | undefined): string | null {
+  if (!remoteJid || typeof remoteJid !== 'string') return null;
+  // remoteJid example: "553198296801@s.whatsapp.net"
+  const base = remoteJid.split('@')[0] || '';
+  const digits = toPhoneDigits(base);
+  if (!digits) return null;
+  return `+${digits}`;
+}
+
+function extractEvolutionMessageId(msg: any): string | null {
+  const id =
+    msg?.key?.id ||
+    msg?.messageId ||
+    msg?.id ||
+    msg?.msgId ||
+    null;
+  return typeof id === 'string' && id.trim() ? id.trim() : null;
+}
+
+function isEvolutionInboundMessage(msg: any): boolean {
+  // Baileys-style events include msg.key.fromMe
+  const fromMe = msg?.key?.fromMe;
+  if (typeof fromMe === 'boolean') return !fromMe;
+  // If not present, assume inbound
+  return true;
+}
+
+function extractEvolutionReplyContext(msg: any): { isReply: boolean; referredMessageId?: string } {
+  const ctx =
+    msg?.message?.extendedTextMessage?.contextInfo
+    || msg?.message?.buttonsResponseMessage?.contextInfo
+    || msg?.message?.listResponseMessage?.contextInfo
+    || msg?.message?.imageMessage?.contextInfo
+    || msg?.message?.documentMessage?.contextInfo
+    || null;
+
+  const referred =
+    (typeof ctx?.stanzaId === 'string' && ctx.stanzaId.trim()) ? ctx.stanzaId.trim()
+      : (typeof ctx?.quotedMessageId === 'string' && ctx.quotedMessageId.trim()) ? ctx.quotedMessageId.trim()
+        : undefined;
+
+  return { isReply: !!referred, ...(referred ? { referredMessageId: referred } : {}) };
+}
+
 export async function webhookRoutes(
   app: FastifyInstance,
   opts: { queue?: Queue }
 ): Promise<void> {
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = path.dirname(__filename);
+  const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, '..', '..', '..', 'uploads');
+  const WHATSAPP_MEDIA_DIR = path.join(UPLOAD_DIR, 'whatsapp-media');
+
+  const sanitizeFilename = (name: string): string =>
+    (name || 'file').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 160);
+
+  const resolvePublicBaseUrlFromEnv = (): string | null => {
+    const candidates = [
+      process.env.API_BASE_URL,
+      process.env.PUBLIC_BASE_URL,
+      process.env.PUBLIC_API_URL,
+      process.env.API_PUBLIC_URL,
+      process.env.NGROK_URL,
+      process.env.BASE_URL,
+      process.env.API_URL,
+    ];
+    for (const value of candidates) {
+      const trimmed = (value || '').trim().replace(/\/$/, '');
+      if (trimmed) return trimmed;
+    }
+    return null;
+  };
+
+  const extractEvolutionInstanceName = (providerConfig: unknown): string => {
+    if (!providerConfig || typeof providerConfig !== 'object') return '';
+    const cfg = providerConfig as Record<string, unknown>;
+    const value = cfg.instanceName ?? cfg.instance ?? cfg.name;
+    return typeof value === 'string' ? value.trim() : '';
+  };
+
+  const fetchEvolutionMediaBase64 = async (params: {
+    baseUrl: string;
+    apiKey: string;
+    instanceName: string;
+    messageId: string;
+  }): Promise<{ base64: string; mimetype?: string; filename?: string } | null> => {
+    const endpoint = `${params.baseUrl.replace(/\/$/, '')}/chat/getBase64FromMediaMessage/${encodeURIComponent(params.instanceName)}`;
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        apikey: params.apiKey,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({
+        message: { key: { id: params.messageId } },
+        convertToMp4: false,
+      }),
+    });
+
+    const text = await response.text();
+    if (!response.ok) {
+      app.log.warn({ status: response.status, body: text }, 'Evolution media fetch failed');
+      return null;
+    }
+
+    const json = text ? (() => { try { return JSON.parse(text); } catch { return null; } })() : null;
+    const raw = json ?? text;
+
+    if (typeof raw === 'string') {
+      return { base64: raw };
+    }
+
+    if (raw && typeof raw === 'object') {
+      const obj = raw as Record<string, unknown>;
+      const base64 =
+        typeof obj.base64 === 'string'
+          ? obj.base64
+          : typeof obj.data === 'string'
+            ? obj.data
+            : typeof obj.media === 'string'
+              ? obj.media
+              : '';
+      if (!base64) return null;
+      const mimetype =
+        typeof obj.mimetype === 'string'
+          ? obj.mimetype
+          : typeof obj.mimeType === 'string'
+            ? obj.mimeType
+            : undefined;
+      const filename =
+        typeof obj.fileName === 'string'
+          ? obj.fileName
+          : typeof obj.filename === 'string'
+            ? obj.filename
+            : undefined;
+      return { base64, mimetype, filename };
+    }
+
+    return null;
+  };
+
+  const persistEvolutionMedia = async (params: {
+    workspaceId: string;
+    messageId: string;
+    base64: string;
+    mimetype?: string;
+    filenameHint?: string;
+  }): Promise<{ fileRef: string; fileType: 'image' | 'pdf' } | null> => {
+    const publicBase = resolvePublicBaseUrlFromEnv();
+    if (!publicBase) return null;
+
+    const base64Raw = params.base64.trim();
+    const cleaned = base64Raw.replace(/^data:[^;]+;base64,/, '');
+    if (!cleaned) return null;
+
+    const buffer = Buffer.from(cleaned, 'base64');
+    if (!buffer.length) return null;
+
+    const mime = (params.mimetype || '').toLowerCase();
+    const fileType: 'image' | 'pdf' = mime.includes('pdf') ? 'pdf' : 'image';
+    const ext =
+      fileType === 'pdf'
+        ? 'pdf'
+        : mime.includes('png')
+          ? 'png'
+          : mime.includes('webp')
+            ? 'webp'
+            : 'jpg';
+
+    await fs.mkdir(WHATSAPP_MEDIA_DIR, { recursive: true });
+    const baseName = sanitizeFilename(params.filenameHint || `wa-${params.workspaceId}-${params.messageId}`);
+    const unique = `${baseName}-${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
+    const fullPath = path.join(WHATSAPP_MEDIA_DIR, unique);
+    await fs.writeFile(fullPath, buffer);
+
+    const fileRef = `${publicBase}/uploads/whatsapp-media/${unique}`;
+    return { fileRef, fileType };
+  };
+
   // Capture raw body for signature verification (scoped to webhook routes)
   app.addContentTypeParser(
     'application/json',
@@ -263,6 +469,202 @@ export async function webhookRoutes(
         request.log.error(error, 'Failed to process Infobip webhook');
         // Return 200 to avoid webhook retries for internal errors
         // The message is in webhook inbox for manual retry
+        return reply.send({ status: 'error', error: 'Internal processing error' });
+      }
+    },
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // EVOLUTION WHATSAPP WEBHOOK (instance-based)
+  // ═══════════════════════════════════════════════════════════════════════════════
+
+  /**
+   * POST /webhooks/evolution/:secret OR /whatsapp/evolution/:secret
+   * Receives webhooks from Evolution API instances.
+   *
+   * We secure this endpoint by embedding a per-number secret in the URL and
+   * matching it against whatsapp_numbers.webhook_secret.
+   */
+  app.post<{
+    Params: { secret: string };
+    Body: any;
+  }>('/evolution/:secret', {
+    schema: {
+      params: {
+        type: 'object',
+        properties: { secret: { type: 'string' } },
+        required: ['secret'],
+      },
+    },
+    handler: async (request, reply) => {
+      const { secret } = request.params;
+      const payload = request.body as any;
+
+      request.log.info({ provider: 'evolution', event: payload?.event, instance: payload?.instance }, 'Received Evolution webhook');
+
+      try {
+        const whatsappNumber = await app.prisma.whatsAppNumber.findFirst({
+          where: {
+            provider: 'evolution',
+            webhookSecret: secret,
+          },
+        });
+
+        if (!whatsappNumber || !whatsappNumber.workspaceId) {
+          request.log.warn({ secret }, 'Evolution webhook ignored: number not found');
+          return reply.send({ status: 'ignored', reason: 'number_not_found' });
+        }
+
+        const event = typeof payload?.event === 'string'
+          ? payload.event.toUpperCase()
+          : typeof payload?.eventType === 'string'
+            ? payload.eventType.toUpperCase()
+            : '';
+
+        if (event && event !== 'MESSAGES_UPSERT') {
+          // For now we only process inbound messages. Other events are ignored.
+          return reply.send({ status: 'ignored', reason: 'non_message_event', event });
+        }
+
+        const messages = extractEvolutionMessages(payload);
+        if (messages.length === 0) {
+          return reply.send({ status: 'ignored', reason: 'missing_message' });
+        }
+
+        let queued = 0;
+        for (const msg of messages) {
+          if (!isEvolutionInboundMessage(msg)) continue;
+
+          const messageId = extractEvolutionMessageId(msg) || crypto.randomUUID();
+          const remoteJid = msg?.key?.remoteJid || msg?.remoteJid || payload?.data?.key?.remoteJid;
+          if (typeof remoteJid === 'string' && remoteJid.includes('@g.us')) {
+            // Ignore group messages by default
+            continue;
+          }
+
+          const senderPhone = evolutionRemoteJidToE164(remoteJid) || 'unknown';
+
+          // Dedupe
+          const existing = await app.prisma.webhookInbox.findFirst({
+            where: {
+              externalId: messageId,
+              workspaceId: whatsappNumber.workspaceId,
+              provider: 'evolution',
+            },
+          });
+          if (existing) continue;
+
+          const correlationId = crypto.randomUUID();
+          let attachment:
+            | { fileRef: string; fileType: 'image' | 'pdf'; caption?: string }
+            | null = null;
+
+          const msgBody = msg?.message || {};
+          const imageMsg = msgBody?.imageMessage;
+          const docMsg = msgBody?.documentMessage;
+          const hasMedia = !!imageMsg || !!docMsg;
+
+          if (hasMedia) {
+            try {
+              const instanceName = extractEvolutionInstanceName(whatsappNumber.providerConfig);
+              const baseUrl = resolveEvolutionBaseUrl(whatsappNumber.apiUrl);
+              const apiKey = resolveEvolutionApiKey(whatsappNumber);
+
+              if (instanceName && baseUrl && apiKey) {
+                const media = await fetchEvolutionMediaBase64({
+                  baseUrl,
+                  apiKey,
+                  instanceName,
+                  messageId,
+                });
+
+                const caption =
+                  (typeof imageMsg?.caption === 'string' && imageMsg.caption.trim())
+                    ? imageMsg.caption.trim()
+                    : (typeof docMsg?.caption === 'string' && docMsg.caption.trim())
+                      ? docMsg.caption.trim()
+                      : undefined;
+
+                const mimetype =
+                  (typeof imageMsg?.mimetype === 'string' && imageMsg.mimetype.trim())
+                    ? imageMsg.mimetype.trim()
+                    : (typeof docMsg?.mimetype === 'string' && docMsg.mimetype.trim())
+                      ? docMsg.mimetype.trim()
+                      : media?.mimetype;
+
+                const filenameHint =
+                  (typeof docMsg?.fileName === 'string' && docMsg.fileName.trim())
+                    ? docMsg.fileName.trim()
+                    : media?.filename;
+
+                if (media?.base64) {
+                  const persisted = await persistEvolutionMedia({
+                    workspaceId: whatsappNumber.workspaceId,
+                    messageId,
+                    base64: media.base64,
+                    mimetype,
+                    filenameHint,
+                  });
+
+                  if (persisted) {
+                    attachment = {
+                      fileRef: persisted.fileRef,
+                      fileType: persisted.fileType,
+                      ...(caption ? { caption } : {}),
+                    };
+                  }
+                }
+              }
+            } catch (err) {
+              request.log.warn(err, 'Failed to persist Evolution media (continuing)');
+            }
+          }
+
+          const storedPayload = {
+            event: payload?.event,
+            instance: payload?.instance,
+            data: msg,
+            ...(attachment ? { __nexova: { attachment } } : {}),
+          };
+          await app.prisma.webhookInbox.create({
+            data: {
+              workspaceId: whatsappNumber.workspaceId,
+              provider: 'evolution',
+              externalId: messageId,
+              eventType: 'message.received',
+              payload: storedPayload as Prisma.InputJsonValue,
+              signature: null,
+              status: 'pending',
+              correlationId,
+            },
+          });
+
+          if (agentQueue) {
+            const ctx = extractEvolutionReplyContext(msg);
+            const jobPayload: AgentProcessPayload = {
+              workspaceId: whatsappNumber.workspaceId,
+              messageId,
+              channelId: senderPhone,
+              channelType: 'whatsapp',
+              correlationId,
+              metadata: {
+                isReply: ctx.isReply,
+                referredMessageId: ctx.referredMessageId,
+              },
+            };
+
+            await agentQueue.add(`msg-${messageId}`, jobPayload, {
+              attempts: QUEUES.AGENT_PROCESS.attempts,
+              backoff: QUEUES.AGENT_PROCESS.backoff,
+            });
+          }
+
+          queued += 1;
+        }
+
+        return reply.send({ status: 'queued', queued });
+      } catch (error) {
+        request.log.error(error, 'Failed to process Evolution webhook');
         return reply.send({ status: 'error', error: 'Internal processing error' });
       }
     },

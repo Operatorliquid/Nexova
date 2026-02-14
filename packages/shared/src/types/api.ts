@@ -141,7 +141,7 @@ export interface RequestContext {
 
 export interface WebhookPayload {
   /** Provider identifier */
-  provider: 'infobip' | 'mercadopago';
+  provider: 'infobip' | 'evolution' | 'mercadopago';
   /** Webhook event type */
   eventType: string;
   /** Raw payload */

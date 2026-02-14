@@ -20,6 +20,14 @@ function resolveWhatsAppApiKey(number: {
     }
     return '';
   }
+  if (provider === 'evolution') {
+    const envKey = (process.env.EVOLUTION_API_KEY || '').trim();
+    if (envKey) return envKey;
+    if (number.apiKeyEnc && number.apiKeyIv) {
+      return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
+    }
+    return '';
+  }
   if (number.apiKeyEnc && number.apiKeyIv) {
     return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
   }
@@ -38,6 +46,19 @@ function resolveInfobipBaseUrl(apiUrl?: string | null): string {
     return envUrl;
   }
   return cleaned || defaultUrl;
+}
+
+function resolveEvolutionBaseUrl(apiUrl?: string | null): string {
+  const cleaned = (apiUrl || '').trim().replace(/\/$/, '');
+  const envUrl = (process.env.EVOLUTION_BASE_URL || '').trim().replace(/\/$/, '');
+  return cleaned || envUrl;
+}
+
+function getEvolutionInstanceName(providerConfig: unknown): string {
+  if (!providerConfig || typeof providerConfig !== 'object') return '';
+  const cfg = providerConfig as Record<string, unknown>;
+  const value = cfg.instanceName ?? cfg.instance ?? cfg.name;
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 export const conversationsRoutes: FastifyPluginAsync = async (fastify) => {
@@ -203,19 +224,31 @@ export const conversationsRoutes: FastifyPluginAsync = async (fastify) => {
       const whatsappNumber = session.workspace.whatsappNumbers[0];
       if (whatsappNumber && session.channelType === 'whatsapp') {
         try {
-          const { InfobipClient } = await import('@nexova/integrations/whatsapp');
           const apiKey = resolveWhatsAppApiKey(whatsappNumber);
           if (!apiKey) {
             request.log.warn('WhatsApp API key not configured for workspace');
             return;
           }
-          const client = new InfobipClient({
-            apiKey,
-            baseUrl: resolveInfobipBaseUrl(whatsappNumber.apiUrl),
-            senderNumber: whatsappNumber.phoneNumber,
-          });
-
-          await client.sendText(session.channelId, content);
+          const provider = (whatsappNumber.provider || 'infobip').toLowerCase();
+          if (provider === 'evolution') {
+            const { EvolutionClient } = await import('@nexova/integrations/whatsapp');
+            const baseUrl = resolveEvolutionBaseUrl(whatsappNumber.apiUrl);
+            const instanceName = getEvolutionInstanceName(whatsappNumber.providerConfig);
+            if (!baseUrl || !instanceName) {
+              request.log.warn('Evolution not configured (baseUrl/instanceName missing)');
+              return;
+            }
+            const client = new EvolutionClient({ apiKey, baseUrl, instanceName });
+            await client.sendText(session.channelId, content);
+          } else {
+            const { InfobipClient } = await import('@nexova/integrations/whatsapp');
+            const client = new InfobipClient({
+              apiKey,
+              baseUrl: resolveInfobipBaseUrl(whatsappNumber.apiUrl),
+              senderNumber: whatsappNumber.phoneNumber,
+            });
+            await client.sendText(session.channelId, content);
+          }
         } catch (error) {
           request.log.error(error, 'Failed to send WhatsApp message');
         }

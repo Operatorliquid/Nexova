@@ -316,7 +316,7 @@ export function permissionMatches(
   if (required === granted) return true;
 
   // Resource wildcard (e.g., 'orders:*' matches 'orders:read')
-  const [requiredResource, _requiredAction] = required.split(':');
+  const [requiredResource] = required.split(':');
   const [grantedResource, grantedAction] = granted.split(':');
 
   if (requiredResource === grantedResource && grantedAction === '*') {

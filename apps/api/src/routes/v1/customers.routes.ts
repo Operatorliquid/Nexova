@@ -10,7 +10,7 @@ import {
   recalcCustomerFinancials,
 } from '../../utils/customer-financials.js';
 import { LedgerService, decrypt } from '@nexova/core';
-import { InfobipClient } from '@nexova/integrations/whatsapp';
+import { EvolutionClient, InfobipClient } from '@nexova/integrations/whatsapp';
 import { z } from 'zod';
 import { createNotificationIfEnabled } from '../../utils/notifications.js';
 import { getWorkspacePlanContext } from '../../utils/commerce-plan.js';
@@ -80,6 +80,14 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
       }
       return '';
     }
+    if (provider === 'evolution') {
+      const envKey = (process.env.EVOLUTION_API_KEY || '').trim();
+      if (envKey) return envKey;
+      if (number.apiKeyEnc && number.apiKeyIv) {
+        return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
+      }
+      return '';
+    }
     if (number.apiKeyEnc && number.apiKeyIv) {
       return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
     }
@@ -98,6 +106,19 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
       return envUrl;
     }
     return cleaned || defaultUrl;
+  };
+
+  const resolveEvolutionBaseUrl = (apiUrl?: string | null): string => {
+    const cleaned = (apiUrl || '').trim().replace(/\/$/, '');
+    const envUrl = (process.env.EVOLUTION_BASE_URL || '').trim().replace(/\/$/, '');
+    return cleaned || envUrl;
+  };
+
+  const getEvolutionInstanceName = (providerConfig: unknown): string => {
+    if (!providerConfig || typeof providerConfig !== 'object') return '';
+    const cfg = providerConfig as Record<string, unknown>;
+    const value = cfg.instanceName ?? cfg.instance ?? cfg.name;
+    return typeof value === 'string' ? value.trim() : '';
   };
 
   const formatMoney = (cents: number): string =>
@@ -378,14 +399,14 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
 
       const whatsappNumber = await fastify.prisma.whatsAppNumber.findFirst({
         where: { workspaceId, isActive: true },
-        select: { apiKeyEnc: true, apiKeyIv: true, apiUrl: true, phoneNumber: true, provider: true },
+        select: { apiKeyEnc: true, apiKeyIv: true, apiUrl: true, phoneNumber: true, provider: true, providerConfig: true },
       });
 
       if (!whatsappNumber) {
         return reply.code(400).send({ error: 'WHATSAPP_NOT_CONFIGURED', message: 'WhatsApp not configured' });
       }
 
-      const apiKey = resolveWhatsAppApiKey(whatsappNumber) || process.env.INFOBIP_API_KEY || '';
+      const apiKey = resolveWhatsAppApiKey(whatsappNumber);
       if (!apiKey) {
         return reply.code(400).send({ error: 'WHATSAPP_API_KEY_MISSING', message: 'WhatsApp API key missing' });
       }
@@ -398,13 +419,23 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
         orders: orders.map((o) => ({ orderNumber: o.orderNumber, pendingAmount: o.pendingAmount })),
       });
 
-      const client = new InfobipClient({
-        apiKey,
-        baseUrl: resolveInfobipBaseUrl(whatsappNumber.apiUrl),
-        senderNumber: whatsappNumber.phoneNumber,
-      });
-
-      await client.sendText(normalizePhone(customer.phone), message);
+      const provider = (whatsappNumber.provider || 'infobip').toLowerCase();
+      if (provider === 'evolution') {
+        const baseUrl = resolveEvolutionBaseUrl(whatsappNumber.apiUrl);
+        const instanceName = getEvolutionInstanceName(whatsappNumber.providerConfig);
+        if (!baseUrl || !instanceName) {
+          return reply.code(400).send({ error: 'EVOLUTION_NOT_CONFIGURED', message: 'Evolution not configured' });
+        }
+        const client = new EvolutionClient({ apiKey, baseUrl, instanceName });
+        await client.sendText(normalizePhone(customer.phone), message);
+      } else {
+        const client = new InfobipClient({
+          apiKey,
+          baseUrl: resolveInfobipBaseUrl(whatsappNumber.apiUrl),
+          senderNumber: whatsappNumber.phoneNumber,
+        });
+        await client.sendText(normalizePhone(customer.phone), message);
+      }
       await recordMonthlyUsage(fastify.prisma, {
         workspaceId,
         metric: COMMERCE_USAGE_METRICS.debtRemindersSent,
@@ -469,14 +500,14 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
 
       const whatsappNumber = await fastify.prisma.whatsAppNumber.findFirst({
         where: { workspaceId, isActive: true },
-        select: { apiKeyEnc: true, apiKeyIv: true, apiUrl: true, phoneNumber: true, provider: true },
+        select: { apiKeyEnc: true, apiKeyIv: true, apiUrl: true, phoneNumber: true, provider: true, providerConfig: true },
       });
 
       if (!whatsappNumber) {
         return reply.code(400).send({ error: 'WHATSAPP_NOT_CONFIGURED', message: 'WhatsApp not configured' });
       }
 
-      const apiKey = resolveWhatsAppApiKey(whatsappNumber) || process.env.INFOBIP_API_KEY || '';
+      const apiKey = resolveWhatsAppApiKey(whatsappNumber);
       if (!apiKey) {
         return reply.code(400).send({ error: 'WHATSAPP_API_KEY_MISSING', message: 'WhatsApp API key missing' });
       }
@@ -521,11 +552,22 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
         ordersByCustomer.set(order.customerId, list);
       });
 
-      const client = new InfobipClient({
-        apiKey,
-        baseUrl: resolveInfobipBaseUrl(whatsappNumber.apiUrl),
-        senderNumber: whatsappNumber.phoneNumber,
-      });
+      const provider = (whatsappNumber.provider || 'infobip').toLowerCase();
+      const sender =
+        provider === 'evolution'
+          ? (() => {
+              const baseUrl = resolveEvolutionBaseUrl(whatsappNumber.apiUrl);
+              const instanceName = getEvolutionInstanceName(whatsappNumber.providerConfig);
+              if (!baseUrl || !instanceName) {
+                throw new Error('Evolution not configured (baseUrl/instanceName missing)');
+              }
+              return new EvolutionClient({ apiKey, baseUrl, instanceName });
+            })()
+          : new InfobipClient({
+              apiKey,
+              baseUrl: resolveInfobipBaseUrl(whatsappNumber.apiUrl),
+              senderNumber: whatsappNumber.phoneNumber,
+            });
 
       let sent = 0;
       let failed = 0;
@@ -544,7 +586,7 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
         });
 
         try {
-          await client.sendText(normalizePhone(customer.phone), message);
+          await sender.sendText(normalizePhone(customer.phone), message);
           sent += 1;
           updatedIds.push(customer.id);
         } catch (error) {

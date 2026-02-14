@@ -108,12 +108,12 @@ const paymentMethodData = [
 ];
 
 const features = [
-  { icon: Bot, title: 'Agente IA 24/7', description: 'Un asistente inteligente que atiende a tus clientes por WhatsApp, toma pedidos y procesa pagos sin descanso.', color: 'from-emerald-500 to-teal-600', bg: 'bg-emerald-500/10', iconColor: 'text-emerald-400' },
-  { icon: ShoppingCart, title: 'Gestión de pedidos', description: 'Desde la conversación hasta la entrega. Control total del ciclo de venta con seguimiento en tiempo real.', color: 'from-blue-500 to-indigo-600', bg: 'bg-blue-500/10', iconColor: 'text-blue-400' },
-  { icon: Package, title: 'Control de stock', description: 'Inventario en tiempo real con alertas de stock bajo, múltiples unidades y categorías inteligentes.', color: 'from-amber-500 to-orange-600', bg: 'bg-amber-500/10', iconColor: 'text-amber-400' },
-  { icon: Users, title: 'CRM integrado', description: 'Base de clientes con historial de compras, scoring de pago, notas y seguimiento de deudas.', color: 'from-purple-500 to-violet-600', bg: 'bg-purple-500/10', iconColor: 'text-purple-400' },
-  { icon: BarChart3, title: 'Analytics con IA', description: 'Métricas de ventas, insights generados por IA, tendencias y recomendaciones accionables.', color: 'from-cyan-500 to-blue-600', bg: 'bg-cyan-500/10', iconColor: 'text-cyan-400' },
-  { icon: CreditCard, title: 'Pagos y facturación', description: 'Integración con MercadoPago, procesamiento de comprobantes con visión IA y facturación ARCA/AFIP.', color: 'from-rose-500 to-pink-600', bg: 'bg-rose-500/10', iconColor: 'text-rose-400' },
+  { icon: Bot, title: 'Agente IA 24/7', description: 'Un asistente inteligente que atiende a tus clientes por WhatsApp, toma pedidos y procesa pagos sin descanso.', color: 'from-emerald-500 to-teal-600', bg: 'bg-emerald-500/15', iconColor: 'text-emerald-400' },
+  { icon: ShoppingCart, title: 'Gestión de pedidos', description: 'Desde la conversación hasta la entrega. Control total del ciclo de venta con seguimiento en tiempo real.', color: 'from-blue-500 to-indigo-600', bg: 'bg-blue-500/15', iconColor: 'text-blue-400' },
+  { icon: Package, title: 'Control de stock', description: 'Inventario en tiempo real con alertas de stock bajo, múltiples unidades y categorías inteligentes.', color: 'from-amber-500 to-orange-600', bg: 'bg-amber-500/15', iconColor: 'text-amber-400' },
+  { icon: Users, title: 'CRM integrado', description: 'Base de clientes con historial de compras, scoring de pago, notas y seguimiento de deudas.', color: 'from-purple-500 to-violet-600', bg: 'bg-purple-500/15', iconColor: 'text-purple-400' },
+  { icon: BarChart3, title: 'Analytics con IA', description: 'Métricas de ventas, insights generados por IA, tendencias y recomendaciones accionables.', color: 'from-cyan-500 to-blue-600', bg: 'bg-cyan-500/15', iconColor: 'text-cyan-400' },
+  { icon: CreditCard, title: 'Pagos y facturación', description: 'Integración con MercadoPago, procesamiento de comprobantes con visión IA y facturación ARCA/AFIP.', color: 'from-rose-500 to-pink-600', bg: 'bg-rose-500/15', iconColor: 'text-rose-400' },
 ];
 
 const solutions = [
@@ -184,7 +184,7 @@ function Navbar() {
 
   return (
     <>
-      <motion.div className="fixed top-0 left-0 right-0 h-[2px] z-[60] origin-left bg-gradient-to-r from-[#4D7CFF] to-[#A78BFA]" style={{ scaleX }} />
+      <motion.div className="fixed top-0 left-0 right-0 h-[2px] z-[60] origin-left bg-gradient-to-r from-[#00FFD1] via-[#4D7CFF] via-60% via-[#8B5CF6] to-[#EC4899]" style={{ scaleX }} />
       <nav className={`fixed top-0 left-0 right-0 z-50 transition-all duration-500 ${scrolled ? 'bg-[#0a0a0f]/80 backdrop-blur-xl border-b border-white/[0.06] shadow-2xl' : 'bg-transparent'}`}>
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <a href="#hero" className="flex items-center gap-2 group">
@@ -197,7 +197,7 @@ function Navbar() {
           </div>
           <div className="hidden md:flex items-center gap-3">
             <a href={`${DASHBOARD_URL}/login`} className="text-sm text-white/70 hover:text-white transition-colors px-4 py-2">Iniciar sesión</a>
-            <a href="/cart?plan=standard" className="text-sm font-medium text-white bg-[#4D7CFF] hover:bg-[#3D6BEE] px-5 py-2.5 rounded-xl transition-all duration-200 shadow-lg shadow-[#4D7CFF]/25 hover:shadow-[#4D7CFF]/40">Empezar gratis</a>
+            <a href="/cart?plan=standard" className="text-sm font-medium text-white bg-gradient-to-r from-[#4D7CFF] to-[#8B5CF6] px-5 py-2.5 rounded-xl transition-all duration-200 shadow-lg shadow-[#8B5CF6]/25 hover:shadow-[#8B5CF6]/40 hover:brightness-110">Empezar gratis</a>
           </div>
           <button className="md:hidden p-2 text-white/70" onClick={() => setMobileOpen(!mobileOpen)}>
             <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -248,27 +248,30 @@ function HeroSection() {
   return (
     <section id="hero" ref={heroRef} className="relative min-h-screen flex items-center overflow-hidden pt-20 pb-16 lg:pt-24">
       <div className="absolute inset-0 overflow-hidden">
-        <div className="absolute w-[700px] h-[700px] bg-[#4D7CFF]/[0.07] rounded-full blur-[140px] top-[-10%] left-[-10%]" style={{ animation: 'float 12s ease-in-out infinite' }} />
-        <div className="absolute w-[500px] h-[500px] bg-purple-600/[0.06] rounded-full blur-[120px] bottom-[-5%] right-[-5%]" style={{ animation: 'float 10s ease-in-out infinite reverse' }} />
-        <div className="absolute w-[400px] h-[400px] bg-emerald-500/[0.04] rounded-full blur-[100px] top-[40%] right-[20%]" style={{ animation: 'float 14s ease-in-out infinite', animationDelay: '3s' }} />
-        <div className="absolute inset-0 opacity-[0.04]" style={{ backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.6) 1px, transparent 1px)', backgroundSize: '32px 32px' }} />
+        <div className="absolute w-[700px] h-[700px] bg-[#4D7CFF]/[0.20] rounded-full blur-[140px] top-[-10%] left-[-10%]" style={{ animation: 'float 12s ease-in-out infinite' }} />
+        <div className="absolute w-[500px] h-[500px] bg-purple-600/[0.18] rounded-full blur-[120px] bottom-[-5%] right-[-5%]" style={{ animation: 'float 10s ease-in-out infinite reverse' }} />
+        <div className="absolute w-[400px] h-[400px] bg-emerald-500/[0.12] rounded-full blur-[100px] top-[40%] right-[20%]" style={{ animation: 'float 14s ease-in-out infinite', animationDelay: '3s' }} />
+        <div className="absolute w-[500px] h-[500px] bg-[#00FFD1]/[0.12] rounded-full blur-[130px] top-[-5%] right-[5%]" style={{ animation: 'float 11s ease-in-out infinite', animationDelay: '1s' }} />
+        <div className="absolute w-[400px] h-[400px] bg-[#EC4899]/[0.08] rounded-full blur-[110px] bottom-[10%] left-[5%]" style={{ animation: 'float 13s ease-in-out infinite', animationDelay: '5s' }} />
+        <div className="absolute inset-0 opacity-[0.08]" style={{ backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.6) 1px, transparent 1px)', backgroundSize: '32px 32px' }} />
+        <div className="absolute inset-0 opacity-20" style={{ background: 'conic-gradient(from 0deg at 50% 50%, #00FFD1, #4D7CFF, #8B5CF6, #EC4899, #00FFD1)', filter: 'blur(120px)', animation: 'aurora 20s linear infinite' }} />
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_0%,#08080d_75%)]" />
       </div>
 
       <div className="relative max-w-7xl mx-auto px-6 w-full">
         <div className="grid lg:grid-cols-[1fr,1.1fr] gap-12 lg:gap-8 items-center">
           <div className="max-w-xl">
-            <motion.div initial={{ opacity: 0, y: 20 }} animate={heroVisible ? { opacity: 1, y: 0 } : {}} transition={{ duration: 0.6 }} className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-[#4D7CFF]/20 bg-[#4D7CFF]/[0.06] backdrop-blur-sm mb-6">
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={heroVisible ? { opacity: 1, y: 0 } : {}} transition={{ duration: 0.6 }} className="gradient-border inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/[0.04] backdrop-blur-sm mb-6">
               <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#4D7CFF] opacity-75" />
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-[#4D7CFF]" />
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#00FFD1] opacity-75" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-[#00FFD1]" />
               </span>
-              <span className="text-sm text-[#4D7CFF] font-medium">Potenciado por IA</span>
+              <span className="text-sm bg-gradient-to-r from-[#00FFD1] to-[#4D7CFF] bg-clip-text text-transparent font-medium">Potenciado por IA</span>
             </motion.div>
 
             <h1 className="text-4xl sm:text-5xl lg:text-[3.5rem] xl:text-6xl font-bold tracking-tight leading-[1.08] mb-6">
               {['Vendé', 'más.', 'Atendé', 'mejor.', 'Crecé', 'sin', 'límites.'].map((word, i) => (
-                <motion.span key={i} custom={i} initial="hidden" animate={heroVisible ? 'visible' : 'hidden'} variants={wordVariants} className={`inline-block mr-[0.3em] ${[0, 2, 4].includes(i) ? 'bg-gradient-to-r from-[#4D7CFF] via-[#7B9FFF] to-[#A78BFA] bg-clip-text text-transparent' : 'text-white'}`}>
+                <motion.span key={i} custom={i} initial="hidden" animate={heroVisible ? 'visible' : 'hidden'} variants={wordVariants} className={`inline-block mr-[0.3em] ${[0, 2, 4].includes(i) ? 'bg-gradient-to-r from-[#00FFD1] via-[#4D7CFF] to-[#EC4899] bg-clip-text text-transparent' : 'text-white'}`}>
                   {word}
                 </motion.span>
               ))}
@@ -279,12 +282,12 @@ function HeroSection() {
             </motion.p>
 
             <motion.div initial={{ opacity: 0, y: 20 }} animate={heroVisible ? { opacity: 1, y: 0 } : {}} transition={{ duration: 0.6, delay: 0.95 }} className="flex flex-col sm:flex-row gap-3 mb-10">
-              <a href="/cart?plan=standard" className="group relative flex items-center justify-center gap-2 bg-[#4D7CFF] text-white font-medium px-7 py-3.5 rounded-2xl text-sm transition-all duration-300 shadow-2xl shadow-[#4D7CFF]/25 hover:shadow-[#4D7CFF]/50 hover:-translate-y-0.5 overflow-hidden">
-                <div className="absolute inset-0 -translate-x-full group-hover:translate-x-full transition-transform duration-700 bg-gradient-to-r from-transparent via-white/20 to-transparent" />
+              <a href="/cart?plan=standard" className="group relative flex items-center justify-center gap-2 text-white font-medium px-7 py-3.5 rounded-2xl text-sm transition-all duration-300 shadow-[0_0_40px_rgba(0,255,209,0.3)] hover:shadow-[0_0_60px_rgba(0,255,209,0.4)] hover:-translate-y-0.5 overflow-hidden" style={{ background: 'linear-gradient(90deg, #00FFD1, #4D7CFF, #8B5CF6)', backgroundSize: '200% 100%', animation: 'gradient-shift 4s ease-in-out infinite' }}>
+                <div className="absolute inset-0 -translate-x-full group-hover:translate-x-full transition-transform duration-700 bg-gradient-to-r from-transparent via-white/25 to-transparent" />
                 <span className="relative">Empezar gratis</span>
                 <ArrowRight className="relative w-4 h-4 group-hover:translate-x-1 transition-transform" />
               </a>
-              <a href="#features" className="flex items-center justify-center gap-2 text-white/50 hover:text-white font-medium px-7 py-3.5 rounded-2xl text-sm border border-white/[0.08] hover:border-white/20 hover:bg-white/[0.03] transition-all duration-300">
+              <a href="#features" className="gradient-border flex items-center justify-center gap-2 text-white/60 hover:text-white font-medium px-7 py-3.5 rounded-2xl text-sm hover:bg-white/[0.04] transition-all duration-300">
                 <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3" /></svg>
                 Ver demo
               </a>
@@ -310,7 +313,7 @@ function HeroSection() {
             <div className="absolute -inset-8 bg-gradient-to-br from-[#4D7CFF]/10 via-transparent to-purple-600/10 rounded-[2rem] blur-2xl pointer-events-none" />
             <div className="relative grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 lg:grid-rows-5 gap-3 lg:min-h-[480px]">
               {/* Revenue card */}
-              <div className="lg:col-span-3 lg:row-span-2 rounded-2xl border border-white/[0.07] bg-white/[0.03] backdrop-blur-md p-5 flex flex-col justify-between overflow-hidden group hover:border-white/[0.12] transition-all duration-500 relative">
+              <div className="lg:col-span-3 lg:row-span-2 rounded-2xl border border-white/[0.10] bg-white/[0.05] backdrop-blur-md p-5 flex flex-col justify-between overflow-hidden group hover:border-white/[0.20] transition-all duration-500 relative">
                 <div>
                   <div className="flex items-center gap-2 mb-1"><div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" /><span className="text-[11px] text-white/30 font-medium uppercase tracking-wider">En vivo</span></div>
                   <p className="text-xs text-white/40 mb-2">Ventas del día</p>
@@ -323,7 +326,7 @@ function HeroSection() {
               </div>
 
               {/* Orders */}
-              <div className="lg:col-span-3 lg:row-span-1 rounded-2xl border border-white/[0.07] bg-white/[0.03] backdrop-blur-md p-4 flex items-center gap-4 overflow-hidden hover:border-white/[0.12] transition-all duration-500">
+              <div className="lg:col-span-3 lg:row-span-1 rounded-2xl border border-white/[0.10] bg-white/[0.05] backdrop-blur-md p-4 flex items-center gap-4 overflow-hidden hover:border-white/[0.20] transition-all duration-500">
                 <div className="w-11 h-11 rounded-xl bg-[#4D7CFF]/10 flex items-center justify-center flex-shrink-0"><ShoppingCart className="w-5 h-5 text-[#4D7CFF]" /></div>
                 <div className="flex-1 min-w-0"><p className="text-xs text-white/35">Pedidos hoy</p><span className="text-2xl font-bold text-white tabular-nums">{ordersCount}</span></div>
                 <div className="flex gap-0.5 h-8 items-end">{[40, 65, 50, 80, 60, 90, 75].map((h, i) => <div key={i} className="w-1.5 rounded-full bg-[#4D7CFF]/40 transition-all duration-1000" style={{ height: heroVisible ? `${h}%` : '10%', transitionDelay: `${800 + i * 100}ms` }} />)}</div>
@@ -337,7 +340,7 @@ function HeroSection() {
               </div>
 
               {/* Chat preview */}
-              <div className="lg:col-span-4 lg:row-span-3 rounded-2xl border border-white/[0.07] bg-white/[0.03] backdrop-blur-md overflow-hidden flex flex-col hover:border-white/[0.12] transition-all duration-500">
+              <div className="lg:col-span-4 lg:row-span-3 rounded-2xl border border-white/[0.10] bg-white/[0.05] backdrop-blur-md overflow-hidden flex flex-col hover:border-white/[0.20] transition-all duration-500">
                 <div className="flex items-center gap-2.5 px-4 py-3 border-b border-white/[0.05] bg-white/[0.02]">
                   <div className="w-8 h-8 rounded-full bg-emerald-500/15 flex items-center justify-center"><MessageSquare className="w-3.5 h-3.5 text-emerald-400" /></div>
                   <div className="flex-1 min-w-0"><p className="text-xs font-medium text-white/70 truncate">WhatsApp Business</p><p className="text-[10px] text-emerald-400/60">3 conversaciones activas</p></div>
@@ -355,13 +358,13 @@ function HeroSection() {
               </div>
 
               {/* Mini chart - desktop only */}
-              <div className="hidden lg:flex lg:col-span-2 lg:row-span-2 rounded-2xl border border-white/[0.07] bg-white/[0.03] backdrop-blur-md p-4 flex-col justify-between overflow-hidden hover:border-white/[0.12] transition-all duration-500">
+              <div className="hidden lg:flex lg:col-span-2 lg:row-span-2 rounded-2xl border border-white/[0.10] bg-white/[0.05] backdrop-blur-md p-4 flex-col justify-between overflow-hidden hover:border-white/[0.20] transition-all duration-500">
                 <div><p className="text-[10px] text-white/30 uppercase tracking-wider font-medium">Semana</p><p className="text-xs text-white/50 mt-0.5">Ingresos</p></div>
                 <div className="flex-1 mt-3"><ResponsiveContainer width="100%" height="100%"><BarChart data={salesData} barSize={6}><Bar dataKey="ventas" fill="#A78BFA" radius={[3, 3, 0, 0]} opacity={0.6} /></BarChart></ResponsiveContainer></div>
               </div>
 
               {/* Quick stat - desktop only */}
-              <div className="hidden lg:flex lg:col-span-2 lg:row-span-1 rounded-2xl border border-white/[0.07] bg-white/[0.03] backdrop-blur-md p-4 items-center gap-3 overflow-hidden hover:border-white/[0.12] transition-all duration-500">
+              <div className="hidden lg:flex lg:col-span-2 lg:row-span-1 rounded-2xl border border-white/[0.10] bg-white/[0.05] backdrop-blur-md p-4 items-center gap-3 overflow-hidden hover:border-white/[0.20] transition-all duration-500">
                 <div className="w-9 h-9 rounded-xl bg-amber-500/10 flex items-center justify-center flex-shrink-0"><Users className="w-4 h-4 text-amber-400" /></div>
                 <div><p className="text-[10px] text-white/30">Clientes</p><span className="text-lg font-bold text-white">+8</span><span className="text-[10px] text-emerald-400/70 ml-1">hoy</span></div>
               </div>
@@ -391,12 +394,14 @@ function StatsBar() {
   ];
 
   return (
-    <section ref={ref} className="relative py-16 border-y border-white/[0.04]">
+    <section ref={ref} className="relative py-16">
+      <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-[#4D7CFF]/20 to-transparent" />
+      <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-[#4D7CFF]/20 to-transparent" />
       <div className="max-w-7xl mx-auto px-6">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-8">
           {stats.map((s, i) => (
             <motion.div key={i} initial={{ opacity: 0, y: 20 }} animate={isInView ? { opacity: 1, y: 0 } : {}} transition={{ duration: 0.5, delay: i * 0.1 }} className="text-center">
-              <div className="text-3xl sm:text-4xl font-bold bg-gradient-to-r from-white to-white/70 bg-clip-text text-transparent mb-2">{s.value}</div>
+              <div className="text-3xl sm:text-4xl font-bold bg-gradient-to-r from-[#00FFD1] via-[#4D7CFF] to-[#8B5CF6] bg-clip-text text-transparent mb-2">{s.value}</div>
               <p className="text-sm text-white/40">{s.label}</p>
             </motion.div>
           ))}
@@ -417,8 +422,8 @@ function FeatureCard({ f, index }: { f: typeof features[0]; index: number }) {
   }, []);
 
   return (
-    <motion.div ref={cardRef} initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: '-40px' }} transition={{ duration: 0.5, delay: index * 0.1 }} whileHover={{ y: -4, transition: { duration: 0.2 } }} onMouseMove={handleMouseMove} className="group relative rounded-2xl border border-white/[0.06] bg-white/[0.02] backdrop-blur-sm p-6 hover:border-white/[0.12] transition-all duration-500 hover:shadow-2xl">
-      <div className="pointer-events-none absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-500" style={{ background: 'radial-gradient(300px circle at var(--mouse-x, 50%) var(--mouse-y, 50%), rgba(77,124,255,0.06), transparent 60%)' }} />
+    <motion.div ref={cardRef} initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: '-40px' }} transition={{ duration: 0.5, delay: index * 0.1 }} whileHover={{ y: -4, transition: { duration: 0.2 } }} onMouseMove={handleMouseMove} className="group relative rounded-2xl border border-white/[0.08] bg-white/[0.04] backdrop-blur-sm p-6 hover:border-[#00FFD1]/20 transition-all duration-500 hover:shadow-2xl">
+      <div className="pointer-events-none absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-500" style={{ background: 'radial-gradient(300px circle at var(--mouse-x, 50%) var(--mouse-y, 50%), rgba(0,255,209,0.08), transparent 60%)' }} />
       <div className={`absolute inset-0 rounded-2xl bg-gradient-to-br ${f.color} opacity-0 group-hover:opacity-[0.03] transition-opacity duration-500`} />
       <motion.div initial={{ scale: 0 }} whileInView={{ scale: 1 }} viewport={{ once: true }} transition={{ type: 'spring', stiffness: 300, damping: 20, delay: index * 0.1 + 0.2 }} className={`relative w-12 h-12 rounded-xl ${f.bg} flex items-center justify-center mb-4`}>
         <f.icon className={`w-6 h-6 ${f.iconColor}`} />
@@ -472,7 +477,8 @@ function AIShowcase() {
           <Reveal>
             <div className="relative">
               <div className="absolute -inset-4 bg-gradient-to-br from-emerald-500/10 to-transparent rounded-3xl blur-xl" />
-              <div className="relative rounded-2xl border border-white/[0.08] bg-[#0d0d14]/90 backdrop-blur-xl overflow-hidden">
+              <div className="relative rounded-2xl border border-white/[0.10] bg-[#0d0d14]/90 backdrop-blur-xl overflow-hidden">
+                <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-[#00FFD1]/40 to-transparent" />
                 <div className="flex items-center gap-3 px-5 py-4 border-b border-white/[0.06] bg-emerald-500/5">
                   <div className="w-10 h-10 rounded-full bg-emerald-500/20 flex items-center justify-center"><Bot className="w-5 h-5 text-emerald-400" /></div>
                   <div><p className="text-sm font-semibold text-white">Nexova AI</p><p className="text-xs text-emerald-400">En línea</p></div>
@@ -495,7 +501,7 @@ function AIShowcase() {
                   )}
                   {visibleMessages === 2 && (
                     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex gap-2 items-center pl-9">
-                      {[0, 1, 2].map((i) => <div key={i} className="w-1.5 h-1.5 rounded-full bg-white/20" style={{ animation: 'pulse-dot 1.4s ease-in-out infinite', animationDelay: `${i * 200}ms` }} />)}
+                      {[0, 1, 2].map((i) => <div key={i} className="w-1.5 h-1.5 rounded-full bg-[#00FFD1]/40" style={{ animation: 'pulse-dot 1.4s ease-in-out infinite', animationDelay: `${i * 200}ms` }} />)}
                     </motion.div>
                   )}
                   {visibleMessages >= 3 && (

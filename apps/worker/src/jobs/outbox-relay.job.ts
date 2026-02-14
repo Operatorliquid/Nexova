@@ -6,7 +6,7 @@ import { Job } from 'bullmq';
 import { PrismaClient, Prisma } from '@prisma/client';
 import type { Redis } from 'ioredis';
 import { OutboxRelayPayload } from '@nexova/shared';
-import { InfobipClient } from '@nexova/integrations';
+import { EvolutionClient, InfobipClient } from '@nexova/integrations';
 import { decrypt } from '@nexova/core';
 
 interface OutboxRelayResult {
@@ -25,6 +25,14 @@ function resolveWhatsAppApiKey(number: {
   const provider = (number.provider || 'infobip').toLowerCase();
   if (provider === 'infobip') {
     const envKey = (process.env.INFOBIP_API_KEY || '').trim();
+    if (envKey) return envKey;
+    if (number.apiKeyEnc && number.apiKeyIv) {
+      return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
+    }
+    return '';
+  }
+  if (provider === 'evolution') {
+    const envKey = (process.env.EVOLUTION_API_KEY || '').trim();
     if (envKey) return envKey;
     if (number.apiKeyEnc && number.apiKeyIv) {
       return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
@@ -51,13 +59,26 @@ function resolveInfobipBaseUrl(apiUrl?: string | null): string {
   return cleaned || defaultUrl;
 }
 
+function resolveEvolutionBaseUrl(apiUrl?: string | null): string {
+  const cleaned = (apiUrl || '').trim().replace(/\/$/, '');
+  const envUrl = (process.env.EVOLUTION_BASE_URL || '').trim().replace(/\/$/, '');
+  return cleaned || envUrl;
+}
+
+function getEvolutionInstanceName(providerConfig: unknown): string {
+  if (!providerConfig || typeof providerConfig !== 'object') return '';
+  const cfg = providerConfig as Record<string, unknown>;
+  const value = cfg.instanceName ?? cfg.instance ?? cfg.name;
+  return typeof value === 'string' ? value.trim() : '';
+}
+
 async function sendOwnerWhatsAppNotification(
   prisma: PrismaClient,
   params: { workspaceId: string; to: string; text: string }
 ): Promise<void> {
   const whatsappNumber = await prisma.whatsAppNumber.findFirst({
     where: { workspaceId: params.workspaceId, isActive: true },
-    select: { apiKeyEnc: true, apiKeyIv: true, apiUrl: true, phoneNumber: true, provider: true },
+    select: { apiKeyEnc: true, apiKeyIv: true, apiUrl: true, phoneNumber: true, provider: true, providerConfig: true },
   });
 
   if (!whatsappNumber) {
@@ -67,6 +88,18 @@ async function sendOwnerWhatsAppNotification(
   const apiKey = resolveWhatsAppApiKey(whatsappNumber);
   if (!apiKey) {
     throw new Error('WhatsApp API key not configured');
+  }
+
+  const provider = (whatsappNumber.provider || 'infobip').toLowerCase();
+  if (provider === 'evolution') {
+    const baseUrl = resolveEvolutionBaseUrl(whatsappNumber.apiUrl);
+    const instanceName = getEvolutionInstanceName(whatsappNumber.providerConfig);
+    if (!baseUrl || !instanceName) {
+      throw new Error('Evolution not configured (baseUrl/instanceName missing)');
+    }
+    const client = new EvolutionClient({ apiKey, baseUrl, instanceName });
+    await client.sendText(params.to, params.text);
+    return;
   }
 
   const client = new InfobipClient({

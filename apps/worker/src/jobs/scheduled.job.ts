@@ -325,6 +325,7 @@ async function handleConnectionHealth(
   workspaceId?: string
 ): Promise<ScheduledJobResult> {
   const hasGlobalInfobipKey = (process.env.INFOBIP_API_KEY || '').trim().length > 0;
+  const hasGlobalEvolutionKey = (process.env.EVOLUTION_API_KEY || '').trim().length > 0;
 
   const badNumbers = await prisma.whatsAppNumber.findMany({
     where: {
@@ -345,6 +346,8 @@ async function handleConnectionHealth(
 
     // If Infobip is configured globally, missing per-number credentials are fine.
     if (provider === 'infobip' && hasGlobalInfobipKey) continue;
+    // If Evolution is configured globally, missing per-number credentials are fine.
+    if (provider === 'evolution' && hasGlobalEvolutionKey) continue;
 
     const existing = await prisma.notification.findFirst({
       where: {
@@ -366,6 +369,8 @@ async function handleConnectionHealth(
         message:
           provider === 'infobip'
             ? `El número ${number.phoneNumber} no tiene API key configurada (INFOBIP_API_KEY).`
+            : provider === 'evolution'
+              ? `El número ${number.phoneNumber} no tiene API key configurada (EVOLUTION_API_KEY).`
             : `El número ${number.phoneNumber} no tiene API key configurada.`,
         entityType: 'WhatsAppNumber',
         entityId: number.id,

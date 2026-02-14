@@ -33,6 +33,8 @@ type WorkspaceWhatsAppNumber = {
   displayName?: string | null;
   status?: string | null;
   healthStatus?: string | null;
+  isActive?: boolean;
+  provider?: string | null;
 };
 
 interface NotificationItem {
@@ -419,41 +421,51 @@ export function Header({ title }: HeaderProps) {
 
           {/* Agent status */}
           <div className="relative group">
-            <div
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border ${
-                whatsappNumber
-                  ? 'bg-emerald-500/10 border-emerald-500/20'
-                  : 'bg-zinc-500/10 border-zinc-500/20'
-              }`}
-            >
-              <span
-                className={`w-2 h-2 rounded-full ${
-                  whatsappNumber
-                    ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.6)]'
-                    : 'bg-zinc-400 shadow-[0_0_8px_rgba(161,161,170,0.35)]'
-                }`}
-              />
-              <span
-                className={`text-xs font-medium ${
-                  whatsappNumber ? 'text-emerald-400' : 'text-zinc-300'
-                }`}
-              >
-                {whatsappNumber ? 'Agente activo' : 'Agente inactivo'}
-              </span>
-            </div>
+            {(() => {
+              const agentActive = !!whatsappNumber?.isActive;
+              const hasNumber = !!whatsappNumber;
+              return (
+                <>
+                  <div
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border ${
+                      agentActive
+                        ? 'bg-emerald-500/10 border-emerald-500/20'
+                        : 'bg-zinc-500/10 border-zinc-500/20'
+                    }`}
+                  >
+                    <span
+                      className={`w-2 h-2 rounded-full ${
+                        agentActive
+                          ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.6)]'
+                          : 'bg-zinc-400 shadow-[0_0_8px_rgba(161,161,170,0.35)]'
+                      }`}
+                    />
+                    <span
+                      className={`text-xs font-medium ${
+                        agentActive ? 'text-emerald-400' : 'text-zinc-300'
+                      }`}
+                    >
+                      {agentActive ? 'Agente activo' : 'Agente inactivo'}
+                    </span>
+                  </div>
 
-            {!whatsappNumber && (
-              <div
-                role="tooltip"
-                className="pointer-events-none absolute right-0 top-full mt-2 z-50 w-[260px] opacity-0 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-200"
-              >
-                <div className="rounded-xl border border-border bg-secondary/95 px-3 py-2 shadow-lg shadow-black/20">
-                  <p className="text-xs text-muted-foreground">
-                    Conectá un número de WhatsApp para comenzar.
-                  </p>
-                </div>
-              </div>
-            )}
+                  {!agentActive && (
+                    <div
+                      role="tooltip"
+                      className="pointer-events-none absolute right-0 top-full mt-2 z-50 w-[260px] opacity-0 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 transition-all duration-200"
+                    >
+                      <div className="rounded-xl border border-border bg-secondary/95 px-3 py-2 shadow-lg shadow-black/20">
+                        <p className="text-xs text-muted-foreground">
+                          {hasNumber
+                            ? 'WhatsApp está conectado pero inactivo. Terminá la conexión en Configuración → Aplicaciones.'
+                            : 'Conectá un número de WhatsApp para comenzar.'}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </div>
         </div>
       </div>

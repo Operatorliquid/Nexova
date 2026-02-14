@@ -198,6 +198,14 @@ function resolveWhatsAppApiKey(number: {
     }
     return '';
   }
+  if (provider === 'evolution') {
+    const envKey = (process.env.EVOLUTION_API_KEY || '').trim();
+    if (envKey) return envKey;
+    if (number.apiKeyEnc && number.apiKeyIv) {
+      return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
+    }
+    return '';
+  }
   if (number.apiKeyEnc && number.apiKeyIv) {
     return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
   }
@@ -216,6 +224,19 @@ function resolveInfobipBaseUrl(apiUrl?: string | null): string {
     return envUrl;
   }
   return cleaned || defaultUrl;
+}
+
+function resolveEvolutionBaseUrl(apiUrl?: string | null): string {
+  const cleaned = (apiUrl || '').trim().replace(/\/$/, '');
+  const envUrl = (process.env.EVOLUTION_BASE_URL || '').trim().replace(/\/$/, '');
+  return cleaned || envUrl;
+}
+
+function getEvolutionInstanceName(providerConfig: unknown): string {
+  if (!providerConfig || typeof providerConfig !== 'object') return '';
+  const cfg = providerConfig as Record<string, unknown>;
+  const value = cfg.instanceName ?? cfg.instance ?? cfg.name;
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 function getUsagePeriod(date: Date): { start: Date; end: Date } {
@@ -603,6 +624,7 @@ export class AgentWorker {
             primaryContent: messageContent,
             senderPhone: normalizedSenderPhone,
             channelType: channelType || 'whatsapp',
+            provider: webhookMessage.provider || 'infobip',
             maxMessages: runtimeSettings.coalesceMaxMessages,
             windowMs: runtimeSettings.coalesceWindowMs,
           });
@@ -1359,6 +1381,7 @@ export class AgentWorker {
     primaryContent: string;
     senderPhone: string;
     channelType: string;
+    provider: string;
     maxMessages: number;
     windowMs: number;
   }): Promise<Array<{ webhook: WebhookInbox; content: string }>> {
@@ -1379,7 +1402,7 @@ export class AgentWorker {
     const candidates = await this.prisma.webhookInbox.findMany({
       where: {
         workspaceId: params.workspaceId,
-        provider: 'infobip',
+        provider: params.provider,
         eventType: 'message.received',
         status: { in: ['pending', 'failed'] },
         id: { not: params.primary.id },
@@ -1453,9 +1476,67 @@ export class AgentWorker {
   }
 
   /**
-   * Extract message content from Infobip payload
+   * Extract message content from provider payload (Infobip / Evolution)
    */
   private extractMessageContent(payload: any): string | null {
+    // Evolution (Baileys) webhook format (we store one message per webhook row under payload.data)
+    const evoEvent = typeof payload?.event === 'string' ? payload.event.toUpperCase() : '';
+    const evoMsg = payload?.data;
+    if ((evoEvent === 'MESSAGES_UPSERT' || (!!evoMsg?.key?.id && !!evoMsg?.key?.remoteJid)) && evoMsg) {
+      const attachment = this.extractAttachment(payload);
+      const attachmentText = attachment
+        ? `El cliente envió un archivo adjunto (${attachment.fileType}). fileRef: ${attachment.fileRef}${attachment.caption ? `\nMensaje: ${attachment.caption}` : ''}`
+        : null;
+
+      const unwrap = (msg: any): any =>
+        msg?.ephemeralMessage?.message
+        || msg?.viewOnceMessage?.message
+        || msg?.viewOnceMessageV2?.message
+        || msg;
+
+      const message = unwrap(evoMsg?.message);
+
+      const selectedRowId =
+        message?.listResponseMessage?.singleSelectReply?.selectedRowId
+        || message?.listResponseMessage?.singleSelectReply?.selectedRowId;
+
+      const selectedButtonId =
+        message?.buttonsResponseMessage?.selectedButtonId
+        || message?.buttonsResponseMessage?.selectedButtonId;
+
+      const interactiveText =
+        (typeof selectedRowId === 'string' && selectedRowId.trim())
+          ? selectedRowId.trim()
+          : (typeof selectedButtonId === 'string' && selectedButtonId.trim())
+            ? selectedButtonId.trim()
+            : (typeof message?.buttonsResponseMessage?.selectedDisplayText === 'string' && message.buttonsResponseMessage.selectedDisplayText.trim())
+              ? message.buttonsResponseMessage.selectedDisplayText.trim()
+              : null;
+
+      if (interactiveText) {
+        return attachmentText ? `${interactiveText}\n\n${attachmentText}` : interactiveText;
+      }
+
+      const text =
+        (typeof message?.conversation === 'string' && message.conversation.trim())
+          ? message.conversation.trim()
+          : (typeof message?.extendedTextMessage?.text === 'string' && message.extendedTextMessage.text.trim())
+            ? message.extendedTextMessage.text.trim()
+            : (typeof message?.imageMessage?.caption === 'string' && message.imageMessage.caption.trim())
+              ? message.imageMessage.caption.trim()
+              : (typeof message?.documentMessage?.caption === 'string' && message.documentMessage.caption.trim())
+                ? message.documentMessage.caption.trim()
+                : null;
+
+      if (text) {
+        return attachmentText ? `${text}\n\n${attachmentText}` : text;
+      }
+
+      if (attachmentText) {
+        return attachmentText;
+      }
+    }
+
     // Infobip MO format
     const result = payload?.results?.[0];
     if (result) {
@@ -1520,6 +1601,17 @@ export class AgentWorker {
   }
 
   private extractAttachment(payload: any): { fileRef: string; fileType: 'image' | 'pdf'; caption?: string } | null {
+    const pre = payload?.__nexova?.attachment;
+    if (pre && typeof pre === 'object') {
+      const fileRef = typeof (pre as any).fileRef === 'string' ? (pre as any).fileRef : '';
+      const fileTypeRaw = typeof (pre as any).fileType === 'string' ? (pre as any).fileType : '';
+      const caption = typeof (pre as any).caption === 'string' ? (pre as any).caption : undefined;
+      const fileType = fileTypeRaw === 'pdf' ? 'pdf' : fileTypeRaw === 'image' ? 'image' : null;
+      if (fileRef && fileType) {
+        return { fileRef, fileType, ...(caption ? { caption } : {}) };
+      }
+    }
+
     const result = payload?.results?.[0];
     if (!result) return null;
 
@@ -1586,7 +1678,24 @@ export class AgentWorker {
    */
   private extractSenderPhone(payload: any): string {
     const result = payload?.results?.[0];
-    return result?.sender || result?.from || payload?.from || 'unknown';
+    if (result) {
+      return result?.sender || result?.from || payload?.from || 'unknown';
+    }
+
+    // Evolution payload (Baileys) - try remoteJid
+    const remoteJid =
+      payload?.data?.key?.remoteJid
+      || payload?.data?.remoteJid
+      || payload?.key?.remoteJid
+      || payload?.remoteJid
+      || null;
+    if (typeof remoteJid === 'string') {
+      const base = remoteJid.split('@')[0] || '';
+      const digits = base.replace(/\D/g, '');
+      if (digits) return `+${digits}`;
+    }
+
+    return payload?.from || 'unknown';
   }
 
   private normalizePhone(phone: string): string {
@@ -1636,8 +1745,48 @@ export class AgentWorker {
       }
 
       // Dynamic import to avoid circular dependencies
-      const { InfobipClient } = await import('@nexova/integrations');
+      const provider = (whatsappNumber.provider || 'infobip').toLowerCase();
 
+      if (provider === 'evolution') {
+        const baseUrl = resolveEvolutionBaseUrl(whatsappNumber.apiUrl);
+        const instanceName = getEvolutionInstanceName(whatsappNumber.providerConfig);
+        if (!baseUrl || !instanceName) {
+          console.error('[AgentWorker] Evolution not configured (baseUrl/instanceName missing)');
+          return;
+        }
+
+        const { EvolutionClient } = await import('@nexova/integrations');
+        const client = new EvolutionClient({ apiKey, baseUrl, instanceName });
+        const result = await client.sendText(to, message);
+        console.log(`[AgentWorker] Sent message to ${to}`);
+
+        await this.prisma.eventOutbox.create({
+          data: {
+            workspaceId,
+            eventType: 'message.sent',
+            aggregateType: 'Message',
+            aggregateId: result.messageId || `${Date.now()}`,
+            payload: {
+              to,
+              content: { text: message },
+              status: result.status,
+            },
+            status: 'pending',
+            correlationId: correlationId || null,
+          },
+        });
+
+        await recordUsage(this.prisma, {
+          workspaceId,
+          metric: 'messages.outbound',
+          quantity: 1,
+          metadata: { channelType: 'whatsapp', messageType: 'text' },
+        });
+
+        return;
+      }
+
+      const { InfobipClient } = await import('@nexova/integrations');
       const client = new InfobipClient({
         apiKey,
         baseUrl: resolveInfobipBaseUrl(whatsappNumber.apiUrl),
@@ -1737,6 +1886,46 @@ export class AgentWorker {
         return;
       }
 
+      const provider = (whatsappNumber.provider || 'infobip').toLowerCase();
+
+      if (provider === 'evolution') {
+        const baseUrl = resolveEvolutionBaseUrl(whatsappNumber.apiUrl);
+        const instanceName = getEvolutionInstanceName(whatsappNumber.providerConfig);
+        if (!baseUrl || !instanceName) {
+          console.error('[AgentWorker] Evolution not configured (baseUrl/instanceName missing)');
+          return;
+        }
+        const { EvolutionClient } = await import('@nexova/integrations');
+        const client = new EvolutionClient({ apiKey, baseUrl, instanceName });
+        const result = await client.sendInteractiveList(to, sanitizedPayload);
+        console.log(`[AgentWorker] Sent interactive list to ${to}`);
+
+        await this.prisma.eventOutbox.create({
+          data: {
+            workspaceId,
+            eventType: 'message.sent',
+            aggregateType: 'Message',
+            aggregateId: result.messageId || `${Date.now()}`,
+            payload: {
+              to,
+              content: sanitizedPayload,
+              status: result.status,
+            },
+            status: 'pending',
+            correlationId: correlationId || null,
+          },
+        });
+
+        await recordUsage(this.prisma, {
+          workspaceId,
+          metric: 'messages.outbound',
+          quantity: 1,
+          metadata: { channelType: 'whatsapp', messageType: 'interactive-list' },
+        });
+
+        return;
+      }
+
       const { InfobipClient } = await import('@nexova/integrations');
       const client = new InfobipClient({
         apiKey,
@@ -1828,6 +2017,46 @@ export class AgentWorker {
       const apiKey = resolveWhatsAppApiKey(whatsappNumber);
       if (!apiKey) {
         console.error('[AgentWorker] WhatsApp API key not configured');
+        return;
+      }
+
+      const provider = (whatsappNumber.provider || 'infobip').toLowerCase();
+
+      if (provider === 'evolution') {
+        const baseUrl = resolveEvolutionBaseUrl(whatsappNumber.apiUrl);
+        const instanceName = getEvolutionInstanceName(whatsappNumber.providerConfig);
+        if (!baseUrl || !instanceName) {
+          console.error('[AgentWorker] Evolution not configured (baseUrl/instanceName missing)');
+          return;
+        }
+        const { EvolutionClient } = await import('@nexova/integrations');
+        const client = new EvolutionClient({ apiKey, baseUrl, instanceName });
+        const result = await client.sendInteractiveButtons(to, sanitizedPayload);
+        console.log(`[AgentWorker] Sent interactive buttons to ${to}`);
+
+        await this.prisma.eventOutbox.create({
+          data: {
+            workspaceId,
+            eventType: 'message.sent',
+            aggregateType: 'Message',
+            aggregateId: result.messageId || `${Date.now()}`,
+            payload: {
+              to,
+              content: sanitizedPayload,
+              status: result.status,
+            },
+            status: 'pending',
+            correlationId: correlationId || null,
+          },
+        });
+
+        await recordUsage(this.prisma, {
+          workspaceId,
+          metric: 'messages.outbound',
+          quantity: 1,
+          metadata: { channelType: 'whatsapp', messageType: 'interactive-buttons' },
+        });
+
         return;
       }
 

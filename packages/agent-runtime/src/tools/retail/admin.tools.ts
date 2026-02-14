@@ -2359,6 +2359,16 @@ export class AdminProcessStockReceiptTool extends BaseTool<typeof AdminProcessSt
     }
   }
 
+  private shouldAttachInfobipAuth(fileRef: string): boolean {
+    try {
+      const url = new URL(fileRef);
+      const host = url.hostname.toLowerCase();
+      return host === 'infobip.com' || host.endsWith('.infobip.com');
+    } catch {
+      return false;
+    }
+  }
+
   private parseIssuedAt(value?: string | null): Date | null {
     const raw = (value || '').trim();
     const match = raw.match(/^(\\d{4})-(\\d{2})-(\\d{2})$/);
@@ -2382,10 +2392,12 @@ export class AdminProcessStockReceiptTool extends BaseTool<typeof AdminProcessSt
       select: { apiKeyEnc: true, apiKeyIv: true, provider: true },
     });
 
-    const apiKey =
-      (whatsappNumber ? this.resolveWhatsAppApiKey(whatsappNumber) : '') ||
-      process.env.INFOBIP_API_KEY ||
-      '';
+    const wantsInfobipAuth = this.shouldAttachInfobipAuth(fileRef);
+    const apiKey = wantsInfobipAuth
+      ? ((whatsappNumber ? this.resolveWhatsAppApiKey(whatsappNumber) : '')
+        || process.env.INFOBIP_API_KEY
+        || '')
+      : '';
 
     const { buffer, contentType } = await this.fetchBuffer(fileRef, apiKey);
     const mediaType = this.inferMediaType(fileRef, input.fileType, contentType);

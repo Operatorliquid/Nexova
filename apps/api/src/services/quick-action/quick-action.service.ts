@@ -930,14 +930,14 @@ export class QuickActionService {
 
     const whatsappNumber = await this.prisma.whatsAppNumber.findFirst({
       where: { workspaceId, isActive: true },
-      select: { apiKeyEnc: true, apiKeyIv: true, apiUrl: true, phoneNumber: true, provider: true },
+      select: { apiKeyEnc: true, apiKeyIv: true, apiUrl: true, phoneNumber: true, provider: true, providerConfig: true },
     });
 
     if (!whatsappNumber) {
       throw new Error('WhatsApp no está configurado');
     }
 
-    const apiKey = this.resolveWhatsAppApiKey(whatsappNumber) || process.env.INFOBIP_API_KEY || '';
+    const apiKey = this.resolveWhatsAppApiKey(whatsappNumber);
     if (!apiKey) {
       throw new Error('Falta la API key de WhatsApp');
     }
@@ -950,14 +950,25 @@ export class QuickActionService {
       orders: orders.map((o) => ({ orderNumber: o.orderNumber, pendingAmount: o.pendingAmount })),
     });
 
-    const { InfobipClient } = await import('@nexova/integrations/whatsapp');
-    const client = new InfobipClient({
-      apiKey,
-      baseUrl: this.resolveInfobipBaseUrl(whatsappNumber.apiUrl),
-      senderNumber: whatsappNumber.phoneNumber,
-    });
-
-    await client.sendText(this.normalizePhone(customer.phone), message);
+    const provider = (whatsappNumber.provider || 'infobip').toLowerCase();
+    if (provider === 'evolution') {
+      const { EvolutionClient } = await import('@nexova/integrations/whatsapp');
+      const baseUrl = this.resolveEvolutionBaseUrl(whatsappNumber.apiUrl);
+      const instanceName = this.getEvolutionInstanceName(whatsappNumber.providerConfig);
+      if (!baseUrl || !instanceName) {
+        throw new Error('Evolution no está configurado (baseUrl / instanceName).');
+      }
+      const client = new EvolutionClient({ apiKey, baseUrl, instanceName });
+      await client.sendText(this.normalizePhone(customer.phone), message);
+    } else {
+      const { InfobipClient } = await import('@nexova/integrations/whatsapp');
+      const client = new InfobipClient({
+        apiKey,
+        baseUrl: this.resolveInfobipBaseUrl(whatsappNumber.apiUrl),
+        senderNumber: whatsappNumber.phoneNumber,
+      });
+      await client.sendText(this.normalizePhone(customer.phone), message);
+    }
 
     await this.prisma.customer.updateMany({
       where: { id: customer.id, workspaceId },
@@ -979,14 +990,14 @@ export class QuickActionService {
   private async toolSendDebtRemindersBulk(workspaceId: string) {
     const whatsappNumber = await this.prisma.whatsAppNumber.findFirst({
       where: { workspaceId, isActive: true },
-      select: { apiKeyEnc: true, apiKeyIv: true, apiUrl: true, phoneNumber: true, provider: true },
+      select: { apiKeyEnc: true, apiKeyIv: true, apiUrl: true, phoneNumber: true, provider: true, providerConfig: true },
     });
 
     if (!whatsappNumber) {
       throw new Error('WhatsApp no está configurado');
     }
 
-    const apiKey = this.resolveWhatsAppApiKey(whatsappNumber) || process.env.INFOBIP_API_KEY || '';
+    const apiKey = this.resolveWhatsAppApiKey(whatsappNumber);
     if (!apiKey) {
       throw new Error('Falta la API key de WhatsApp');
     }
@@ -1031,12 +1042,24 @@ export class QuickActionService {
       ordersByCustomer.set(order.customerId, list);
     });
 
-    const { InfobipClient } = await import('@nexova/integrations/whatsapp');
-    const client = new InfobipClient({
-      apiKey,
-      baseUrl: this.resolveInfobipBaseUrl(whatsappNumber.apiUrl),
-      senderNumber: whatsappNumber.phoneNumber,
-    });
+    const provider = (whatsappNumber.provider || 'infobip').toLowerCase();
+    const { EvolutionClient, InfobipClient } = await import('@nexova/integrations/whatsapp');
+
+    const sender =
+      provider === 'evolution'
+        ? (() => {
+            const baseUrl = this.resolveEvolutionBaseUrl(whatsappNumber.apiUrl);
+            const instanceName = this.getEvolutionInstanceName(whatsappNumber.providerConfig);
+            if (!baseUrl || !instanceName) {
+              throw new Error('Evolution no está configurado (baseUrl / instanceName).');
+            }
+            return new EvolutionClient({ apiKey, baseUrl, instanceName });
+          })()
+        : new InfobipClient({
+            apiKey,
+            baseUrl: this.resolveInfobipBaseUrl(whatsappNumber.apiUrl),
+            senderNumber: whatsappNumber.phoneNumber,
+          });
 
     let sent = 0;
     let failed = 0;
@@ -1054,7 +1077,7 @@ export class QuickActionService {
       });
 
       try {
-        await client.sendText(this.normalizePhone(customer.phone), message);
+        await sender.sendText(this.normalizePhone(customer.phone), message);
         sent += 1;
         updatedIds.push(customer.id);
       } catch (error) {
@@ -2774,13 +2797,24 @@ export class QuickActionService {
         try {
           const apiKey = this.resolveWhatsAppApiKey(whatsappNumber);
           if (apiKey) {
-            const { InfobipClient } = await import('@nexova/integrations/whatsapp');
-            const client = new InfobipClient({
-              apiKey,
-              baseUrl: this.resolveInfobipBaseUrl(whatsappNumber.apiUrl),
-              senderNumber: whatsappNumber.phoneNumber,
-            });
-            await client.sendText(session.channelId, content);
+            const provider = (whatsappNumber.provider || 'infobip').toLowerCase();
+            if (provider === 'evolution') {
+              const { EvolutionClient } = await import('@nexova/integrations/whatsapp');
+              const baseUrl = this.resolveEvolutionBaseUrl(whatsappNumber.apiUrl);
+              const instanceName = this.getEvolutionInstanceName(whatsappNumber.providerConfig);
+              if (baseUrl && instanceName) {
+                const client = new EvolutionClient({ apiKey, baseUrl, instanceName });
+                await client.sendText(session.channelId, content);
+              }
+            } else {
+              const { InfobipClient } = await import('@nexova/integrations/whatsapp');
+              const client = new InfobipClient({
+                apiKey,
+                baseUrl: this.resolveInfobipBaseUrl(whatsappNumber.apiUrl),
+                senderNumber: whatsappNumber.phoneNumber,
+              });
+              await client.sendText(session.channelId, content);
+            }
           }
         } catch (error) {
           // Non-fatal: message stored, but sending failed.
@@ -5135,6 +5169,14 @@ export class QuickActionService {
       }
       return '';
     }
+    if (provider === 'evolution') {
+      const envKey = (process.env.EVOLUTION_API_KEY || '').trim();
+      if (envKey) return envKey;
+      if (number.apiKeyEnc && number.apiKeyIv) {
+        return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
+      }
+      return '';
+    }
     if (number.apiKeyEnc && number.apiKeyIv) {
       return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
     }
@@ -5153,6 +5195,19 @@ export class QuickActionService {
       return envUrl;
     }
     return cleaned || defaultUrl;
+  }
+
+  private resolveEvolutionBaseUrl(apiUrl?: string | null): string {
+    const cleaned = (apiUrl || '').trim().replace(/\/$/, '');
+    const envUrl = (process.env.EVOLUTION_BASE_URL || '').trim().replace(/\/$/, '');
+    return cleaned || envUrl;
+  }
+
+  private getEvolutionInstanceName(providerConfig: unknown): string {
+    if (!providerConfig || typeof providerConfig !== 'object') return '';
+    const cfg = providerConfig as Record<string, unknown>;
+    const value = cfg.instanceName ?? cfg.instance ?? cfg.name;
+    return typeof value === 'string' ? value.trim() : '';
   }
 
   private buildProductDisplayName(product: {

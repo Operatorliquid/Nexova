@@ -6,6 +6,7 @@ import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { WorkspaceService } from '@nexova/core';
 import { randomBytes, scryptSync } from 'crypto';
+import { EvolutionAdminClient } from '@nexova/integrations';
 import { getWorkspacePlanContext } from '../../utils/commerce-plan.js';
 
 const createWorkspaceSchema = z.object({
@@ -64,6 +65,46 @@ function hashOwnerAgentPin(pin: string): string {
 
 function toPhoneDigits(value: string): string {
   return (value || '').trim().replace(/\D/g, '');
+}
+
+function randomNumericString(length: number): string {
+  const bytes = randomBytes(Math.max(8, length));
+  let out = '';
+  for (let i = 0; out.length < length; i++) {
+    out += String(bytes[i % bytes.length] % 10);
+  }
+  return out.slice(0, length);
+}
+
+function resolvePublicBaseUrlFromEnv(): string | null {
+  const candidates = [
+    process.env.API_BASE_URL,
+    process.env.PUBLIC_BASE_URL,
+    process.env.PUBLIC_API_URL,
+    process.env.API_PUBLIC_URL,
+    process.env.NGROK_URL,
+    process.env.BASE_URL,
+    process.env.API_URL,
+  ];
+  for (const value of candidates) {
+    const trimmed = (value || '').trim().replace(/\/$/, '');
+    if (trimmed) return trimmed;
+  }
+  return null;
+}
+
+function resolveEvolutionConfigFromEnv(): { baseUrl: string; apiKey: string } | null {
+  const baseUrl = (process.env.EVOLUTION_BASE_URL || '').trim().replace(/\/$/, '');
+  const apiKey = (process.env.EVOLUTION_API_KEY || '').trim();
+  if (!baseUrl || !apiKey) return null;
+  return { baseUrl, apiKey };
+}
+
+function getEvolutionInstanceName(providerConfig: unknown): string {
+  if (!providerConfig || typeof providerConfig !== 'object') return '';
+  const cfg = providerConfig as Record<string, unknown>;
+  const value = cfg.instanceName ?? cfg.instance ?? cfg.name;
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 function normalizeOwnerAgentNumberForSettings(raw: unknown, timezone: unknown): string | undefined {
@@ -430,6 +471,7 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
       // Get available numbers for this business type (not assigned to any workspace)
       const numbers = await fastify.prisma.whatsAppNumber.findMany({
         where: {
+          provider: 'infobip',
           businessType,
           status: 'available',
           workspaceId: null,
@@ -458,14 +500,16 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
       const number = await fastify.prisma.whatsAppNumber.findFirst({
         where: {
           workspaceId: id,
-          isActive: true,
         },
+        orderBy: { createdAt: 'desc' },
         select: {
           id: true,
           phoneNumber: true,
           displayName: true,
+          provider: true,
           status: true,
           healthStatus: true,
+          isActive: true,
         },
       });
 
@@ -506,6 +550,7 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
       const number = await fastify.prisma.whatsAppNumber.findFirst({
         where: {
           id: numberId,
+          provider: 'infobip',
           businessType,
           status: 'available',
           workspaceId: null,
@@ -565,7 +610,7 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
 
       // Find and release the number
       const number = await fastify.prisma.whatsAppNumber.findFirst({
-        where: { workspaceId: id },
+        where: { workspaceId: id, provider: 'infobip' },
       });
 
       if (!number) {
@@ -584,6 +629,358 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
       });
 
       reply.send({ success: true });
+    }
+  );
+
+  // Get available WhatsApp providers for workspace (protected)
+  fastify.get(
+    '/:id/whatsapp/providers',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      if (!assertWorkspaceAccess(request, reply, id)) return;
+
+      const evolutionCfg = resolveEvolutionConfigFromEnv();
+
+      return reply.send({
+        defaultProvider: 'infobip',
+        providers: [
+          {
+            id: 'infobip',
+            label: 'Infobip (Nexova)',
+            connectMode: 'claim',
+            enabled: true,
+          },
+          {
+            id: 'evolution',
+            label: 'Evolution (QR)',
+            connectMode: 'qr',
+            enabled: !!evolutionCfg,
+          },
+        ],
+      });
+    }
+  );
+
+  // Start Evolution QR connection flow (protected)
+  fastify.post(
+    '/:id/whatsapp/evolution/connect',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      if (!assertWorkspaceAccess(request, reply, id)) return;
+
+      const evolutionCfg = resolveEvolutionConfigFromEnv();
+      if (!evolutionCfg) {
+        return reply.code(400).send({
+          error: 'EVOLUTION_NOT_CONFIGURED',
+          message: 'Evolution no está configurado (EVOLUTION_BASE_URL / EVOLUTION_API_KEY).',
+        });
+      }
+
+      const publicBase = resolvePublicBaseUrlFromEnv();
+      if (!publicBase) {
+        return reply.code(400).send({
+          error: 'PUBLIC_URL_MISSING',
+          message: 'Falta configurar API_PUBLIC_URL (o API_BASE_URL / PUBLIC_BASE_URL) para generar el webhook público.',
+        });
+      }
+
+      // Ensure workspace does not already have an active WhatsApp connection
+      const existingActive = await fastify.prisma.whatsAppNumber.findFirst({
+        where: { workspaceId: id, isActive: true },
+      });
+      if (existingActive) {
+        return reply.code(400).send({
+          error: 'ALREADY_CONNECTED',
+          message: 'Este negocio ya tiene un WhatsApp conectado. Desconectalo primero.',
+        });
+      }
+
+      // Resolve business type
+      const workspace = await fastify.prisma.workspace.findUnique({
+        where: { id },
+        select: { settings: true },
+      });
+      const settings = (workspace?.settings as Record<string, unknown>) || {};
+      const businessType = (settings.businessType as string) || 'commerce';
+
+      // Create or reuse a connecting record
+      let number = await fastify.prisma.whatsAppNumber.findFirst({
+        where: { workspaceId: id, provider: 'evolution' },
+      });
+
+      const instanceName = number ? getEvolutionInstanceName(number.providerConfig) : `ws-${id}`;
+      const webhookSecret = number?.webhookSecret || randomBytes(18).toString('hex');
+      const webhookUrl = `${publicBase}/api/whatsapp/evolution/${webhookSecret}`;
+
+      if (!number) {
+        // Placeholder phone until we can resolve the connected owner number.
+        const placeholder = `+000${randomNumericString(12)}`;
+
+        number = await fastify.prisma.whatsAppNumber.create({
+          data: {
+            workspaceId: id,
+            businessType,
+            phoneNumber: placeholder,
+            displayName: 'Conectando...',
+            provider: 'evolution',
+            apiUrl: evolutionCfg.baseUrl,
+            webhookSecret,
+            providerConfig: {
+              instanceName,
+              integration: 'WHATSAPP-BAILEYS',
+              webhookUrl,
+            } as Prisma.InputJsonValue,
+            status: 'assigned',
+            isActive: false,
+            healthStatus: 'connecting',
+          },
+        });
+      } else {
+        // Keep record fresh if env/baseUrl changed
+        await fastify.prisma.whatsAppNumber.updateMany({
+          where: { id: number.id, workspaceId: id },
+          data: {
+            apiUrl: evolutionCfg.baseUrl,
+            webhookSecret,
+            providerConfig: {
+              ...(number.providerConfig as Record<string, unknown>),
+              instanceName,
+              integration: 'WHATSAPP-BAILEYS',
+              webhookUrl,
+            } as Prisma.InputJsonValue,
+            status: 'assigned',
+            isActive: false,
+            healthStatus: 'connecting',
+          },
+        });
+      }
+
+      const admin = new EvolutionAdminClient({
+        apiKey: evolutionCfg.apiKey,
+        baseUrl: evolutionCfg.baseUrl,
+      });
+
+      // Ensure instance exists
+      try {
+        await admin.createInstance({
+          instanceName,
+          integration: 'WHATSAPP-BAILEYS',
+          qrcode: false,
+          groupsIgnore: true,
+          webhook: {
+            url: webhookUrl,
+            byEvents: false,
+            base64: false,
+            events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'],
+            headers: {
+              authorization: '',
+              'Content-Type': 'application/json',
+            },
+          },
+        });
+      } catch (err) {
+        // If the instance name is already in use, proceed (idempotent for reconnects)
+        fastify.log.warn(err, 'Evolution createInstance failed (continuing)');
+      }
+
+      // Ensure webhook configured (createInstance webhook may be ignored depending on server settings)
+      try {
+        await admin.setWebhook(instanceName, {
+          enabled: true,
+          url: webhookUrl,
+          webhookByEvents: false,
+          webhookBase64: false,
+          events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'],
+        });
+      } catch (err) {
+        fastify.log.warn(err, 'Evolution setWebhook failed (continuing)');
+      }
+
+      // Get QR code content
+      const connect = await admin.connectInstance(instanceName);
+
+      return reply.send({
+        provider: 'evolution',
+        instanceName,
+        pairingCode: connect?.pairingCode || null,
+        qrCode: connect?.code || null,
+        count: typeof connect?.count === 'number' ? connect.count : null,
+      });
+    }
+  );
+
+  // Evolution connection status (protected)
+  fastify.get(
+    '/:id/whatsapp/evolution/status',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      if (!assertWorkspaceAccess(request, reply, id)) return;
+
+      const evolutionCfg = resolveEvolutionConfigFromEnv();
+      if (!evolutionCfg) {
+        return reply.code(400).send({
+          error: 'EVOLUTION_NOT_CONFIGURED',
+          message: 'Evolution no está configurado (EVOLUTION_BASE_URL / EVOLUTION_API_KEY).',
+        });
+      }
+
+      const number = await fastify.prisma.whatsAppNumber.findFirst({
+        where: { workspaceId: id, provider: 'evolution' },
+      });
+
+      if (!number) {
+        return reply.send({ provider: 'evolution', state: 'missing', connected: false });
+      }
+
+      const instanceName = getEvolutionInstanceName(number.providerConfig);
+      if (!instanceName) {
+        return reply.send({ provider: 'evolution', state: 'missing_instance', connected: false });
+      }
+
+      const admin = new EvolutionAdminClient({
+        apiKey: evolutionCfg.apiKey,
+        baseUrl: evolutionCfg.baseUrl,
+      });
+
+      let state = 'unknown';
+      try {
+        const res = await admin.getConnectionState(instanceName);
+        state = (res?.instance?.state || 'unknown') as string;
+      } catch (err) {
+        fastify.log.warn(err, 'Evolution getConnectionState failed');
+      }
+
+      const connected = String(state).toLowerCase() === 'open';
+
+      if (connected) {
+        // Fetch owner number and mark active
+        try {
+          const instances = await admin.fetchInstances({ instanceName });
+          const list =
+            Array.isArray(instances)
+              ? instances
+              : Array.isArray((instances as any)?.response)
+                ? (instances as any).response
+                : Array.isArray((instances as any)?.message)
+                  ? (instances as any).message
+                  : [];
+          const row =
+            list.find((item: any) => item?.instance?.instanceName === instanceName || item?.instanceName === instanceName)
+            || list[0]
+            || null;
+          const ownerJid =
+            row?.instance?.owner
+            || row?.instance?.ownerJid
+            || row?.owner
+            || row?.instance?.profile?.owner
+            || null;
+          const ownerDigits =
+            typeof ownerJid === 'string'
+              ? ownerJid.split('@')[0]?.replace(/\D/g, '') || ''
+              : '';
+          const ownerPhone = ownerDigits ? `+${ownerDigits}` : null;
+
+          if (ownerPhone && ownerPhone !== number.phoneNumber) {
+            await fastify.prisma.whatsAppNumber.updateMany({
+              where: { id: number.id, workspaceId: id },
+              data: {
+                phoneNumber: ownerPhone,
+                displayName: ownerPhone,
+              },
+            });
+          }
+
+          await fastify.prisma.whatsAppNumber.updateMany({
+            where: { id: number.id, workspaceId: id },
+            data: {
+              isActive: true,
+              healthStatus: 'healthy',
+              healthCheckedAt: new Date(),
+              status: 'assigned',
+              lastError: null,
+              lastErrorAt: null,
+            },
+          });
+        } catch (err) {
+          fastify.log.warn(err, 'Evolution fetchInstances/activate failed');
+        }
+      } else {
+        await fastify.prisma.whatsAppNumber.updateMany({
+          where: { id: number.id, workspaceId: id },
+          data: {
+            isActive: false,
+            healthStatus: state || 'unknown',
+            healthCheckedAt: new Date(),
+          },
+        });
+      }
+
+      const refreshed = await fastify.prisma.whatsAppNumber.findUnique({
+        where: { id: number.id },
+        select: { id: true, phoneNumber: true, displayName: true, provider: true, isActive: true, healthStatus: true },
+      });
+
+      return reply.send({
+        provider: 'evolution',
+        state,
+        connected,
+        number: refreshed,
+      });
+    }
+  );
+
+  // Disconnect Evolution instance (protected)
+  fastify.post(
+    '/:id/whatsapp/evolution/disconnect',
+    { preHandler: [fastify.authenticate] },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      if (!assertWorkspaceAccess(request, reply, id)) return;
+
+      const evolutionCfg = resolveEvolutionConfigFromEnv();
+      if (!evolutionCfg) {
+        return reply.code(400).send({
+          error: 'EVOLUTION_NOT_CONFIGURED',
+          message: 'Evolution no está configurado (EVOLUTION_BASE_URL / EVOLUTION_API_KEY).',
+        });
+      }
+
+      const number = await fastify.prisma.whatsAppNumber.findFirst({
+        where: { workspaceId: id, provider: 'evolution' },
+      });
+
+      if (!number) {
+        return reply.code(404).send({ error: 'NOT_FOUND', message: 'No hay WhatsApp Evolution conectado.' });
+      }
+
+      const instanceName = getEvolutionInstanceName(number.providerConfig);
+      const admin = new EvolutionAdminClient({
+        apiKey: evolutionCfg.apiKey,
+        baseUrl: evolutionCfg.baseUrl,
+      });
+
+      if (instanceName) {
+        try {
+          await admin.logoutInstance(instanceName);
+        } catch (err) {
+          fastify.log.warn(err, 'Evolution logout failed (continuing)');
+        }
+        try {
+          await admin.deleteInstance(instanceName);
+        } catch (err) {
+          fastify.log.warn(err, 'Evolution deleteInstance failed (continuing)');
+        }
+      }
+
+      // Remove record to keep workspace clean
+      await fastify.prisma.whatsAppNumber.deleteMany({
+        where: { id: number.id, workspaceId: id },
+      });
+
+      return reply.send({ success: true });
     }
   );
 

@@ -4,11 +4,16 @@
  */
 import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { encrypt } from '@nexova/core';
+import { decrypt, encrypt } from '@nexova/core';
 import { Redis } from 'ioredis';
+import { EvolutionClient } from '@nexova/integrations';
 
 function hasGlobalInfobipApiKey(): boolean {
   return (process.env.INFOBIP_API_KEY || '').trim().length > 0;
+}
+
+function hasGlobalEvolutionApiKey(): boolean {
+  return (process.env.EVOLUTION_API_KEY || '').trim().length > 0;
 }
 
 function getWhatsAppCredentialsStatus(number: { provider?: string | null; apiKeyEnc?: string | null; apiKeyIv?: string | null }): {
@@ -20,6 +25,14 @@ function getWhatsAppCredentialsStatus(number: { provider?: string | null; apiKey
 
   if (provider === 'infobip') {
     const hasGlobal = hasGlobalInfobipApiKey();
+    return {
+      hasCredentials: hasPerNumber || hasGlobal,
+      credentialsSource: hasGlobal ? 'global' : hasPerNumber ? 'number' : 'missing',
+    };
+  }
+
+  if (provider === 'evolution') {
+    const hasGlobal = hasGlobalEvolutionApiKey();
     return {
       hasCredentials: hasPerNumber || hasGlobal,
       credentialsSource: hasGlobal ? 'global' : hasPerNumber ? 'number' : 'missing',
@@ -494,13 +507,68 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       });
     }
 
+    const provider = (number.provider || 'infobip').toLowerCase();
+    const now = new Date();
+
+    if (provider === 'evolution') {
+      const envKey = (process.env.EVOLUTION_API_KEY || '').trim();
+      const apiKey =
+        envKey
+        || (number.apiKeyEnc && number.apiKeyIv ? decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv }) : '');
+      const baseUrl = (number.apiUrl || '').trim().replace(/\/$/, '');
+      const providerConfig = (number.providerConfig as Record<string, unknown>) || {};
+      const instanceNameRaw = providerConfig.instanceName ?? providerConfig.instance ?? providerConfig.name;
+      const instanceName = typeof instanceNameRaw === 'string' ? instanceNameRaw.trim() : '';
+
+      if (!apiKey || !baseUrl || !instanceName) {
+        return reply.code(400).send({
+          error: 'BAD_REQUEST',
+          message: 'Evolution is missing apiKey/baseUrl/instanceName',
+        });
+      }
+
+      try {
+        const client = new EvolutionClient({ apiKey, baseUrl, instanceName });
+        const health = await client.healthCheck();
+
+        await fastify.prisma.whatsAppNumber.update({
+          where: { id },
+          data: {
+            healthStatus: health.healthy ? 'healthy' : 'error',
+            healthCheckedAt: now,
+            lastError: health.healthy ? null : (health.message || health.state || 'unhealthy'),
+            lastErrorAt: health.healthy ? null : now,
+          },
+        });
+
+        return reply.send({
+          success: health.healthy,
+          message: health.healthy ? 'Connection test successful' : 'Connection test failed',
+          state: health.state,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Evolution connection failed';
+        await fastify.prisma.whatsAppNumber.update({
+          where: { id },
+          data: {
+            healthStatus: 'error',
+            healthCheckedAt: now,
+            lastError: msg,
+            lastErrorAt: now,
+          },
+        });
+
+        return reply.code(502).send({ success: false, message: msg });
+      }
+    }
+
     // TODO: Actually test the connection with Infobip/Twilio
     // For now, just mark as healthy
     await fastify.prisma.whatsAppNumber.update({
       where: { id },
       data: {
         healthStatus: 'healthy',
-        healthCheckedAt: new Date(),
+        healthCheckedAt: now,
         lastError: null,
         lastErrorAt: null,
       },
