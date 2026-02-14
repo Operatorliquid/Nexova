@@ -94,7 +94,11 @@ function resolvePublicBaseUrlFromEnv(): string | null {
 }
 
 function resolveEvolutionConfigFromEnv(): { baseUrl: string; apiKey: string } | null {
-  const baseUrl = (process.env.EVOLUTION_BASE_URL || '').trim().replace(/\/$/, '');
+  let baseUrl = (process.env.EVOLUTION_BASE_URL || '').trim().replace(/\/+$/, '');
+  // Allow setting EVOLUTION_BASE_URL without protocol (common on Railway).
+  if (baseUrl && !/^https?:\/\//i.test(baseUrl)) {
+    baseUrl = `https://${baseUrl}`;
+  }
   const apiKey = (process.env.EVOLUTION_API_KEY || '').trim();
   if (!baseUrl || !apiKey) return null;
   return { baseUrl, apiKey };
