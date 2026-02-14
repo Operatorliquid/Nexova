@@ -6,7 +6,7 @@ import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { WorkspaceService } from '@nexova/core';
 import { randomBytes, scryptSync } from 'crypto';
-import { EvolutionAdminClient } from '@nexova/integrations';
+import { EvolutionAdminClient, EvolutionError } from '@nexova/integrations';
 import { getWorkspacePlanContext } from '../../utils/commerce-plan.js';
 
 const createWorkspaceSchema = z.object({
@@ -98,6 +98,23 @@ function resolveEvolutionConfigFromEnv(): { baseUrl: string; apiKey: string } | 
   const apiKey = (process.env.EVOLUTION_API_KEY || '').trim();
   if (!baseUrl || !apiKey) return null;
   return { baseUrl, apiKey };
+}
+
+function evolutionErrorToMessage(err: unknown): { statusCode: number; message: string } {
+  if (err instanceof EvolutionError) {
+    const body = (err.responseBody || '').trim();
+    const snippet = body ? body.slice(0, 800) : '';
+    return {
+      statusCode: 502,
+      message: `Evolution API error (${err.statusCode})${snippet ? `: ${snippet}` : ''}`,
+    };
+  }
+
+  if (err instanceof Error) {
+    return { statusCode: 502, message: err.message || 'Error conectando con Evolution' };
+  }
+
+  return { statusCode: 502, message: 'Error conectando con Evolution' };
 }
 
 function getEvolutionInstanceName(providerConfig: unknown): string {
@@ -762,30 +779,66 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
         baseUrl: evolutionCfg.baseUrl,
       });
 
-      // Ensure instance exists
+      const normalizeInstances = (instances: unknown): any[] => {
+        if (Array.isArray(instances)) return instances;
+        if (instances && typeof instances === 'object') {
+          const anyInst = instances as any;
+          if (Array.isArray(anyInst.response)) return anyInst.response;
+          if (Array.isArray(anyInst.message)) return anyInst.message;
+        }
+        return [];
+      };
+
+      const hasInstance = (instances: unknown): boolean => {
+        const list = normalizeInstances(instances);
+        return list.some(
+          (item: any) =>
+            item?.instance?.instanceName === instanceName
+            || item?.instanceName === instanceName
+        );
+      };
+
+      // Ensure instance exists (idempotent reconnect). We only swallow create errors if instance already exists.
       try {
-        await admin.createInstance({
-          instanceName,
-          integration: 'WHATSAPP-BAILEYS',
-          qrcode: false,
-          groupsIgnore: true,
-          webhook: {
-            url: webhookUrl,
-            byEvents: false,
-            base64: false,
-            events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'],
-            headers: {
-              authorization: '',
-              'Content-Type': 'application/json',
+        const instances = await admin.fetchInstances({ instanceName });
+        if (!hasInstance(instances)) {
+          await admin.createInstance({
+            instanceName,
+            integration: 'WHATSAPP-BAILEYS',
+            qrcode: true,
+            groupsIgnore: true,
+            webhook: {
+              url: webhookUrl,
+              byEvents: false,
+              base64: false,
+              events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'],
+              headers: {
+                authorization: '',
+                'Content-Type': 'application/json',
+              },
             },
-          },
-        });
+          });
+        }
       } catch (err) {
-        // If the instance name is already in use, proceed (idempotent for reconnects)
-        fastify.log.warn(err, 'Evolution createInstance failed (continuing)');
+        fastify.log.warn(err, 'Evolution createInstance/fetchInstances failed');
+        let exists = false;
+        try {
+          const instances = await admin.fetchInstances({ instanceName });
+          exists = hasInstance(instances);
+        } catch (verifyErr) {
+          fastify.log.warn(verifyErr, 'Evolution fetchInstances verification failed');
+        }
+
+        if (!exists) {
+          const { statusCode, message } = evolutionErrorToMessage(err);
+          return reply.code(statusCode).send({
+            error: 'EVOLUTION_CREATE_INSTANCE_FAILED',
+            message,
+          });
+        }
       }
 
-      // Ensure webhook configured (createInstance webhook may be ignored depending on server settings)
+      // Ensure webhook configured (required for inbound messages)
       try {
         await admin.setWebhook(instanceName, {
           enabled: true,
@@ -795,11 +848,24 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
           events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'],
         });
       } catch (err) {
-        fastify.log.warn(err, 'Evolution setWebhook failed (continuing)');
+        const { statusCode, message } = evolutionErrorToMessage(err);
+        return reply.code(statusCode).send({
+          error: 'EVOLUTION_WEBHOOK_FAILED',
+          message,
+        });
       }
 
       // Get QR code content
-      const connect = await admin.connectInstance(instanceName);
+      let connect: Awaited<ReturnType<typeof admin.connectInstance>>;
+      try {
+        connect = await admin.connectInstance(instanceName);
+      } catch (err) {
+        const { statusCode, message } = evolutionErrorToMessage(err);
+        return reply.code(statusCode).send({
+          error: 'EVOLUTION_CONNECT_FAILED',
+          message,
+        });
+      }
 
       return reply.send({
         provider: 'evolution',
