@@ -5068,11 +5068,9 @@ export class RetailAgent {
 
         toolsUsed.push(execution);
 
-        const dataMessage = (execution.result.data as { message?: string } | undefined)?.message;
-        const response =
-          execution.result.success && dataMessage
-            ? dataMessage
-            : execution.result.error || 'No pude enviar el catálogo.';
+        const response = execution.result.success
+          ? '📒 Ahora te envío el catálogo. Decime qué querés agregar a tu pedido.'
+          : execution.result.error || 'No pude enviar el catálogo.';
 
         await this.storeMessage(sessionId, 'assistant', response);
         await this.prisma.agentSession.updateMany({
@@ -5239,7 +5237,9 @@ export class RetailAgent {
       // Registered customers: show menu on explicit menu request even outside idle
       if (fsm.getState() !== AgentState.IDLE && isMenuRequest(message)) {
         const menuContent = buildPrimaryMenuContent();
-        const response = menuContent.text;
+        const wantsGreeting = shouldPrefaceGreeting(message);
+        const body = wantsGreeting ? `¡Hola! 😊\n\n${menuContent.interactive.body}` : menuContent.interactive.body;
+        const response = body;
 
         await this.storeMessage(sessionId, 'user', message, messageId);
         await this.storeMessage(sessionId, 'assistant', response);
@@ -5254,7 +5254,7 @@ export class RetailAgent {
         return {
           response,
           responseType: 'interactive-buttons',
-          responsePayload: menuContent.interactive,
+          responsePayload: { ...menuContent.interactive, body },
           state: fsm.getState(),
           toolsUsed: [],
           tokensUsed: 0,
@@ -5267,7 +5267,9 @@ export class RetailAgent {
 
         if (shouldShowMenu(message)) {
           const menuContent = buildPrimaryMenuContent();
-          const response = menuContent.text;
+          const wantsGreeting = shouldPrefaceGreeting(message);
+          const body = wantsGreeting ? `¡Hola! 😊\n\n${menuContent.interactive.body}` : menuContent.interactive.body;
+          const response = body;
 
           await this.storeMessage(sessionId, 'user', message, messageId);
           await this.storeMessage(sessionId, 'assistant', response);
@@ -5282,7 +5284,7 @@ export class RetailAgent {
           return {
             response,
             responseType: 'interactive-buttons',
-            responsePayload: menuContent.interactive,
+            responsePayload: { ...menuContent.interactive, body },
             state: fsm.getState(),
             toolsUsed: [],
             tokensUsed: 0,
@@ -8066,10 +8068,15 @@ function isPrimaryMenuResponse(text: string): boolean {
   const hasMore = normalized.includes('mas opciones');
   const hasPrompt = normalized.includes('que queres hacer') || normalized.includes('que deseas hacer');
   const hasLegacyPrompt = normalized.includes('en que te puedo ayudar') || normalized.includes('en que puedo ayudarte');
-  const hasLegacyOptions = normalized.includes('catalogo') && (normalized.includes('precios') || normalized.includes('consultar'));
+  const hasLegacyOptions =
+    // Older / hallucinated menus the LLM sometimes returns (we override to our real menu).
+    (normalized.includes('productos disponibles') || normalized.includes('ver productos')) &&
+      (normalized.includes('consultar precios') || normalized.includes('precios') || normalized.includes('consultar')) ||
+    // Some variants mention catálogo + precios.
+    normalized.includes('catalogo') && (normalized.includes('precios') || normalized.includes('consultar'));
 
   const isPrimaryMenu = hasOrder && hasActive && hasMore && hasPrompt;
-  const isLegacyMenu = hasOrder && hasLegacyPrompt && hasLegacyOptions;
+  const isLegacyMenu = hasLegacyPrompt && hasLegacyOptions;
 
   return isPrimaryMenu || isLegacyMenu;
 }
@@ -8736,6 +8743,7 @@ function shouldPrefaceGreeting(message: string): boolean {
   if (!normalized) return false;
 
   const greetings = [
+    'ola',
     'hola',
     'buenas',
     'buen dia',
@@ -8744,6 +8752,7 @@ function shouldPrefaceGreeting(message: string): boolean {
     'como estas',
     'como andas',
     'que tal',
+    'todo bien',
   ];
 
   // Match greeting as exact, prefix, or as a word/phrase inside a coalesced message.
@@ -8920,6 +8929,11 @@ function wasCatalogExplicitlyRequested(message: string): boolean {
     'lista productos',
     'listado de productos',
     'productos disponibles',
+    'que productos tenes',
+    'que productos tienen',
+    'que productos hay',
+    'que tenes disponible',
+    'que tienen disponible',
     'ver productos',
     'mostrar productos',
     'mostrar catalogo',
@@ -10869,32 +10883,41 @@ function safeParseJson(text: string): unknown | null {
 }
 
 function isMenuRequest(message: string): boolean {
-  const normalized = message.trim().toLowerCase();
-  if (!normalized) return true;
-  const relaxed = normalizeSimpleText(message).replace(/([a-z])\1+/g, '$1');
+  const raw = message.trim().toLowerCase();
+  if (!raw) return true;
 
-  const greetings = [
+  // normalizeSimpleText removes punctuation/accents; we also "relax" repeated letters
+  // so "olaaaa" behaves like a greeting/menu request.
+  const normalized = normalizeSimpleText(message);
+  const relaxed = normalized.replace(/([a-z])\1+/g, '$1');
+
+  const phrases = [
+    'ola',
     'hola',
+    'holi',
     'buenas',
+    'buenos dias',
     'buen dia',
     'buenas tardes',
     'buenas noches',
+    'hey',
     'como estas',
     'como andas',
     'que tal',
     'todo bien',
     'menu',
-    'menú',
     'opciones',
     'ayuda',
   ];
 
-  return greetings.some(
-    (g) =>
-      normalized === g ||
-      normalized.startsWith(`${g} `) ||
-      relaxed === g ||
-      relaxed.startsWith(`${g} `)
+  const candidates = [normalized, relaxed].filter(Boolean);
+  return phrases.some((phrase) =>
+    candidates.some((value) =>
+      value === phrase ||
+      value.startsWith(`${phrase} `) ||
+      value.includes(` ${phrase} `) ||
+      value.endsWith(` ${phrase}`)
+    )
   );
 }
 
