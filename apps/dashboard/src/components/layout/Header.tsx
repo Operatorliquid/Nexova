@@ -301,7 +301,7 @@ export function Header({ title }: HeaderProps) {
   };
 
   return (
-    <header className="relative z-50 h-16 flex-shrink-0 border-b border-border bg-background/80 backdrop-blur-sm">
+    <header className="relative z-50 h-16 flex-shrink-0 border-b border-border bg-background/60 backdrop-blur-xl">
       <div className="flex items-center justify-between h-full px-6">
         {/* Left side */}
         <div className="flex items-center gap-4">

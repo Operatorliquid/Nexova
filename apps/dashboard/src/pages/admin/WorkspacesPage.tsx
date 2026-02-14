@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Building2, Users, Package, ShoppingCart, Bot, RefreshCw } from 'lucide-react';
-import { Badge, Button, Input, AnimatedPage, AnimatedStagger, AnimatedCard } from '../../components/ui';
+import { Badge, Button, Input, AnimatedPage, AnimatedStagger, StatCard } from '../../components/ui';
 import { apiFetch } from '../../lib/api';
 import { useToastStore } from '../../stores/toast.store';
 import { normalizeCommercePlan, type CommercePlan } from '@nexova/shared';
@@ -151,31 +151,6 @@ export default function WorkspacesPage() {
     loadWorkspaces();
   }, [loadWorkspaces]);
 
-  const statCards = useMemo(() => ([
-    {
-      label: 'Negocios',
-      value: stats?.workspaces.total ?? 0,
-      sub: `${stats?.workspaces.active ?? 0} activos`,
-      icon: Building2,
-      iconBg: 'bg-emerald-500/10',
-      iconColor: 'text-emerald-400',
-    },
-    {
-      label: 'Usuarios',
-      value: stats?.users.total ?? 0,
-      sub: `${stats?.users.active ?? 0} activos`,
-      icon: Users,
-      iconBg: 'bg-blue-500/10',
-      iconColor: 'text-blue-400',
-    },
-    {
-      label: 'Mensajes',
-      value: stats?.messages.total ?? 0,
-      icon: Bot,
-      iconBg: 'bg-cyan-500/10',
-      iconColor: 'text-cyan-400',
-    },
-  ]), [stats]);
 
   return (
     <AnimatedPage className="space-y-6">
@@ -200,26 +175,9 @@ export default function WorkspacesPage() {
       </div>
 
       <AnimatedStagger className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {statCards.map((card) => (
-          <AnimatedCard key={card.label}>
-            <div className="flex items-start justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">{card.label}</p>
-                {isLoading ? (
-                  <div className="h-7 w-16 rounded-lg bg-secondary animate-pulse mt-2" />
-                ) : (
-                  <p className="text-2xl font-semibold mt-1 text-foreground">{card.value}</p>
-                )}
-                {card.sub && !isLoading && (
-                  <p className="text-xs text-muted-foreground mt-1">{card.sub}</p>
-                )}
-              </div>
-              <div className={`w-10 h-10 rounded-xl ${card.iconBg} flex items-center justify-center`}>
-                <card.icon className={`w-5 h-5 ${card.iconColor}`} />
-              </div>
-            </div>
-          </AnimatedCard>
-        ))}
+        <StatCard label="Negocios" value={(stats?.workspaces.total ?? 0).toString()} icon={Building2} color="emerald" sub={`${stats?.workspaces.active ?? 0} activos`} isLoading={isLoading} />
+        <StatCard label="Usuarios" value={(stats?.users.total ?? 0).toString()} icon={Users} color="blue" sub={`${stats?.users.active ?? 0} activos`} isLoading={isLoading} />
+        <StatCard label="Mensajes" value={(stats?.messages.total ?? 0).toString()} icon={Bot} color="cyan" isLoading={isLoading} />
       </AnimatedStagger>
 
       <div className="glass-card rounded-2xl overflow-hidden">

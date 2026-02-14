@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   Users, UserCheck, Shield, UserX, RefreshCw, Trash2,
   ChevronRight, Building2, Calendar, Mail, Clock, ShieldCheck, ShieldOff,
 } from 'lucide-react';
-import { Badge, Button, Input, AnimatedPage, AnimatedStagger, AnimatedCard } from '../../components/ui';
+import { Badge, Button, Input, AnimatedPage, AnimatedStagger, StatCard } from '../../components/ui';
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription,
 } from '../../components/ui/sheet';
@@ -317,13 +317,6 @@ export default function UsersPage() {
     setActiveTab('info');
   };
 
-  const statCards = useMemo(() => ([
-    { label: 'Total usuarios', value: stats?.total ?? 0, icon: Users, iconBg: 'bg-blue-500/10', iconColor: 'text-blue-400' },
-    { label: 'Activos', value: stats?.active ?? 0, icon: UserCheck, iconBg: 'bg-emerald-500/10', iconColor: 'text-emerald-400' },
-    { label: 'Super admins', value: stats?.superAdmins ?? 0, icon: Shield, iconBg: 'bg-primary/10', iconColor: 'text-primary' },
-    { label: 'Suspendidos', value: stats?.suspended ?? 0, icon: UserX, iconBg: 'bg-red-500/10', iconColor: 'text-red-400' },
-  ]), [stats]);
-
   const sheetTabs: { id: SheetTab; label: string; icon: typeof Users; count?: number }[] = [
     { id: 'info', label: 'Información', icon: Users },
     { id: 'memberships', label: 'Negocios', icon: Building2, count: selectedUser?._count.memberships },
@@ -356,23 +349,10 @@ export default function UsersPage() {
 
       {/* Stat cards */}
       <AnimatedStagger className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        {statCards.map((card) => (
-          <AnimatedCard key={card.label}>
-            <div className="flex items-start justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">{card.label}</p>
-                {isLoading ? (
-                  <div className="h-7 w-16 rounded-lg bg-secondary animate-pulse mt-2" />
-                ) : (
-                  <p className="text-2xl font-semibold mt-1 text-foreground">{card.value}</p>
-                )}
-              </div>
-              <div className={`w-10 h-10 rounded-xl ${card.iconBg} flex items-center justify-center`}>
-                <card.icon className={`w-5 h-5 ${card.iconColor}`} />
-              </div>
-            </div>
-          </AnimatedCard>
-        ))}
+        <StatCard label="Total usuarios" value={(stats?.total ?? 0).toString()} icon={Users} color="blue" isLoading={isLoading} />
+        <StatCard label="Activos" value={(stats?.active ?? 0).toString()} icon={UserCheck} color="emerald" isLoading={isLoading} />
+        <StatCard label="Super admins" value={(stats?.superAdmins ?? 0).toString()} icon={Shield} color="primary" isLoading={isLoading} />
+        <StatCard label="Suspendidos" value={(stats?.suspended ?? 0).toString()} icon={UserX} color="red" isLoading={isLoading} />
       </AnimatedStagger>
 
       {/* Users table */}

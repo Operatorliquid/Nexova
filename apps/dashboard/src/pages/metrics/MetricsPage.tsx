@@ -17,7 +17,7 @@ import {
   SelectValue,
   AnimatedPage,
   AnimatedStagger,
-  AnimatedCard,
+  StatCard,
   AnimatedItem,
 } from '../../components/ui';
 import { ChartTooltip, TooltipLine } from '../../components/ui/chart-tooltip';
@@ -148,45 +148,6 @@ export default function MetricsPage() {
 
     loadMetrics();
   }, [workspace?.id, range]);
-
-  const summaryCards = useMemo(() => {
-    const summary = metrics?.summary;
-    return [
-      {
-        label: 'Ventas totales',
-        value: summary?.totalRevenue ?? 0,
-        highlight: 'text-emerald-400',
-        icon: DollarSign,
-        iconBg: 'bg-emerald-500/10',
-        iconColor: 'text-emerald-400',
-      },
-      {
-        label: 'Pedidos',
-        value: summary?.totalOrders ?? 0,
-        highlight: 'text-foreground',
-        isCurrency: false,
-        icon: ShoppingCart,
-        iconBg: 'bg-blue-500/10',
-        iconColor: 'text-blue-400',
-      },
-      {
-        label: 'Ticket promedio',
-        value: summary?.avgOrderValue ?? 0,
-        highlight: 'text-emerald-400',
-        icon: TrendingUp,
-        iconBg: 'bg-emerald-500/10',
-        iconColor: 'text-emerald-400',
-      },
-      {
-        label: 'Cobrado',
-        value: summary?.totalPaid ?? 0,
-        highlight: 'text-cyan-400',
-        icon: CreditCard,
-        iconBg: 'bg-cyan-500/10',
-        iconColor: 'text-cyan-400',
-      },
-    ];
-  }, [metrics]);
 
   const pendingRevenue = metrics?.summary.pendingRevenue ?? 0;
   const paidRate = metrics?.summary.paidRate ?? 0;
@@ -323,27 +284,10 @@ export default function MetricsPage() {
 
         {/* Summary cards */}
         <AnimatedStagger className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          {summaryCards.map((card, index) => (
-            <AnimatedCard key={index}>
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">{card.label}</p>
-                  {isLoading ? (
-                    <SkeletonPulse className="h-7 w-24 mt-1" />
-                  ) : (
-                    <p className={`text-2xl font-semibold mt-1 ${card.highlight}`}>
-                      {card.isCurrency === false
-                        ? card.value.toString()
-                        : formatCurrency(card.value)}
-                    </p>
-                  )}
-                </div>
-                <div className={`w-10 h-10 rounded-xl ${card.iconBg} flex items-center justify-center`}>
-                  <card.icon className={`w-5 h-5 ${card.iconColor}`} />
-                </div>
-              </div>
-            </AnimatedCard>
-          ))}
+          <StatCard label="Ventas totales" value={formatCurrency(metrics?.summary.totalRevenue ?? 0)} icon={DollarSign} color="emerald" isLoading={isLoading} />
+          <StatCard label="Pedidos" value={(metrics?.summary.totalOrders ?? 0).toString()} icon={ShoppingCart} color="blue" isLoading={isLoading} />
+          <StatCard label="Ticket promedio" value={formatCurrency(metrics?.summary.avgOrderValue ?? 0)} icon={TrendingUp} color="emerald" isLoading={isLoading} />
+          <StatCard label="Cobrado" value={formatCurrency(metrics?.summary.totalPaid ?? 0)} icon={CreditCard} color="cyan" isLoading={isLoading} />
         </AnimatedStagger>
 
         {/* Sales by day + top customers */}

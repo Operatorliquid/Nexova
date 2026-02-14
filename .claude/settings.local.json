@@ -68,7 +68,9 @@
       "Bash(. \"$NVM_DIR/nvm.sh\")",
       "Bash(wc:*)",
       "Bash(pnpm run typecheck:*)",
-      "Bash(pnpm tsc:*)"
+      "Bash(pnpm tsc:*)",
+      "Bash(pnpm --filter dashboard build:*)",
+      "Bash(pnpm --filter landing add:*)"
     ]
   }
 }

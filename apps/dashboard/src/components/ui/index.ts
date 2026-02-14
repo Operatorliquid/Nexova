@@ -71,6 +71,7 @@ export {
   fadeIn,
   scaleIn,
 } from './motion';
+export { StatCard, type StatCardColor } from './stat-card';
 export { ChartTooltip, TooltipLine } from './chart-tooltip';
 export {
   Sheet,

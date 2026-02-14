@@ -38,8 +38,10 @@ export default function AdminLayout() {
     <div className="min-h-screen bg-background">
       {/* Background gradient */}
       <div className="fixed inset-0 -z-10">
-        <div className="absolute top-0 -left-40 w-80 h-80 bg-primary/20 rounded-full blur-[120px]" />
-        <div className="absolute bottom-0 -right-40 w-80 h-80 bg-primary/10 rounded-full blur-[120px]" />
+        <div className="absolute top-0 -left-40 w-80 h-80 bg-[#4f46e5]/20 rounded-full blur-[120px]" />
+        <div className="absolute bottom-0 -right-40 w-80 h-80 bg-[#7c3aed]/12 rounded-full blur-[120px]" />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[300px] bg-[#3b82f6]/6 rounded-full blur-[160px]" />
+        <div className="absolute top-1/4 right-1/3 w-60 h-60 bg-[#06b6d4]/6 rounded-full blur-[140px]" />
       </div>
 
       {/* Sidebar */}
@@ -75,7 +77,7 @@ export default function AdminLayout() {
                   cn(
                     'flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200',
                     isActive
-                      ? 'bg-primary/15 text-primary border border-primary/20'
+                      ? 'sidebar-active text-primary'
                       : 'text-muted-foreground hover:text-foreground hover:bg-secondary'
                   )
                 }
@@ -110,7 +112,7 @@ export default function AdminLayout() {
 
       {/* Main content */}
       <div className="pl-64 h-screen flex flex-col overflow-hidden">
-        <header className="flex-shrink-0 h-16 border-b border-border bg-background/80 backdrop-blur-sm">
+        <header className="flex-shrink-0 h-16 border-b border-border bg-background/60 backdrop-blur-xl">
           <div className="flex items-center justify-between h-full px-6">
             <div className="flex items-center gap-3">
               <div className="w-8 h-8 rounded-xl bg-primary/10 flex items-center justify-center">

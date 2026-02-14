@@ -17,7 +17,7 @@ import {
   Input,
   AnimatedPage,
   AnimatedStagger,
-  AnimatedCard,
+  StatCard,
 } from '../../components/ui';
 import {
   ProductModal,
@@ -565,40 +565,6 @@ export default function StockPage() {
     });
   }, [products, search, stockFilter]);
 
-  // Stats display
-  const statsData = [
-    {
-      icon: Package,
-      value: stats?.totalProducts || 0,
-      label: 'Total productos',
-      iconBg: 'bg-primary/10',
-      iconColor: 'text-primary',
-    },
-    {
-      icon: CheckCircle,
-      value: stats?.activeProducts || 0,
-      label: 'Activos',
-      iconBg: 'bg-emerald-500/10',
-      iconColor: 'text-emerald-400',
-    },
-    {
-      icon: Clock,
-      value: stats?.lowStockCount || 0,
-      label: 'Stock bajo',
-      iconBg: 'bg-amber-500/10',
-      iconColor: 'text-amber-400',
-      highlight: (v: number) => v > 0 ? 'text-foreground' : undefined,
-    },
-    {
-      icon: AlertTriangle,
-      value: stats?.outOfStockCount || 0,
-      label: 'Sin stock',
-      iconBg: 'bg-red-500/10',
-      iconColor: 'text-red-400',
-      highlight: (v: number) => v > 0 ? 'text-red-400' : undefined,
-    },
-  ];
-
   return (
     <div className="h-full overflow-y-auto scrollbar-hide p-6">
       <AnimatedPage className="max-w-7xl mx-auto space-y-6">
@@ -653,25 +619,10 @@ export default function StockPage() {
 
         {/* Stats */}
         <AnimatedStagger className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          {statsData.map((stat, i) => (
-            <AnimatedCard key={i}>
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">{stat.label}</p>
-                  {isLoading ? (
-                    <div className="animate-pulse rounded-lg bg-secondary h-7 w-16 mt-1" />
-                  ) : (
-                    <p className={`text-2xl font-semibold mt-1 ${stat.highlight?.(stat.value) || 'text-foreground'}`}>
-                      {stat.value}
-                    </p>
-                  )}
-                </div>
-                <div className={`w-10 h-10 rounded-xl ${stat.iconBg} flex items-center justify-center`}>
-                  <stat.icon className={`w-5 h-5 ${stat.iconColor}`} />
-                </div>
-              </div>
-            </AnimatedCard>
-          ))}
+          <StatCard label="Total productos" value={(stats?.totalProducts || 0).toString()} icon={Package} color="primary" isLoading={isLoading} />
+          <StatCard label="Activos" value={(stats?.activeProducts || 0).toString()} icon={CheckCircle} color="emerald" isLoading={isLoading} />
+          <StatCard label="Stock bajo" value={(stats?.lowStockCount || 0).toString()} icon={Clock} color="amber" isLoading={isLoading} />
+          <StatCard label="Sin stock" value={(stats?.outOfStockCount || 0).toString()} icon={AlertTriangle} color="red" isLoading={isLoading} />
         </AnimatedStagger>
 
         {/* Filters */}

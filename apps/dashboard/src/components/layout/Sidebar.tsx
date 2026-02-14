@@ -62,7 +62,7 @@ export function Sidebar() {
                 cn(
                   'flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200',
                   isActive
-                    ? 'bg-primary/15 text-primary border border-primary/20'
+                    ? 'sidebar-active text-primary'
                     : 'text-muted-foreground hover:text-foreground hover:bg-secondary'
                 )
               }

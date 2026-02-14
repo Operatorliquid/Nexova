@@ -56,7 +56,9 @@ export default {
   		},
   		boxShadow: {
   			glass: '0 8px 32px 0 rgba(0, 0, 0, 0.37)',
-  			'glass-sm': '0 4px 16px 0 rgba(0, 0, 0, 0.25)'
+  			'glass-sm': '0 4px 16px 0 rgba(0, 0, 0, 0.25)',
+  			'glass-hover': '0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(77, 124, 255, 0.06)',
+  			'glass-glow': '0 0 20px -4px var(--glow-color), 0 4px 16px rgba(0, 0, 0, 0.25)'
   		},
   		animation: {
   			'fade-in': 'fadeIn 0.3s ease-out',

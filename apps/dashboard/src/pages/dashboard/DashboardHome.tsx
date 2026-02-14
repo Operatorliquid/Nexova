@@ -20,7 +20,7 @@ import {
   SelectValue,
   AnimatedPage,
   AnimatedStagger,
-  AnimatedCard,
+  StatCard,
   AnimatedItem,
 } from '../../components/ui';
 import { ChartTooltip, TooltipLine } from '../../components/ui/chart-tooltip';
@@ -391,63 +391,12 @@ export default function DashboardHome() {
           </div>
         )}
 
-        <AnimatedStagger className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-4">
-          {[
-            {
-              label: 'Ventas',
-              value: formatCurrency(summary.totalRevenue),
-              icon: DollarSign,
-              tone: 'text-emerald-400',
-              bg: 'bg-emerald-500/10',
-            },
-            {
-              label: 'Pedidos',
-              value: summary.totalOrders.toString(),
-              icon: ShoppingCart,
-              tone: 'text-primary',
-              bg: 'bg-primary/10',
-            },
-            {
-              label: 'Nuevos pedidos',
-              value: summary.newOrders.length.toString(),
-              icon: Bell,
-              tone: summary.newOrders.length > 0 ? 'text-primary' : 'text-muted-foreground',
-              bg: summary.newOrders.length > 0 ? 'bg-primary/10' : 'bg-secondary',
-            },
-            {
-              label: 'Pagado',
-              value: formatCurrency(summary.totalPaid),
-              icon: CreditCard,
-              tone: 'text-emerald-400',
-              bg: 'bg-emerald-500/10',
-            },
-            {
-              label: 'Pendiente',
-              value: formatCurrency(summary.pendingRevenue),
-              icon: TrendingUp,
-              tone: 'text-primary',
-              bg: 'bg-primary/10',
-            },
-          ].map((stat, index) => {
-            const Icon = stat.icon;
-            return (
-              <AnimatedCard key={index}>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-muted-foreground">{stat.label}</p>
-                    {isLoading ? (
-                      <div className="animate-pulse rounded-lg bg-secondary h-7 w-16 mt-1" />
-                    ) : (
-                      <p className="text-xl font-semibold text-foreground mt-1">{stat.value}</p>
-                    )}
-                  </div>
-                  <div className={`w-10 h-10 rounded-xl ${stat.bg} flex items-center justify-center`}>
-                    <Icon className={`w-5 h-5 ${stat.tone}`} />
-                  </div>
-                </div>
-              </AnimatedCard>
-            );
-          })}
+        <AnimatedStagger className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
+          <StatCard label="Ventas" value={formatCurrency(summary.totalRevenue)} icon={DollarSign} color="emerald" isLoading={isLoading} />
+          <StatCard label="Pedidos" value={summary.totalOrders.toString()} icon={ShoppingCart} color="primary" isLoading={isLoading} />
+          <StatCard label="Nuevos pedidos" value={summary.newOrders.length.toString()} icon={Bell} color="primary" isLoading={isLoading} />
+          <StatCard label="Pagado" value={formatCurrency(summary.totalPaid)} icon={CreditCard} color="emerald" isLoading={isLoading} />
+          <StatCard label="Pendiente" value={formatCurrency(summary.pendingRevenue)} icon={TrendingUp} color="primary" isLoading={isLoading} />
         </AnimatedStagger>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

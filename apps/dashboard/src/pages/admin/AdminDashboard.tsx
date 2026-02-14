@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Users, Building2, MessageSquare, Phone, RefreshCw, AlertTriangle } from 'lucide-react';
-import { Badge, Button, AnimatedPage, AnimatedStagger, AnimatedCard } from '../../components/ui';
+import { Badge, Button, AnimatedPage, AnimatedStagger, StatCard } from '../../components/ui';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../components/ui/dialog';
 import { apiFetch } from '../../lib/api';
 import { useToastStore } from '../../stores/toast.store';
@@ -150,41 +150,6 @@ export default function AdminDashboard() {
     loadDashboard();
   }, [loadDashboard]);
 
-  const statCards = useMemo(() => {
-    return [
-      {
-        label: 'Usuarios totales',
-        value: stats?.users.total ?? 0,
-        sub: `${stats?.users.active ?? 0} activos`,
-        icon: Users,
-        iconBg: 'bg-blue-500/10',
-        iconColor: 'text-blue-400',
-      },
-      {
-        label: 'Negocios',
-        value: stats?.workspaces.total ?? 0,
-        sub: `${stats?.workspaces.active ?? 0} activos`,
-        icon: Building2,
-        iconBg: 'bg-emerald-500/10',
-        iconColor: 'text-emerald-400',
-      },
-      {
-        label: 'Mensajes',
-        value: stats?.messages.total ?? 0,
-        icon: MessageSquare,
-        iconBg: 'bg-cyan-500/10',
-        iconColor: 'text-cyan-400',
-      },
-      {
-        label: 'Números WhatsApp',
-        value: stats?.whatsappNumbers.total ?? 0,
-        icon: Phone,
-        iconBg: 'bg-emerald-500/10',
-        iconColor: 'text-emerald-400',
-      },
-    ];
-  }, [stats]);
-
   const triggerOrdersLimitToast = () => {
     toastError('Alcanzaste el límite mensual de pedidos (200).');
   };
@@ -215,26 +180,10 @@ export default function AdminDashboard() {
       </div>
 
       <AnimatedStagger className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {statCards.map((card) => (
-          <AnimatedCard key={card.label}>
-            <div className="flex items-start justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">{card.label}</p>
-                {isLoading ? (
-                  <div className="h-7 w-16 rounded-lg bg-secondary animate-pulse mt-2" />
-                ) : (
-                  <p className="text-2xl font-semibold mt-1 text-foreground">{card.value}</p>
-                )}
-                {card.sub && !isLoading && (
-                  <p className="text-xs text-muted-foreground mt-1">{card.sub}</p>
-                )}
-              </div>
-              <div className={`w-10 h-10 rounded-xl ${card.iconBg} flex items-center justify-center`}>
-                <card.icon className={`w-5 h-5 ${card.iconColor}`} />
-              </div>
-            </div>
-          </AnimatedCard>
-        ))}
+        <StatCard label="Usuarios totales" value={(stats?.users.total ?? 0).toString()} icon={Users} color="blue" sub={`${stats?.users.active ?? 0} activos`} isLoading={isLoading} />
+        <StatCard label="Negocios" value={(stats?.workspaces.total ?? 0).toString()} icon={Building2} color="emerald" sub={`${stats?.workspaces.active ?? 0} activos`} isLoading={isLoading} />
+        <StatCard label="Mensajes" value={(stats?.messages.total ?? 0).toString()} icon={MessageSquare} color="cyan" isLoading={isLoading} />
+        <StatCard label="Números WhatsApp" value={(stats?.whatsappNumbers.total ?? 0).toString()} icon={Phone} color="emerald" isLoading={isLoading} />
       </AnimatedStagger>
 
       <div className="glass-card rounded-2xl p-5 space-y-4">

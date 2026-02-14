@@ -39,7 +39,7 @@ import {
   SelectValue,
   AnimatedPage,
   AnimatedStagger,
-  AnimatedCard,
+  StatCard,
   AnimatedTableBody,
   AnimatedTableRow,
 } from '../../components/ui';
@@ -697,30 +697,10 @@ export default function CustomersPage() {
 
         {/* Stats */}
         <AnimatedStagger className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          {[
-            { value: stats?.totalCustomers ?? 0, label: 'Total clientes', format: (v: number) => v.toString(), icon: Users, iconBg: 'bg-primary/10', iconColor: 'text-primary' },
-            { value: stats?.activeCustomers ?? 0, label: 'Activos (30 dias)', format: (v: number) => v.toString(), icon: Clock, iconBg: 'bg-emerald-500/10', iconColor: 'text-emerald-400' },
-            { value: stats?.newCustomers ?? 0, label: 'Nuevos este mes', format: (v: number) => v.toString(), icon: UserPlus, iconBg: 'bg-blue-500/10', iconColor: 'text-blue-400' },
-            { value: stats?.averageSpent ?? 0, label: 'Valor promedio', format: formatCurrency, icon: DollarSign, iconBg: 'bg-cyan-500/10', iconColor: 'text-cyan-400' },
-          ].map((stat, i) => (
-            <AnimatedCard key={i}>
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">{stat.label}</p>
-                  {isLoading ? (
-                    <div className="animate-pulse rounded-lg bg-secondary h-7 w-20 mt-1" />
-                  ) : (
-                    <p className="text-2xl font-semibold mt-1 text-foreground">
-                      {stat.format(stat.value as number)}
-                    </p>
-                  )}
-                </div>
-                <div className={`w-10 h-10 rounded-xl ${stat.iconBg} flex items-center justify-center`}>
-                  <stat.icon className={`w-5 h-5 ${stat.iconColor}`} />
-                </div>
-              </div>
-            </AnimatedCard>
-          ))}
+          <StatCard label="Total clientes" value={(stats?.totalCustomers ?? 0).toString()} icon={Users} color="primary" isLoading={isLoading} />
+          <StatCard label="Activos (30 dias)" value={(stats?.activeCustomers ?? 0).toString()} icon={Clock} color="emerald" isLoading={isLoading} />
+          <StatCard label="Nuevos este mes" value={(stats?.newCustomers ?? 0).toString()} icon={UserPlus} color="blue" isLoading={isLoading} />
+          <StatCard label="Valor promedio" value={formatCurrency(stats?.averageSpent ?? 0)} icon={DollarSign} color="cyan" isLoading={isLoading} />
         </AnimatedStagger>
 
         {/* Customers table */}

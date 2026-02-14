@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Package, User, CreditCard, ShoppingCart, Plus, Minus, Search, Trash2, RotateCcw, AlertTriangle, FileText, Calendar, Printer, ChevronDown, Receipt, DollarSign, TrendingUp, Clock, Upload, Eye } from 'lucide-react';
-import { Badge, Button, Input, Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Switch, AnimatedPage, AnimatedStagger, AnimatedCard, AnimatedTableBody, AnimatedTableRow } from '../../components/ui';
+import { Badge, Button, Input, Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Switch, AnimatedPage, AnimatedStagger, StatCard, AnimatedTableBody, AnimatedTableRow } from '../../components/ui';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../../components/ui/dialog';
 import { DeleteConfirmModal } from '../../components/stock';
 import { useAuth } from '../../contexts/AuthContext';
@@ -1308,30 +1308,10 @@ export default function OrdersPage() {
 
         {/* Stats */}
         <AnimatedStagger className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          {[
-            { value: stats?.totalOrders ?? 0, label: 'Total pedidos', format: (v: number) => v.toString(), icon: ShoppingCart, iconBg: 'bg-primary/10', iconColor: 'text-primary' },
-            { value: stats?.pendingOrders ?? 0, label: 'Pendientes de aprobación', format: (v: number) => v.toString(), highlight: 'amber', icon: Clock, iconBg: 'bg-amber-500/10', iconColor: 'text-amber-400' },
-            { value: stats?.totalRevenue ?? 0, label: 'Ingresos', format: formatCurrency, icon: DollarSign, iconBg: 'bg-emerald-500/10', iconColor: 'text-emerald-400' },
-            { value: stats?.avgOrderValue ?? 0, label: 'Ticket promedio', format: formatCurrency, icon: TrendingUp, iconBg: 'bg-cyan-500/10', iconColor: 'text-cyan-400' },
-          ].map((stat, i) => (
-            <AnimatedCard key={i}>
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">{stat.label}</p>
-                  {isLoading ? (
-                    <div className="animate-pulse rounded-lg bg-secondary h-7 w-20 mt-1" />
-                  ) : (
-                    <p className="text-2xl font-semibold mt-1 text-foreground">
-                      {stat.format(stat.value as number)}
-                    </p>
-                  )}
-                </div>
-                <div className={`w-10 h-10 rounded-xl ${stat.iconBg} flex items-center justify-center`}>
-                  <stat.icon className={`w-5 h-5 ${stat.iconColor}`} />
-                </div>
-              </div>
-            </AnimatedCard>
-          ))}
+          <StatCard label="Total pedidos" value={(stats?.totalOrders ?? 0).toString()} icon={ShoppingCart} color="primary" isLoading={isLoading} />
+          <StatCard label="Pendientes de aprobación" value={(stats?.pendingOrders ?? 0).toString()} icon={Clock} color="amber" isLoading={isLoading} />
+          <StatCard label="Ingresos" value={formatCurrency(stats?.totalRevenue ?? 0)} icon={DollarSign} color="emerald" isLoading={isLoading} />
+          <StatCard label="Ticket promedio" value={formatCurrency(stats?.avgOrderValue ?? 0)} icon={TrendingUp} color="cyan" isLoading={isLoading} />
         </AnimatedStagger>
 
         {/* Orders table */}

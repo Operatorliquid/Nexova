@@ -1,4 +1,5 @@
-import { Button, Input, AnimatedPage, AnimatedStagger, AnimatedCard } from '../../components/ui';
+import { FileText, Calendar, DollarSign, Clock } from 'lucide-react';
+import { Button, Input, AnimatedPage, AnimatedStagger, StatCard } from '../../components/ui';
 
 export default function ReceiptsPage() {
   return (
@@ -35,19 +36,10 @@ export default function ReceiptsPage() {
 
         {/* Stats */}
         <AnimatedStagger className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          {[
-            { value: '0', label: 'Total comprobantes' },
-            { value: '0', label: 'Este mes' },
-            { value: '$0', label: 'Facturado' },
-            { value: '0', label: 'Pendientes' },
-          ].map((stat, i) => (
-            <AnimatedCard key={i}>
-              <div className="text-center">
-                <p className="text-2xl font-bold text-muted-foreground">{stat.value}</p>
-                <p className="text-sm text-muted-foreground">{stat.label}</p>
-              </div>
-            </AnimatedCard>
-          ))}
+          <StatCard label="Total comprobantes" value="0" icon={FileText} color="primary" />
+          <StatCard label="Este mes" value="0" icon={Calendar} color="primary" />
+          <StatCard label="Facturado" value="$0" icon={DollarSign} color="emerald" />
+          <StatCard label="Pendientes" value="0" icon={Clock} color="amber" />
         </AnimatedStagger>
 
         {/* Receipts table - Empty state */}

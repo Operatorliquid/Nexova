@@ -103,8 +103,8 @@ export function AnimatedCard({
       transition={{ duration: 0.3, ease: 'easeOut' }}
       whileHover={{
         y: -2,
-        boxShadow: '0 20px 40px -12px rgba(0,0,0,0.3)',
-        transition: { duration: 0.2 },
+        boxShadow: '0 20px 40px -12px rgba(0,0,0,0.35), 0 8px 16px -8px rgba(0,0,0,0.2)',
+        transition: { duration: 0.25, ease: 'easeOut' },
       }}
       className={cn('glass-card rounded-2xl p-5 transition-colors', className)}
     >

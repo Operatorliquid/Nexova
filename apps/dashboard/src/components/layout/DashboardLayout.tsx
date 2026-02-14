@@ -24,15 +24,19 @@ export function DashboardLayout() {
       <div className="fixed inset-0 -z-10 overflow-hidden">
         {theme === 'dark' ? (
           <>
-            <div className="absolute top-0 -left-40 w-96 h-96 bg-[#4236c4]/15 rounded-full blur-[150px]" />
-            <div className="absolute bottom-0 -right-40 w-96 h-96 bg-[#4236c4]/10 rounded-full blur-[150px]" />
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[400px] bg-[#4236c4]/5 rounded-full blur-[200px]" />
+            <div className="absolute top-0 -left-40 w-96 h-96 bg-[#4f46e5]/20 rounded-full blur-[150px]" />
+            <div className="absolute bottom-0 -right-40 w-96 h-96 bg-[#7c3aed]/12 rounded-full blur-[150px]" />
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[400px] bg-[#3b82f6]/8 rounded-full blur-[200px]" />
+            <div className="absolute top-1/4 right-1/4 w-72 h-72 bg-[#06b6d4]/8 rounded-full blur-[180px]" />
+            <div className="absolute bottom-1/3 left-1/3 w-64 h-64 bg-[#8b5cf6]/6 rounded-full blur-[180px]" />
           </>
         ) : (
           <>
-            <div className="absolute top-0 -left-40 w-96 h-96 bg-[#4236c4]/8 rounded-full blur-[150px]" />
-            <div className="absolute bottom-0 -right-40 w-96 h-96 bg-[#4236c4]/6 rounded-full blur-[150px]" />
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[400px] bg-[#4236c4]/3 rounded-full blur-[200px]" />
+            <div className="absolute top-0 -left-40 w-96 h-96 bg-[#4f46e5]/10 rounded-full blur-[150px]" />
+            <div className="absolute bottom-0 -right-40 w-96 h-96 bg-[#7c3aed]/8 rounded-full blur-[150px]" />
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[400px] bg-[#3b82f6]/5 rounded-full blur-[200px]" />
+            <div className="absolute top-1/4 right-1/4 w-72 h-72 bg-[#06b6d4]/5 rounded-full blur-[180px]" />
+            <div className="absolute bottom-1/3 left-1/3 w-64 h-64 bg-[#8b5cf6]/4 rounded-full blur-[180px]" />
           </>
         )}
       </div>

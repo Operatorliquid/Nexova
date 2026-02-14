@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { AlertTriangle, FileText, Upload, Search, DollarSign, Users, Clock, Eye, MessageSquare, CreditCard, Send, Info } from 'lucide-react';
-import { AnimatedPage, AnimatedStagger, AnimatedCard, Badge, Button, Input, Label, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Switch } from '../../components/ui';
+import { AnimatedPage, AnimatedStagger, StatCard, Badge, Button, Input, Label, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Switch } from '../../components/ui';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../components/ui/dialog';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../stores/toast.store';
@@ -579,29 +579,9 @@ export default function DebtsPage() {
 
         {/* Stats */}
         <AnimatedStagger className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {[
-            { icon: DollarSign, value: stats?.totalDebt ?? 0, label: 'Total por cobrar', format: formatCurrency, iconBg: 'bg-primary/10', iconColor: 'text-primary' },
-            { icon: Users, value: stats?.customersWithDebt ?? 0, label: 'Clientes con deuda', format: (v: number) => v.toString(), iconBg: 'bg-primary/10', iconColor: 'text-primary' },
-            { icon: Clock, value: stats?.overdueDebt ?? 0, label: 'Vencido (+30 dias)', format: formatCurrency, iconBg: 'bg-red-500/10', iconColor: 'text-red-400', highlight: (v: number) => v > 0 ? 'text-red-400' : undefined },
-          ].map((stat, i) => (
-            <AnimatedCard key={i}>
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground">{stat.label}</p>
-                  {isLoading ? (
-                    <div className="animate-pulse rounded-lg bg-secondary h-7 w-16 mt-1" />
-                  ) : (
-                    <p className={`text-2xl font-semibold mt-1 ${stat.highlight?.(stat.value as number) || 'text-foreground'}`}>
-                      {stat.format(stat.value as number)}
-                    </p>
-                  )}
-                </div>
-                <div className={`w-10 h-10 rounded-xl ${stat.iconBg} flex items-center justify-center`}>
-                  <stat.icon className={`w-5 h-5 ${stat.iconColor}`} />
-                </div>
-              </div>
-            </AnimatedCard>
-          ))}
+          <StatCard label="Total por cobrar" value={formatCurrency(stats?.totalDebt ?? 0)} icon={DollarSign} color="primary" isLoading={isLoading} />
+          <StatCard label="Clientes con deuda" value={(stats?.customersWithDebt ?? 0).toString()} icon={Users} color="primary" isLoading={isLoading} />
+          <StatCard label="Vencido (+30 dias)" value={formatCurrency(stats?.overdueDebt ?? 0)} icon={Clock} color="red" isLoading={isLoading} />
         </AnimatedStagger>
 
         {/* Debts table */}
