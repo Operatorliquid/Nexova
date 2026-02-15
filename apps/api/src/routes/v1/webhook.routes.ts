@@ -150,6 +150,11 @@ function extractEvolutionQrInfo(payload: any): { qrCode?: string; qrDataUrl?: st
   };
 }
 
+function normalizeEvolutionEventName(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  return value.trim().toUpperCase().replace(/[^A-Z0-9]+/g, '_');
+}
+
 function evolutionRemoteJidToE164(remoteJid: string | null | undefined): string | null {
   if (!remoteJid || typeof remoteJid !== 'string') return null;
   // remoteJid example: "553198296801@s.whatsapp.net"
@@ -552,11 +557,8 @@ export async function webhookRoutes(
           return reply.send({ status: 'ignored', reason: 'number_not_found' });
         }
 
-        const event = typeof payload?.event === 'string'
-          ? payload.event.toUpperCase()
-          : typeof payload?.eventType === 'string'
-            ? payload.eventType.toUpperCase()
-            : '';
+        const rawEvent = (payload?.event ?? payload?.eventType ?? '') as unknown;
+        const event = normalizeEvolutionEventName(rawEvent);
 
         if (event === 'QRCODE_UPDATED') {
           const qr = extractEvolutionQrInfo(payload);
@@ -582,6 +584,28 @@ export async function webhookRoutes(
         }
 
         if (event === 'CONNECTION_UPDATE') {
+          // Some Evolution builds include the QR payload in CONNECTION_UPDATE.
+          const qr = extractEvolutionQrInfo(payload);
+          if (qr.qrCode || qr.qrDataUrl || qr.pairingCode) {
+            const currentCfg =
+              whatsappNumber.providerConfig && typeof whatsappNumber.providerConfig === 'object'
+                ? (whatsappNumber.providerConfig as Record<string, unknown>)
+                : {};
+
+            await app.prisma.whatsAppNumber.update({
+              where: { id: whatsappNumber.id },
+              data: {
+                providerConfig: {
+                  ...currentCfg,
+                  ...(qr.qrCode ? { qrCode: qr.qrCode } : {}),
+                  ...(qr.qrDataUrl ? { qrDataUrl: qr.qrDataUrl } : {}),
+                  ...(qr.pairingCode ? { pairingCode: qr.pairingCode } : {}),
+                  qrUpdatedAt: new Date().toISOString(),
+                } as Prisma.InputJsonValue,
+              },
+            });
+          }
+
           // We keep this endpoint lightweight. The workspace polls status via /whatsapp/evolution/status.
           return reply.send({ status: 'received', event: 'CONNECTION_UPDATE' });
         }
