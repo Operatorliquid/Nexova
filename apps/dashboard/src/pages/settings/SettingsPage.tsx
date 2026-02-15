@@ -1075,13 +1075,6 @@ interface WhatsAppNumberInfo {
   isActive?: boolean;
 }
 
-type WhatsAppProviderOption = {
-  id: string;
-  label: string;
-  connectMode: 'claim' | 'qr';
-  enabled: boolean;
-};
-
 interface MPStatus {
   connected: boolean;
   status: string;
@@ -1119,11 +1112,8 @@ function ApplicationsSettings() {
 
   // WhatsApp state
   const [connectedNumber, setConnectedNumber] = useState<WhatsAppNumberInfo | null>(null);
-  const [availableNumbers, setAvailableNumbers] = useState<WhatsAppNumberInfo[]>([]);
   const [showSelectModal, setShowSelectModal] = useState(false);
-  const [waProviders, setWaProviders] = useState<WhatsAppProviderOption[]>([]);
-  const [selectedProvider, setSelectedProvider] = useState<string>('infobip');
-  const [selectedNumber, setSelectedNumber] = useState('');
+  const [isEvolutionEnabled, setIsEvolutionEnabled] = useState(true);
   const [isLoadingWA, setIsLoadingWA] = useState(true);
   const [isConnectingWA, setIsConnectingWA] = useState(false);
   const [isGeneratingEvolutionQr, setIsGeneratingEvolutionQr] = useState(false);
@@ -1191,9 +1181,8 @@ function ApplicationsSettings() {
           'X-Workspace-Id': workspace.id,
         };
 
-        const [connectedRes, availableRes, providersRes] = await Promise.all([
+        const [connectedRes, providersRes] = await Promise.all([
           fetchWithCredentials(`${API_URL}/api/v1/workspaces/${workspace.id}/whatsapp-numbers`, { headers }),
-          fetchWithCredentials(`${API_URL}/api/v1/workspaces/${workspace.id}/whatsapp-numbers/available`, { headers }),
           fetchWithCredentials(`${API_URL}/api/v1/workspaces/${workspace.id}/whatsapp/providers`, { headers }),
         ]);
 
@@ -1201,17 +1190,10 @@ function ApplicationsSettings() {
           const data = await connectedRes.json();
           setConnectedNumber(data.number || null);
         }
-        if (availableRes.ok) {
-          const data = await availableRes.json();
-          setAvailableNumbers(data.numbers || []);
-        }
         if (providersRes.ok) {
-          const data = await providersRes.json() as { providers?: WhatsAppProviderOption[]; defaultProvider?: string };
+          const data = await providersRes.json() as { providers?: Array<{ id?: string; enabled?: boolean }> };
           const providers = Array.isArray(data?.providers) ? data.providers : [];
-          setWaProviders(providers);
-          if (data?.defaultProvider && typeof data.defaultProvider === 'string') {
-            setSelectedProvider(data.defaultProvider);
-          }
+          setIsEvolutionEnabled(providers.some((p) => (p?.id || '').toLowerCase() === 'evolution' && !!p?.enabled));
         }
       } catch (err) {
         console.error('Failed to fetch WhatsApp:', err);
@@ -1295,39 +1277,6 @@ function ApplicationsSettings() {
   }, [canUseArca, workspace?.id]);
 
   // WhatsApp handlers
-  const handleConnectWA = async () => {
-    if (!selectedNumber || !workspace?.id) return;
-    setIsConnectingWA(true);
-    setWaError('');
-
-    try {
-      const res = await fetchWithCredentials(
-        `${API_URL}/api/v1/workspaces/${workspace.id}/whatsapp-numbers/${selectedNumber}/claim`,
-        {
-          method: 'POST',
-          headers: {
-            'X-Workspace-Id': workspace.id,
-          },
-        }
-      );
-
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.message || 'Error al conectar');
-      }
-
-      const data = await res.json();
-      setConnectedNumber(data.number);
-      setAvailableNumbers(availableNumbers.filter(n => n.id !== selectedNumber));
-      setShowSelectModal(false);
-      setSelectedNumber('');
-    } catch (err) {
-      setWaError(err instanceof Error ? err.message : 'Error al conectar');
-    } finally {
-      setIsConnectingWA(false);
-    }
-  };
-
   const handleDisconnectWA = async () => {
     if (!connectedNumber || !workspace?.id) return;
     setIsConnectingWA(true);
@@ -1352,9 +1301,6 @@ function ApplicationsSettings() {
         throw new Error(data.message || 'Error al desconectar');
       }
 
-      if (provider !== 'evolution') {
-        setAvailableNumbers([...availableNumbers, connectedNumber]);
-      }
       setConnectedNumber(null);
       setEvolutionQrDataUrl('');
       setEvolutionPairingCode('');
@@ -1466,7 +1412,6 @@ function ApplicationsSettings() {
         if (status?.connected && status?.number) {
           setConnectedNumber(status.number);
           setShowSelectModal(false);
-          setSelectedNumber('');
           setEvolutionQrDataUrl('');
           setEvolutionPairingCode('');
           stopEvolutionPolling();
@@ -1740,7 +1685,6 @@ function ApplicationsSettings() {
                     <Button
                       size="sm"
                       onClick={() => {
-                        setSelectedProvider('evolution');
                         setShowSelectModal(true);
                         void handleConnectEvolution();
                       }}
@@ -1766,7 +1710,7 @@ function ApplicationsSettings() {
                   <p className="text-sm text-muted-foreground">Conecta WhatsApp para que el agente IA responda</p>
                 </div>
               </div>
-              {availableNumbers.length > 0 || waProviders.some((p) => p.id === 'evolution' && p.enabled) ? (
+              {isEvolutionEnabled ? (
                 <Button onClick={() => setShowSelectModal(true)}>
                   Conectar
                 </Button>
@@ -1932,7 +1876,6 @@ function ApplicationsSettings() {
         onOpenChange={(open) => {
           if (!open) {
             setShowSelectModal(false);
-            setSelectedNumber('');
             stopEvolutionPolling();
             setEvolutionQrDataUrl('');
             setEvolutionPairingCode('');
@@ -1942,128 +1885,87 @@ function ApplicationsSettings() {
           }
         }}
       >
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-lg">
           <DialogHeader className="pb-4 border-b border-border">
-            <DialogTitle>Conectar WhatsApp</DialogTitle>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center">
+                <svg className="w-5 h-5 text-emerald-400" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
+                </svg>
+              </div>
+              <div>
+                <DialogTitle>Conectar WhatsApp</DialogTitle>
+                <DialogDescription>Conectá tu número escaneando un código QR</DialogDescription>
+              </div>
+            </div>
           </DialogHeader>
           <div className="space-y-4 pt-2">
-            <p className="text-sm text-muted-foreground">
-              Elegí cómo querés conectar tu WhatsApp.
-            </p>
-
-            <div className="grid gap-3">
-              <button
-                onClick={() => setSelectedProvider('infobip')}
-                className={cn(
-                  'w-full p-4 rounded-xl border text-left transition-all',
-                  selectedProvider === 'infobip'
-                    ? 'border-primary bg-primary/10 ring-2 ring-primary/20'
-                    : 'border-border hover:border-primary/50 bg-secondary'
-                )}
-              >
-                <p className="font-medium text-foreground">Infobip (Nexova)</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Elegís un número disponible (asignado por Nexova).
-                </p>
-              </button>
-
-              <button
-                onClick={() => {
-                  if (!waProviders.some((p) => p.id === 'evolution' && p.enabled)) return;
-                  setSelectedProvider('evolution');
-                }}
-                disabled={!waProviders.some((p) => p.id === 'evolution' && p.enabled)}
-                className={cn(
-                  'w-full p-4 rounded-xl border text-left transition-all',
-                  waProviders.some((p) => p.id === 'evolution' && p.enabled)
-                    ? selectedProvider === 'evolution'
-                      ? 'border-primary bg-primary/10 ring-2 ring-primary/20'
-                      : 'border-border hover:border-primary/50 bg-secondary'
-                    : 'border-border bg-secondary/50 opacity-60 cursor-not-allowed'
-                )}
-              >
-                <p className="font-medium text-foreground">Evolution (QR)</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Conectás tu propio número escaneando un QR.
-                </p>
-              </button>
-            </div>
-
-            {selectedProvider === 'infobip' && (
-              <>
-                <div className="space-y-2 max-h-64 overflow-y-auto scrollbar-hide">
-                  {availableNumbers.map((number) => (
-                    <button
-                      key={number.id}
-                      onClick={() => setSelectedNumber(number.id)}
-                      className={cn(
-                        'w-full p-4 rounded-xl border text-left transition-all flex items-center gap-3',
-                        selectedNumber === number.id
-                          ? 'border-primary bg-primary/10 ring-2 ring-primary/20'
-                          : 'border-border hover:border-primary/50 bg-secondary'
-                      )}
-                    >
-                      <div className="w-10 h-10 rounded-lg bg-emerald-500/20 flex items-center justify-center">
-                        <svg className="w-5 h-5 text-emerald-400" fill="currentColor" viewBox="0 0 24 24">
-                          <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
-                        </svg>
-                      </div>
-                      <div>
-                        <span className="font-mono text-foreground">{number.phoneNumber}</span>
-                        {number.displayName && number.displayName !== number.phoneNumber && (
-                          <p className="text-xs text-muted-foreground">{number.displayName}</p>
-                        )}
-                      </div>
-                    </button>
-                  ))}
-                  {availableNumbers.length === 0 && (
-                    <div className="p-4 rounded-xl bg-secondary border border-border text-sm text-muted-foreground">
-                      No hay números disponibles.
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
-
-            {selectedProvider === 'evolution' && (
-              <div className="space-y-3">
-                <div className="p-4 rounded-xl bg-secondary border border-border">
-                  <p className="text-sm text-muted-foreground">
-                    1) Tocá "Generar QR". 2) Abrí WhatsApp en tu teléfono → Dispositivos vinculados → Vincular dispositivo. 3) Escaneá el QR.
-                  </p>
-                  <div className="mt-3 flex gap-2">
-                    <Button onClick={handleConnectEvolution} isLoading={isGeneratingEvolutionQr}>
-                      Generar QR
-                    </Button>
-                    {evolutionState && (
-                      <span className="text-xs text-muted-foreground self-center">Estado: {evolutionState}</span>
-                    )}
+            <div className="space-y-3">
+              <div className="p-4 rounded-xl bg-secondary border border-border space-y-3">
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-6 h-6 rounded-lg bg-primary/10 flex items-center justify-center text-xs font-semibold text-primary shrink-0">1</div>
+                    <p className="text-sm text-muted-foreground">Tocá <span className="text-foreground font-medium">"Generar QR"</span></p>
+                  </div>
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-6 h-6 rounded-lg bg-primary/10 flex items-center justify-center text-xs font-semibold text-primary shrink-0">2</div>
+                    <p className="text-sm text-muted-foreground">Abrí WhatsApp → Dispositivos vinculados → Vincular dispositivo</p>
+                  </div>
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-6 h-6 rounded-lg bg-primary/10 flex items-center justify-center text-xs font-semibold text-primary shrink-0">3</div>
+                    <p className="text-sm text-muted-foreground">Escaneá el código QR</p>
                   </div>
                 </div>
+                <div className="flex items-center gap-2">
+                  <Button onClick={handleConnectEvolution} isLoading={isGeneratingEvolutionQr} disabled={!isEvolutionEnabled}>
+                    Generar QR
+                  </Button>
+                  {!isEvolutionEnabled && (
+                    <span className="text-xs text-muted-foreground">Evolution no está configurado</span>
+                  )}
+                  {evolutionState && (
+                    <span className={cn(
+                      'text-xs px-2.5 py-1 rounded-full font-medium',
+                      evolutionState === 'open' || evolutionState === 'connected'
+                        ? 'bg-emerald-500/20 text-emerald-400'
+                        : evolutionState === 'connecting'
+                          ? 'bg-amber-500/20 text-amber-400'
+                          : 'bg-red-500/20 text-red-400'
+                    )}>
+                      {evolutionState === 'open' || evolutionState === 'connected'
+                        ? 'Conectado'
+                        : evolutionState === 'connecting'
+                          ? 'Conectando...'
+                          : evolutionState}
+                    </span>
+                  )}
+                </div>
+              </div>
 
-                {evolutionQrDataUrl && (
-                  <div className="p-4 rounded-xl bg-secondary border border-border flex flex-col items-center gap-3">
+              {evolutionQrDataUrl && (
+                <div className="p-4 rounded-xl bg-secondary border border-border flex flex-col items-center gap-3">
+                  <div className="bg-white rounded-xl p-3">
                     <img
                       src={evolutionQrDataUrl}
                       alt="QR WhatsApp"
-                      className="w-64 h-64 rounded-lg bg-white p-2"
+                      className="w-60 h-60"
                     />
-                    {evolutionPairingCode && (
-                      <p className="text-xs text-muted-foreground">
-                        Código: <span className="font-mono text-foreground">{evolutionPairingCode}</span>
-                      </p>
-                    )}
                   </div>
-                )}
-              </div>
-            )}
+                  {evolutionPairingCode && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground">Código:</span>
+                      <span className="bg-secondary/50 rounded-lg px-3 py-1.5 font-mono text-sm text-foreground">{evolutionPairingCode}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
 
             <div className="flex justify-end gap-3 pt-4 border-t border-border">
               <Button
                 variant="ghost"
                 onClick={() => {
                   setShowSelectModal(false);
-                  setSelectedNumber('');
                   stopEvolutionPolling();
                   setEvolutionQrDataUrl('');
                   setEvolutionPairingCode('');
@@ -2072,11 +1974,6 @@ function ApplicationsSettings() {
               >
                 Cerrar
               </Button>
-              {selectedProvider === 'infobip' && (
-                <Button onClick={handleConnectWA} disabled={!selectedNumber} isLoading={isConnectingWA}>
-                  Conectar
-                </Button>
-              )}
             </div>
           </div>
         </DialogContent>

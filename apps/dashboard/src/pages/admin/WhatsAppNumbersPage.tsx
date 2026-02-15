@@ -20,6 +20,7 @@ import {
 import { businessTypes } from '../../config/modules';
 import { apiFetch } from '../../lib/api';
 import { useToastStore } from '../../stores/toast.store';
+import { WorkspacePaywallCard } from '../paywall/WorkspaceSuspendedPage';
 
 interface WhatsAppNumber {
   id: string;
@@ -43,6 +44,14 @@ interface WorkspaceOption {
   id: string;
   name: string;
 }
+
+type EvolutionHealth = {
+  configured: boolean;
+  healthy: boolean;
+  baseUrl?: string;
+  instanceCount?: number;
+  error?: string;
+};
 
 interface ApiErrorBody {
   message?: string;
@@ -81,6 +90,7 @@ export default function WhatsAppNumbersPage() {
 
   const [numbers, setNumbers] = useState<WhatsAppNumber[]>([]);
   const [workspaces, setWorkspaces] = useState<WorkspaceOption[]>([]);
+  const [evolutionHealth, setEvolutionHealth] = useState<EvolutionHealth | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
@@ -109,9 +119,10 @@ export default function WhatsAppNumbersPage() {
     else setIsLoading(true);
 
     try {
-      const [numbersRes, workspacesRes] = await Promise.all([
+      const [numbersRes, workspacesRes, evolutionRes] = await Promise.all([
         apiFetch('/api/v1/admin/whatsapp-numbers'),
         apiFetch('/api/v1/admin/workspaces?limit=200&page=1'),
+        apiFetch('/api/v1/admin/whatsapp/evolution/health'),
       ]);
 
       if (!numbersRes.ok) throw new Error(await readApiError(numbersRes, 'No se pudieron cargar los números'));
@@ -124,6 +135,13 @@ export default function WhatsAppNumbersPage() {
 
       setNumbers(numbersData.numbers || []);
       setWorkspaces((workspacesData.workspaces || []).map((w) => ({ id: w.id, name: w.name })));
+
+      if (evolutionRes.ok) {
+        const data = await evolutionRes.json() as EvolutionHealth;
+        setEvolutionHealth(data);
+      } else {
+        setEvolutionHealth(null);
+      }
     } catch (err) {
       toastError(err instanceof Error ? err.message : 'No se pudo cargar la configuración de WhatsApp');
     } finally {
@@ -261,6 +279,8 @@ export default function WhatsAppNumbersPage() {
     suspended: numbers.filter((n) => n.status === 'suspended').length,
   }), [numbers]);
 
+  const isEvolutionMode = Boolean(evolutionHealth?.configured);
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-16">
@@ -279,14 +299,27 @@ export default function WhatsAppNumbersPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          {evolutionHealth ? (
+            evolutionHealth.configured ? (
+              <Badge variant={evolutionHealth.healthy ? 'success' : 'warning'}>
+                Evolution {evolutionHealth.healthy ? 'Online' : 'Error'}
+              </Badge>
+            ) : (
+              <Badge variant="secondary">Evolution no configurado</Badge>
+            )
+          ) : (
+            <Badge variant="secondary">Evolution: sin datos</Badge>
+          )}
           <Button variant="secondary" onClick={() => loadAdminData(true)} isLoading={isRefreshing}>
             <RefreshCw className="w-4 h-4 mr-2" />
             Actualizar
           </Button>
-          <Button onClick={() => setShowAddModal(true)}>
-            <Plus className="w-4 h-4 mr-2" />
-            Agregar número
-          </Button>
+          {!isEvolutionMode && (
+            <Button onClick={() => setShowAddModal(true)}>
+              <Plus className="w-4 h-4 mr-2" />
+              Agregar número
+            </Button>
+          )}
         </div>
       </div>
 
@@ -308,6 +341,28 @@ export default function WhatsAppNumbersPage() {
           <p className="text-2xl font-semibold text-foreground mt-1">{stats.suspended}</p>
         </div>
       </div>
+
+      {isEvolutionMode && (
+        <div className="flex justify-center">
+          <WorkspacePaywallCard
+            showActions={false}
+            badgeText="WhatsApp · Evolution"
+            badgeVariant={evolutionHealth?.healthy ? 'success' : 'warning'}
+            titleOverride="Gestión de números deshabilitada"
+            descriptionOverride="Actualmente estamos usando Evolution (Baileys) para conectar WhatsApp por QR. No se pueden agregar números desde este panel hasta que cambiemos la configuración."
+            leftTitleOverride="Estado Evolution"
+            leftDescriptionOverride={
+              evolutionHealth?.healthy
+                ? `Evolution está online${typeof evolutionHealth.instanceCount === 'number' ? ` · Instancias: ${evolutionHealth.instanceCount}` : ''}.`
+                : `No se pudo validar Evolution${evolutionHealth?.error ? `: ${evolutionHealth.error}` : '.'}`
+            }
+            rightTitleOverride="Cómo se conecta"
+            rightDescriptionOverride="Cada negocio conecta su propio número desde Configuración → Aplicaciones → WhatsApp."
+            helperText="Para volver a un proveedor por números (Infobip), primero hay que cambiar la configuración global."
+            topRightIcon={<Phone className="w-5 h-5 text-foreground" />}
+          />
+        </div>
+      )}
 
       {numbers.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -401,10 +456,12 @@ export default function WhatsAppNumbersPage() {
               <p className="text-sm text-muted-foreground/50 mt-1 max-w-sm">
                 Agregá números de WhatsApp y asignalos a un tipo de negocio para que los usuarios puedan usarlos.
               </p>
-              <Button onClick={() => setShowAddModal(true)} className="mt-6">
-                <Plus className="w-4 h-4 mr-2" />
-                Agregar primer número
-              </Button>
+              {!isEvolutionMode && (
+                <Button onClick={() => setShowAddModal(true)} className="mt-6">
+                  <Plus className="w-4 h-4 mr-2" />
+                  Agregar primer número
+                </Button>
+              )}
             </div>
           </div>
         </div>

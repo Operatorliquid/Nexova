@@ -6,7 +6,7 @@ import { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 import { decrypt, encrypt } from '@nexova/core';
 import { Redis } from 'ioredis';
-import { EvolutionClient } from '@nexova/integrations';
+import { EvolutionAdminClient, EvolutionClient, EvolutionError } from '@nexova/integrations';
 
 function hasGlobalInfobipApiKey(): boolean {
   return (process.env.INFOBIP_API_KEY || '').trim().length > 0;
@@ -334,6 +334,52 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
   // ═══════════════════════════════════════════════════════════════════════════
   // WHATSAPP NUMBERS MANAGEMENT
   // ═══════════════════════════════════════════════════════════════════════════
+
+  // Evolution API health (global)
+  fastify.get('/whatsapp/evolution/health', async (_request, reply) => {
+    const apiKey = (process.env.EVOLUTION_API_KEY || '').trim();
+    let baseUrl = (process.env.EVOLUTION_BASE_URL || '').trim().replace(/\/+$/, '');
+    // Allow setting without protocol (common in Railway).
+    if (baseUrl && !/^https?:\/\//i.test(baseUrl)) baseUrl = `https://${baseUrl}`;
+
+    if (!apiKey || !baseUrl) {
+      return reply.send({ configured: false, healthy: false });
+    }
+
+    try {
+      const admin = new EvolutionAdminClient({ apiKey, baseUrl });
+      const res = await admin.fetchInstances();
+      const list =
+        Array.isArray(res)
+          ? res
+          : Array.isArray((res as any)?.response)
+            ? (res as any).response
+            : Array.isArray((res as any)?.message)
+              ? (res as any).message
+              : [];
+
+      return reply.send({
+        configured: true,
+        healthy: true,
+        baseUrl,
+        instanceCount: list.length,
+      });
+    } catch (err) {
+      const msg =
+        err instanceof EvolutionError
+          ? `Evolution API error (${err.statusCode})`
+          : err instanceof Error
+            ? err.message
+            : 'Evolution connection failed';
+
+      return reply.send({
+        configured: true,
+        healthy: false,
+        baseUrl,
+        error: msg,
+      });
+    }
+  });
 
   // List all WhatsApp numbers
   fastify.get('/whatsapp-numbers', async (request, reply) => {

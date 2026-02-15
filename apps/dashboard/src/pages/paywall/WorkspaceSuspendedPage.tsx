@@ -1,4 +1,5 @@
 import { AlertTriangle, CreditCard, Lock, LogOut, RefreshCw } from 'lucide-react';
+import type { ReactNode } from 'react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -35,6 +36,15 @@ interface WorkspacePaywallCardProps {
   logoutLabel?: string;
   onRetry?: () => void;
   onLogout?: () => void;
+  badgeText?: string;
+  badgeVariant?: 'secondary' | 'success' | 'warning' | 'destructive';
+  titleOverride?: string;
+  descriptionOverride?: string;
+  leftTitleOverride?: string;
+  leftDescriptionOverride?: string;
+  rightTitleOverride?: string;
+  rightDescriptionOverride?: string;
+  topRightIcon?: ReactNode;
 }
 
 export function WorkspacePaywallCard({
@@ -46,10 +56,27 @@ export function WorkspacePaywallCard({
   logoutLabel = 'Cerrar sesion',
   onRetry,
   onLogout,
+  badgeText,
+  badgeVariant,
+  titleOverride,
+  descriptionOverride,
+  leftTitleOverride,
+  leftDescriptionOverride,
+  rightTitleOverride,
+  rightDescriptionOverride,
+  topRightIcon,
 }: WorkspacePaywallCardProps) {
   const normalizedStatus = normalizeWorkspaceStatus(status);
   const copy = buildWorkspaceSuspendedCopy(normalizedStatus);
   const isCancelled = normalizedStatus === 'cancelled' || normalizedStatus === 'canceled';
+  const resolvedBadgeText = badgeText || (isCancelled ? 'Suscripcion cancelada' : 'Suscripcion suspendida');
+  const resolvedBadgeVariant = badgeVariant || (isCancelled ? 'destructive' : 'warning');
+  const resolvedTitle = titleOverride || copy.title;
+  const resolvedDescription = descriptionOverride || copy.description;
+  const leftTitle = leftTitleOverride || 'Acceso bloqueado temporalmente';
+  const leftDescription = leftDescriptionOverride || 'Mientras el estado de suscripcion no sea activo, el dashboard queda bloqueado.';
+  const rightTitle = rightTitleOverride || 'Proximo paso';
+  const rightDescription = rightDescriptionOverride || 'Regulariza el pago y luego presiona Reintentar para recuperar el acceso.';
 
   return (
     <Card className="relative w-full max-w-2xl overflow-hidden rounded-3xl border border-border/80 glass-card shadow-2xl">
@@ -58,17 +85,17 @@ export function WorkspacePaywallCard({
 
       <CardHeader className="relative z-10 p-7 md:p-8 space-y-4">
         <div className="flex items-center justify-between gap-3">
-          <Badge variant={isCancelled ? 'destructive' : 'warning'} className="border border-current/20">
-            {isCancelled ? 'Suscripcion cancelada' : 'Suscripcion suspendida'}
+          <Badge variant={resolvedBadgeVariant} className="border border-current/20">
+            {resolvedBadgeText}
           </Badge>
           <div className="w-11 h-11 rounded-2xl bg-background/60 border border-border flex items-center justify-center">
-            <Lock className="w-5 h-5 text-foreground" />
+            {topRightIcon || <Lock className="w-5 h-5 text-foreground" />}
           </div>
         </div>
-        <CardTitle className="text-2xl tracking-tight">{copy.title}</CardTitle>
+        <CardTitle className="text-2xl tracking-tight">{resolvedTitle}</CardTitle>
         <CardDescription className="text-base leading-relaxed">
           {workspaceName ? `${workspaceName}. ` : ''}
-          {copy.description}
+          {resolvedDescription}
         </CardDescription>
       </CardHeader>
 
@@ -77,19 +104,19 @@ export function WorkspacePaywallCard({
           <div className="rounded-2xl border border-border bg-background/40 p-4">
             <div className="flex items-center gap-2 text-sm font-medium text-foreground">
               <AlertTriangle className="w-4 h-4 text-amber-400" />
-              Acceso bloqueado temporalmente
+              {leftTitle}
             </div>
             <p className="text-sm text-muted-foreground mt-2">
-              Mientras el estado de suscripcion no sea activo, el dashboard queda bloqueado.
+              {leftDescription}
             </p>
           </div>
           <div className="rounded-2xl border border-border bg-background/40 p-4">
             <div className="flex items-center gap-2 text-sm font-medium text-foreground">
               <CreditCard className="w-4 h-4 text-primary" />
-              Proximo paso
+              {rightTitle}
             </div>
             <p className="text-sm text-muted-foreground mt-2">
-              Regulariza el pago y luego presiona Reintentar para recuperar el acceso.
+              {rightDescription}
             </p>
           </div>
         </div>
