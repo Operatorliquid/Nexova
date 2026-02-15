@@ -128,6 +128,81 @@ function getEvolutionInstanceName(providerConfig: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function extractEvolutionQrFromConnectResponse(value: any): {
+  qrCode: string | null;
+  qrDataUrl: string | null;
+  pairingCode: string | null;
+} {
+  const extractString = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
+
+  const pickQr = (obj: any): string => {
+    if (!obj) return '';
+    const direct =
+      extractString(obj?.code)
+      || extractString(obj?.qrcode)
+      || extractString(obj?.qrCode)
+      || extractString(obj?.qr)
+      || extractString(obj?.base64);
+    if (direct) return direct;
+
+    const qrobj = obj?.qrcode;
+    if (qrobj && typeof qrobj === 'object') {
+      const nested =
+        extractString(qrobj?.base64)
+        || extractString(qrobj?.qrcode)
+        || extractString(qrobj?.qrCode)
+        || extractString(qrobj?.qr)
+        || extractString(qrobj?.code);
+      if (nested) return nested;
+    }
+
+    const qrObj = obj?.qr;
+    if (qrObj && typeof qrObj === 'object') {
+      const nested =
+        extractString(qrObj?.base64)
+        || extractString(qrObj?.qrcode)
+        || extractString(qrObj?.qrCode)
+        || extractString(qrObj?.qr)
+        || extractString(qrObj?.code);
+      if (nested) return nested;
+    }
+
+    return '';
+  };
+
+  const qrValue = pickQr(value);
+  const pairingValue =
+    extractString(value?.pairingCode)
+    || extractString(value?.pairing_code)
+    || extractString(value?.data?.pairingCode)
+    || extractString(value?.data?.pairing_code);
+
+  const isDataUrl = !!qrValue && /^data:image\//i.test(qrValue);
+  const looksLikeBase64Image =
+    !!qrValue
+    && !isDataUrl
+    && qrValue.length > 100
+    && /^[A-Za-z0-9+/=]+$/.test(qrValue)
+    && (
+      qrValue.startsWith('iVBOR') // png
+      || qrValue.startsWith('/9j/') // jpeg
+      || qrValue.startsWith('R0lGOD') // gif
+      || qrValue.startsWith('UklGR') // webp
+    );
+
+  const qrDataUrl =
+    qrValue && isDataUrl
+      ? qrValue
+      : looksLikeBase64Image
+        ? `data:image/png;base64,${qrValue}`
+        : null;
+
+  const qrCode = qrValue && !isDataUrl && !looksLikeBase64Image ? qrValue : null;
+  const pairingCode = pairingValue || null;
+
+  return { qrCode, qrDataUrl, pairingCode };
+}
+
 function normalizeOwnerAgentNumberForSettings(raw: unknown, timezone: unknown): string | undefined {
   if (typeof raw !== 'string') return undefined;
 
@@ -893,40 +968,19 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
           });
       }
 
-      const extractString = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
-      const qrCandidate =
-        extractString((connect as any)?.code)
-        || extractString((connect as any)?.qrcode)
-        || extractString((connect as any)?.qrCode)
-        || extractString((connect as any)?.qr);
-      const pairingCandidate =
-        extractString((connect as any)?.pairingCode)
-        || extractString((connect as any)?.pairing_code);
-
       // Some Evolution builds generate the QR asynchronously; retry a few times so the UI doesn't look "stuck".
-      let qrValue = qrCandidate;
-      let pairingValue = pairingCandidate;
-      for (let attempt = 0; attempt < 6 && !qrValue && !pairingValue; attempt++) {
+      let extracted = extractEvolutionQrFromConnectResponse(connect as any);
+      for (let attempt = 0; attempt < 6 && !extracted.qrCode && !extracted.qrDataUrl && !extracted.pairingCode; attempt++) {
         await new Promise((r) => setTimeout(r, 500));
         try {
           connect = await admin.connectInstance(instanceName);
-          qrValue =
-            extractString((connect as any)?.code)
-            || extractString((connect as any)?.qrcode)
-            || extractString((connect as any)?.qrCode)
-            || extractString((connect as any)?.qr);
-          pairingValue =
-            extractString((connect as any)?.pairingCode)
-            || extractString((connect as any)?.pairing_code);
+          extracted = extractEvolutionQrFromConnectResponse(connect as any);
         } catch (err) {
           fastify.log.warn(err, 'Evolution connectInstance retry failed (continuing)');
         }
       }
 
-      const isDataUrl = !!qrValue && /^data:image\//i.test(qrValue);
-      const qrCode = qrValue && !isDataUrl ? qrValue : null;
-      const qrDataUrl = qrValue && isDataUrl ? qrValue : null;
-      const pairingCode = pairingValue || null;
+      const { qrCode, qrDataUrl, pairingCode } = extracted;
 
       // Persist latest QR/pairing code so the dashboard can poll /status (and to survive refresh).
       try {
@@ -1109,26 +1163,12 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
         if (shouldRetry) {
           try {
             const connectRes = await admin.connectInstance(instanceName);
-            const extractString = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
-            const qrValue =
-              extractString((connectRes as any)?.code)
-              || extractString((connectRes as any)?.qrcode)
-              || extractString((connectRes as any)?.qrCode)
-              || extractString((connectRes as any)?.qr);
-            const pairingValue =
-              extractString((connectRes as any)?.pairingCode)
-              || extractString((connectRes as any)?.pairing_code);
+            const extracted = extractEvolutionQrFromConnectResponse(connectRes as any);
+            if (extracted.qrCode) effectiveQrCode = extracted.qrCode;
+            if (extracted.qrDataUrl) effectiveQrDataUrl = extracted.qrDataUrl;
+            if (extracted.pairingCode) effectivePairingCode = extracted.pairingCode;
 
-            if (qrValue) {
-              const isDataUrl = /^data:image\//i.test(qrValue);
-              effectiveQrCode = !isDataUrl ? qrValue : null;
-              effectiveQrDataUrl = isDataUrl ? qrValue : null;
-            }
-            if (pairingValue) {
-              effectivePairingCode = pairingValue;
-            }
-
-            if (qrValue || pairingValue) {
+            if (extracted.qrCode || extracted.qrDataUrl || extracted.pairingCode) {
               await fastify.prisma.whatsAppNumber.updateMany({
                 where: { id: number.id, workspaceId: id },
                 data: {
@@ -1138,7 +1178,7 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
                     ...(effectiveQrDataUrl ? { qrDataUrl: effectiveQrDataUrl } : {}),
                     ...(effectivePairingCode ? { pairingCode: effectivePairingCode } : {}),
                     lastConnectAt: new Date().toISOString(),
-                    ...(qrValue || pairingValue ? { qrUpdatedAt: new Date().toISOString() } : {}),
+                    qrUpdatedAt: new Date().toISOString(),
                   } as Prisma.InputJsonValue,
                 },
               });

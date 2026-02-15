@@ -122,15 +122,46 @@ function extractEvolutionQrInfo(payload: any): { qrCode?: string; qrDataUrl?: st
   const getString = (value: unknown): string | undefined =>
     typeof value === 'string' && value.trim() ? value.trim() : undefined;
 
-  const qrCandidate =
-    getString(payload?.data?.qrcode)
-    || getString(payload?.data?.qrCode)
-    || getString(payload?.data?.qr)
-    || getString(payload?.data?.code)
-    || getString(payload?.qrcode)
-    || getString(payload?.qrCode)
-    || getString(payload?.qr)
-    || getString(payload?.code);
+  const pickQr = (obj: any): string | undefined => {
+    if (!obj) return undefined;
+
+    // Common top-level string fields
+    const direct =
+      getString(obj?.code)
+      || getString(obj?.qrcode)
+      || getString(obj?.qrCode)
+      || getString(obj?.qr)
+      || getString(obj?.base64);
+    if (direct) return direct;
+
+    // Some Evolution payloads nest the QR under qrcode/base64
+    const qrobj = obj?.qrcode;
+    if (qrobj && typeof qrobj === 'object') {
+      const nested =
+        getString(qrobj?.base64)
+        || getString(qrobj?.qrcode)
+        || getString(qrobj?.qrCode)
+        || getString(qrobj?.qr)
+        || getString(qrobj?.code);
+      if (nested) return nested;
+    }
+
+    // Some payloads use `qr` as an object
+    const qrObj = obj?.qr;
+    if (qrObj && typeof qrObj === 'object') {
+      const nested =
+        getString(qrObj?.base64)
+        || getString(qrObj?.qrcode)
+        || getString(qrObj?.qrCode)
+        || getString(qrObj?.qr)
+        || getString(qrObj?.code);
+      if (nested) return nested;
+    }
+
+    return undefined;
+  };
+
+  const qrCandidate = pickQr(payload?.data) || pickQr(payload);
 
   const isDataUrl = !!qrCandidate && /^data:image\//i.test(qrCandidate);
 
@@ -140,8 +171,25 @@ function extractEvolutionQrInfo(payload: any): { qrCode?: string; qrDataUrl?: st
     || getString(payload?.pairingCode)
     || getString(payload?.pairing_code);
 
-  const qrCode = qrCandidate && !isDataUrl ? qrCandidate : undefined;
-  const qrDataUrl = qrCandidate && isDataUrl ? qrCandidate : undefined;
+  const looksLikeBase64Image =
+    !!qrCandidate
+    && !isDataUrl
+    && qrCandidate.length > 100
+    && /^[A-Za-z0-9+/=]+$/.test(qrCandidate)
+    && (
+      qrCandidate.startsWith('iVBOR') // png
+      || qrCandidate.startsWith('/9j/') // jpeg
+      || qrCandidate.startsWith('R0lGOD') // gif
+      || qrCandidate.startsWith('UklGR') // webp
+    );
+
+  const qrDataUrl =
+    qrCandidate && isDataUrl
+      ? qrCandidate
+      : looksLikeBase64Image
+        ? `data:image/png;base64,${qrCandidate}`
+        : undefined;
+  const qrCode = qrCandidate && !isDataUrl && !looksLikeBase64Image ? qrCandidate : undefined;
 
   const pairingCode = pairingCandidate;
 
