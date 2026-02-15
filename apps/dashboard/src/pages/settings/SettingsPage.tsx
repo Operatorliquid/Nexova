@@ -1409,13 +1409,16 @@ function ApplicationsSettings() {
         throw new Error(data.message || data.error || 'Error al conectar Evolution');
       }
 
-      const data = await res.json() as { qrCode?: string | null; pairingCode?: string | null };
+      const data = await res.json() as { qrCode?: string | null; qrDataUrl?: string | null; pairingCode?: string | null };
       const qrCode = (data?.qrCode || '').trim();
+      const qrDataUrl = (data?.qrDataUrl || '').trim();
       const pairingCode = (data?.pairingCode || '').trim();
 
       setEvolutionPairingCode(pairingCode);
 
-      if (qrCode) {
+      if (qrDataUrl) {
+        setEvolutionQrDataUrl(qrDataUrl);
+      } else if (qrCode) {
         const QRCode = await import('qrcode');
         const dataUrl = await QRCode.toDataURL(qrCode, { margin: 1, width: 280 });
         setEvolutionQrDataUrl(dataUrl);

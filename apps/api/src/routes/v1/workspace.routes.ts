@@ -890,14 +890,78 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(statusCode).send({
           error: 'EVOLUTION_CONNECT_FAILED',
           message,
+          });
+      }
+
+      const extractString = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
+      const qrCandidate =
+        extractString((connect as any)?.code)
+        || extractString((connect as any)?.qrcode)
+        || extractString((connect as any)?.qrCode)
+        || extractString((connect as any)?.qr);
+      const pairingCandidate =
+        extractString((connect as any)?.pairingCode)
+        || extractString((connect as any)?.pairing_code);
+
+      // Some Evolution builds generate the QR asynchronously; retry a few times so the UI doesn't look "stuck".
+      let qrValue = qrCandidate;
+      let pairingValue = pairingCandidate;
+      for (let attempt = 0; attempt < 6 && !qrValue && !pairingValue; attempt++) {
+        await new Promise((r) => setTimeout(r, 500));
+        try {
+          connect = await admin.connectInstance(instanceName);
+          qrValue =
+            extractString((connect as any)?.code)
+            || extractString((connect as any)?.qrcode)
+            || extractString((connect as any)?.qrCode)
+            || extractString((connect as any)?.qr);
+          pairingValue =
+            extractString((connect as any)?.pairingCode)
+            || extractString((connect as any)?.pairing_code);
+        } catch (err) {
+          fastify.log.warn(err, 'Evolution connectInstance retry failed (continuing)');
+        }
+      }
+
+      const isDataUrl = !!qrValue && /^data:image\//i.test(qrValue);
+      const qrCode = qrValue && !isDataUrl ? qrValue : null;
+      const qrDataUrl = qrValue && isDataUrl ? qrValue : null;
+      const pairingCode = pairingValue || null;
+
+      // Persist latest QR/pairing code so the dashboard can poll /status (and to survive refresh).
+      try {
+        const current = await fastify.prisma.whatsAppNumber.findUnique({
+          where: { id: number.id },
+          select: { providerConfig: true },
         });
+        const currentCfg =
+          current?.providerConfig && typeof current.providerConfig === 'object'
+            ? (current.providerConfig as Record<string, unknown>)
+            : {};
+        const nextCfg: Record<string, unknown> = {
+          ...currentCfg,
+          ...(qrCode ? { qrCode } : {}),
+          ...(qrDataUrl ? { qrDataUrl } : {}),
+          ...(pairingCode ? { pairingCode } : {}),
+          lastConnectAt: new Date().toISOString(),
+          lastConnectCount: typeof (connect as any)?.count === 'number' ? (connect as any).count : null,
+          ...(qrCode || qrDataUrl || pairingCode ? { qrUpdatedAt: new Date().toISOString() } : {}),
+        };
+
+        await fastify.prisma.whatsAppNumber.updateMany({
+          where: { id: number.id, workspaceId: id },
+          data: { providerConfig: nextCfg as Prisma.InputJsonValue },
+        });
+      } catch (err) {
+        fastify.log.warn(err, 'Failed to persist Evolution QR to providerConfig (continuing)');
       }
 
       return reply.send({
         provider: 'evolution',
         instanceName,
-        pairingCode: connect?.pairingCode || null,
-        qrCode: connect?.code || null,
+        pairingCode,
+        qrCode,
+        qrDataUrl,
         count: typeof connect?.count === 'number' ? connect.count : null,
       });
     }
@@ -1029,6 +1093,72 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
       const qrDataUrl = typeof refreshedCfg.qrDataUrl === 'string' ? refreshedCfg.qrDataUrl.trim() : null;
       const pairingCode = typeof refreshedCfg.pairingCode === 'string' ? refreshedCfg.pairingCode.trim() : null;
 
+      // If we're still connecting and we don't have a QR yet, try to fetch it from /instance/connect
+      // (Evolution may not emit QRCODE_UPDATED via webhook depending on build/config).
+      let effectiveQrCode = qrCode;
+      let effectiveQrDataUrl = qrDataUrl;
+      let effectivePairingCode = pairingCode;
+
+      const stateLower = String(state || '').toLowerCase();
+      if (!connected && stateLower === 'connecting' && !effectiveQrCode && !effectiveQrDataUrl) {
+        const lastConnectAt = typeof refreshedCfg.lastConnectAt === 'string' ? refreshedCfg.lastConnectAt : '';
+        const lastConnectMs = lastConnectAt ? new Date(lastConnectAt).getTime() : 0;
+        const nowMs = Date.now();
+        const shouldRetry = !lastConnectMs || Number.isNaN(lastConnectMs) || nowMs - lastConnectMs > 5_000;
+
+        if (shouldRetry) {
+          try {
+            const connectRes = await admin.connectInstance(instanceName);
+            const extractString = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
+            const qrValue =
+              extractString((connectRes as any)?.code)
+              || extractString((connectRes as any)?.qrcode)
+              || extractString((connectRes as any)?.qrCode)
+              || extractString((connectRes as any)?.qr);
+            const pairingValue =
+              extractString((connectRes as any)?.pairingCode)
+              || extractString((connectRes as any)?.pairing_code);
+
+            if (qrValue) {
+              const isDataUrl = /^data:image\//i.test(qrValue);
+              effectiveQrCode = !isDataUrl ? qrValue : null;
+              effectiveQrDataUrl = isDataUrl ? qrValue : null;
+            }
+            if (pairingValue) {
+              effectivePairingCode = pairingValue;
+            }
+
+            if (qrValue || pairingValue) {
+              await fastify.prisma.whatsAppNumber.updateMany({
+                where: { id: number.id, workspaceId: id },
+                data: {
+                  providerConfig: {
+                    ...refreshedCfg,
+                    ...(effectiveQrCode ? { qrCode: effectiveQrCode } : {}),
+                    ...(effectiveQrDataUrl ? { qrDataUrl: effectiveQrDataUrl } : {}),
+                    ...(effectivePairingCode ? { pairingCode: effectivePairingCode } : {}),
+                    lastConnectAt: new Date().toISOString(),
+                    ...(qrValue || pairingValue ? { qrUpdatedAt: new Date().toISOString() } : {}),
+                  } as Prisma.InputJsonValue,
+                },
+              });
+            } else {
+              await fastify.prisma.whatsAppNumber.updateMany({
+                where: { id: number.id, workspaceId: id },
+                data: {
+                  providerConfig: {
+                    ...refreshedCfg,
+                    lastConnectAt: new Date().toISOString(),
+                  } as Prisma.InputJsonValue,
+                },
+              });
+            }
+          } catch (err) {
+            fastify.log.warn(err, 'Evolution connectInstance (status retry) failed');
+          }
+        }
+      }
+
       const numberInfo = refreshed
         ? {
             id: refreshed.id,
@@ -1044,9 +1174,9 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
         provider: 'evolution',
         state,
         connected,
-        ...(qrCode ? { qrCode } : {}),
-        ...(qrDataUrl ? { qrDataUrl } : {}),
-        ...(pairingCode ? { pairingCode } : {}),
+        ...(effectiveQrCode ? { qrCode: effectiveQrCode } : {}),
+        ...(effectiveQrDataUrl ? { qrDataUrl: effectiveQrDataUrl } : {}),
+        ...(effectivePairingCode ? { pairingCode: effectivePairingCode } : {}),
         number: numberInfo,
       });
     }
