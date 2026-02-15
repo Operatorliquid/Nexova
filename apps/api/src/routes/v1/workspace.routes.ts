@@ -797,15 +797,30 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
         const list = normalizeInstances(instances);
         return list.some(
           (item: any) =>
-            item?.instance?.instanceName === instanceName
+            item?.name === instanceName
+            || item?.instance?.name === instanceName
+            || item?.instance?.instanceName === instanceName
             || item?.instanceName === instanceName
         );
       };
 
-      // Ensure instance exists (idempotent reconnect). We only swallow create errors if instance already exists.
-      try {
-        const instances = await admin.fetchInstances({ instanceName });
-        if (!hasInstance(instances)) {
+      const safeFetchInstances = async (query?: { instanceName?: string; instanceId?: string }): Promise<unknown> => {
+        try {
+          return await admin.fetchInstances(query);
+        } catch (err) {
+          // Evolution returns 404 when filtering by instanceName and it doesn't exist.
+          if (err instanceof EvolutionError && err.statusCode === 404) {
+            return [];
+          }
+          throw err;
+        }
+      };
+
+      // Ensure instance exists (idempotent reconnect). Evolution can return 404 for "fetchInstances?instanceName"
+      // when the instance doesn't exist; that should be treated as "not found" (create it).
+      const instances = await safeFetchInstances({ instanceName });
+      if (!hasInstance(instances)) {
+        try {
           await admin.createInstance({
             instanceName,
             integration: 'WHATSAPP-BAILEYS',
@@ -822,23 +837,17 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
               },
             },
           });
-        }
-      } catch (err) {
-        fastify.log.warn(err, 'Evolution createInstance/fetchInstances failed');
-        let exists = false;
-        try {
-          const instances = await admin.fetchInstances({ instanceName });
-          exists = hasInstance(instances);
-        } catch (verifyErr) {
-          fastify.log.warn(verifyErr, 'Evolution fetchInstances verification failed');
-        }
-
-        if (!exists) {
-          const { statusCode, message } = evolutionErrorToMessage(err);
-          return reply.code(statusCode).send({
-            error: 'EVOLUTION_CREATE_INSTANCE_FAILED',
-            message,
-          });
+        } catch (err) {
+          // If create failed but the instance exists (race / already created), continue.
+          fastify.log.warn(err, 'Evolution createInstance failed (verifying existence)');
+          const after = await safeFetchInstances({ instanceName });
+          if (!hasInstance(after)) {
+            const { statusCode, message } = evolutionErrorToMessage(err);
+            return reply.code(statusCode).send({
+              error: 'EVOLUTION_CREATE_INSTANCE_FAILED',
+              message,
+            });
+          }
         }
       }
 
@@ -938,7 +947,13 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
                   ? (instances as any).message
                   : [];
           const row =
-            list.find((item: any) => item?.instance?.instanceName === instanceName || item?.instanceName === instanceName)
+            list.find(
+              (item: any) =>
+                item?.name === instanceName
+                || item?.instance?.name === instanceName
+                || item?.instance?.instanceName === instanceName
+                || item?.instanceName === instanceName
+            )
             || list[0]
             || null;
           const ownerJid =
