@@ -445,7 +445,7 @@ export default function WhatsAppNumbersPage() {
             </div>
           ))}
         </div>
-      ) : (
+      ) : isEvolutionMode ? null : (
         <div className="glass-card rounded-2xl overflow-hidden">
           <div className="p-5">
             <div className="flex flex-col items-center justify-center py-16 text-center">
