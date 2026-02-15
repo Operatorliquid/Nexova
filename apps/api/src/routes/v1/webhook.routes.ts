@@ -125,9 +125,11 @@ function extractEvolutionQrInfo(payload: any): { qrCode?: string; qrDataUrl?: st
   const qrCandidate =
     getString(payload?.data?.qrcode)
     || getString(payload?.data?.qrCode)
+    || getString(payload?.data?.qr)
     || getString(payload?.data?.code)
     || getString(payload?.qrcode)
     || getString(payload?.qrCode)
+    || getString(payload?.qr)
     || getString(payload?.code);
 
   const isDataUrl = !!qrCandidate && /^data:image\//i.test(qrCandidate);
