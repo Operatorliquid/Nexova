@@ -99,7 +99,9 @@ export function WorkspacePaywallCard({
         </CardDescription>
       </CardHeader>
 
-      <CardContent className="relative z-10 px-7 md:px-8 pt-0 pb-0">
+      <CardContent
+        className={`relative z-10 px-7 md:px-8 pt-0 ${showActions ? 'pb-0' : 'pb-7 md:pb-8'}`}
+      >
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div className="rounded-2xl border border-border bg-background/40 p-4">
             <div className="flex items-center gap-2 text-sm font-medium text-foreground">

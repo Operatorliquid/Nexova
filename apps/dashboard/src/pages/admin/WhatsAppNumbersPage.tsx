@@ -290,12 +290,14 @@ export default function WhatsAppNumbersPage() {
   }
 
   return (
-    <AnimatedPage className="space-y-6">
+    <AnimatedPage className="space-y-6 pb-10">
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
           <h2 className="text-2xl font-semibold text-foreground">Números WhatsApp</h2>
           <p className="text-sm text-muted-foreground">
-            Agregá números, asignalos a negocios y probá conectividad
+            {isEvolutionMode
+              ? 'Estado y configuración de WhatsApp (Evolution)'
+              : 'Agregá números, asignalos a negocios y probá conectividad'}
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -323,24 +325,26 @@ export default function WhatsAppNumbersPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="glass-card rounded-2xl p-5">
-          <p className="text-sm text-muted-foreground">Total</p>
-          <p className="text-2xl font-semibold text-foreground mt-1">{stats.total}</p>
+      {!isEvolutionMode && (
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="glass-card rounded-2xl p-5">
+            <p className="text-sm text-muted-foreground">Total</p>
+            <p className="text-2xl font-semibold text-foreground mt-1">{stats.total}</p>
+          </div>
+          <div className="glass-card rounded-2xl p-5">
+            <p className="text-sm text-muted-foreground">Disponibles</p>
+            <p className="text-2xl font-semibold text-foreground mt-1">{stats.available}</p>
+          </div>
+          <div className="glass-card rounded-2xl p-5">
+            <p className="text-sm text-muted-foreground">Asignados</p>
+            <p className="text-2xl font-semibold text-foreground mt-1">{stats.assigned}</p>
+          </div>
+          <div className="glass-card rounded-2xl p-5">
+            <p className="text-sm text-muted-foreground">Suspendidos</p>
+            <p className="text-2xl font-semibold text-foreground mt-1">{stats.suspended}</p>
+          </div>
         </div>
-        <div className="glass-card rounded-2xl p-5">
-          <p className="text-sm text-muted-foreground">Disponibles</p>
-          <p className="text-2xl font-semibold text-foreground mt-1">{stats.available}</p>
-        </div>
-        <div className="glass-card rounded-2xl p-5">
-          <p className="text-sm text-muted-foreground">Asignados</p>
-          <p className="text-2xl font-semibold text-foreground mt-1">{stats.assigned}</p>
-        </div>
-        <div className="glass-card rounded-2xl p-5">
-          <p className="text-sm text-muted-foreground">Suspendidos</p>
-          <p className="text-2xl font-semibold text-foreground mt-1">{stats.suspended}</p>
-        </div>
-      </div>
+      )}
 
       {isEvolutionMode && (
         <div className="flex justify-center">
@@ -364,108 +368,114 @@ export default function WhatsAppNumbersPage() {
         </div>
       )}
 
-      {numbers.length > 0 ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {numbers.map((number) => (
-            <div key={number.id} className="glass-card rounded-2xl p-5 hover:shadow-2xl transition-all duration-300">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-start gap-3 min-w-0">
-                  <div className="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center">
-                    <Phone className="w-5 h-5 text-emerald-400" />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="font-mono font-medium text-foreground truncate">{number.phoneNumber}</p>
-                    <p className="text-sm text-muted-foreground mt-1 truncate">
-                      {number.displayName || number.phoneNumber}
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {number.provider} · {getBusinessTypeName(number.businessType)}
-                    </p>
-                    {number.workspace && (
-                      <p className="text-xs text-primary mt-1">
-                        Asignado a: {number.workspace.name}
+      {!isEvolutionMode &&
+        (numbers.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {numbers.map((number) => (
+              <div
+                key={number.id}
+                className="glass-card rounded-2xl p-5 hover:shadow-2xl transition-all duration-300"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-3 min-w-0">
+                    <div className="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center">
+                      <Phone className="w-5 h-5 text-emerald-400" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-mono font-medium text-foreground truncate">{number.phoneNumber}</p>
+                      <p className="text-sm text-muted-foreground mt-1 truncate">
+                        {number.displayName || number.phoneNumber}
                       </p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {number.provider} · {getBusinessTypeName(number.businessType)}
+                      </p>
+                      {number.workspace && (
+                        <p className="text-xs text-primary mt-1">
+                          Asignado a: {number.workspace.name}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex flex-col items-end gap-2">
+                    {getStatusBadge(number)}
+                    {getHealthBadge(number.healthStatus)}
+                    {number.hasCredentials ? (
+                      <Badge variant="success">Credenciales OK</Badge>
+                    ) : (
+                      <Badge variant="warning">Sin credenciales</Badge>
                     )}
                   </div>
                 </div>
-                <div className="flex flex-col items-end gap-2">
-                  {getStatusBadge(number)}
-                  {getHealthBadge(number.healthStatus)}
-                  {number.hasCredentials ? <Badge variant="success">Credenciales OK</Badge> : <Badge variant="warning">Sin credenciales</Badge>}
-                </div>
-              </div>
 
-              {number.notes && (
-                <p className="text-xs text-muted-foreground mt-3 line-clamp-2">{number.notes}</p>
-              )}
+                {number.notes && (
+                  <p className="text-xs text-muted-foreground mt-3 line-clamp-2">{number.notes}</p>
+                )}
 
-              <div className="flex flex-wrap items-center gap-2 mt-4">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => handleOpenAssignModal(number)}
-                  disabled={actionNumberId === number.id}
-                >
-                  <Link2 className="w-4 h-4 mr-2" />
-                  {number.workspace ? 'Reasignar' : 'Asignar'}
-                </Button>
-
-                {number.workspace && (
+                <div className="flex flex-wrap items-center gap-2 mt-4">
                   <Button
                     variant="secondary"
                     size="sm"
-                    onClick={() => handleUnassign(number)}
+                    onClick={() => handleOpenAssignModal(number)}
+                    disabled={actionNumberId === number.id}
+                  >
+                    <Link2 className="w-4 h-4 mr-2" />
+                    {number.workspace ? 'Reasignar' : 'Asignar'}
+                  </Button>
+
+                  {number.workspace && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => handleUnassign(number)}
+                      isLoading={actionNumberId === number.id}
+                    >
+                      Desasignar
+                    </Button>
+                  )}
+
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => handleTestConnection(number.id)}
                     isLoading={actionNumberId === number.id}
                   >
-                    Desasignar
+                    <FlaskConical className="w-4 h-4 mr-2" />
+                    Test
                   </Button>
-                )}
 
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => handleTestConnection(number.id)}
-                  isLoading={actionNumberId === number.id}
-                >
-                  <FlaskConical className="w-4 h-4 mr-2" />
-                  Test
-                </Button>
-
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => handleDeleteNumber(number.id)}
-                  isLoading={actionNumberId === number.id}
-                  className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
-                >
-                  <Trash2 className="w-4 h-4 mr-2" />
-                  Eliminar
-                </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleDeleteNumber(number.id)}
+                    isLoading={actionNumberId === number.id}
+                    className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                  >
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    Eliminar
+                  </Button>
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
-      ) : isEvolutionMode ? null : (
-        <div className="glass-card rounded-2xl overflow-hidden">
-          <div className="p-5">
-            <div className="flex flex-col items-center justify-center py-16 text-center">
-              <div className="w-14 h-14 rounded-2xl bg-secondary flex items-center justify-center mb-4">
-                <MessageCircle className="w-7 h-7 text-muted-foreground/50" />
-              </div>
-              <p className="text-muted-foreground">No hay números configurados</p>
-              <p className="text-sm text-muted-foreground/50 mt-1 max-w-sm">
-                Agregá números de WhatsApp y asignalos a un tipo de negocio para que los usuarios puedan usarlos.
-              </p>
-              {!isEvolutionMode && (
+            ))}
+          </div>
+        ) : (
+          <div className="glass-card rounded-2xl overflow-hidden">
+            <div className="p-5">
+              <div className="flex flex-col items-center justify-center py-16 text-center">
+                <div className="w-14 h-14 rounded-2xl bg-secondary flex items-center justify-center mb-4">
+                  <MessageCircle className="w-7 h-7 text-muted-foreground/50" />
+                </div>
+                <p className="text-muted-foreground">No hay números configurados</p>
+                <p className="text-sm text-muted-foreground/50 mt-1 max-w-sm">
+                  Agregá números de WhatsApp y asignalos a un tipo de negocio para que los usuarios puedan usarlos.
+                </p>
                 <Button onClick={() => setShowAddModal(true)} className="mt-6">
                   <Plus className="w-4 h-4 mr-2" />
                   Agregar primer número
                 </Button>
-              )}
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        ))}
 
       <Dialog
         open={showAddModal}
