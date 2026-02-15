@@ -47,8 +47,8 @@ export interface EvolutionWebhookConfig {
   url: string;
   events: string[];
   enabled: boolean;
-  webhookByEvents: boolean;
-  webhookBase64: boolean;
+  byEvents: boolean;
+  base64: boolean;
 }
 
 export interface EvolutionInteractiveListPayload {
@@ -187,7 +187,8 @@ export class EvolutionAdminClient {
   }
 
   async setWebhook(instanceName: string, webhook: EvolutionWebhookConfig): Promise<any> {
-    return this.request<any>('POST', `/webhook/set/${encodeURIComponent(instanceName)}`, webhook);
+    // Evolution expects a wrapper object: { webhook: {...} }
+    return this.request<any>('POST', `/webhook/set/${encodeURIComponent(instanceName)}`, { webhook });
   }
 
   async logoutInstance(instanceName: string): Promise<any> {

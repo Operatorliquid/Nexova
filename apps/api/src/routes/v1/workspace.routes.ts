@@ -869,8 +869,8 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
         await admin.setWebhook(instanceName, {
           enabled: true,
           url: webhookUrl,
-          webhookByEvents: false,
-          webhookBase64: false,
+          byEvents: false,
+          base64: false,
           events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'],
         });
       } catch (err) {
