@@ -1131,6 +1131,7 @@ function ApplicationsSettings() {
   const [evolutionPairingCode, setEvolutionPairingCode] = useState<string>('');
   const [evolutionState, setEvolutionState] = useState<string>('');
   const evolutionPollRef = useRef<number | null>(null);
+  const evolutionQrRef = useRef<string>('');
   const [waError, setWaError] = useState('');
 
   // MercadoPago state
@@ -1378,6 +1379,10 @@ function ApplicationsSettings() {
     };
   }, []);
 
+  useEffect(() => {
+    evolutionQrRef.current = evolutionQrDataUrl;
+  }, [evolutionQrDataUrl]);
+
   const handleConnectEvolution = async () => {
     if (!workspace?.id) return;
     stopEvolutionPolling();
@@ -1425,8 +1430,36 @@ function ApplicationsSettings() {
         );
 
         if (!statusRes.ok) return;
-        const status = await statusRes.json() as { state?: string; connected?: boolean; number?: WhatsAppNumberInfo | null };
+        const status = await statusRes.json() as {
+          state?: string;
+          connected?: boolean;
+          number?: WhatsAppNumberInfo | null;
+          qrCode?: string | null;
+          qrDataUrl?: string | null;
+          pairingCode?: string | null;
+        };
         setEvolutionState((status?.state || '').toString());
+
+        const pairingCodeFromStatus = (status?.pairingCode || '').toString().trim();
+        if (pairingCodeFromStatus) {
+          setEvolutionPairingCode(pairingCodeFromStatus);
+        }
+
+        const qrDataUrlFromStatus = (status?.qrDataUrl || '').toString().trim();
+        if (qrDataUrlFromStatus && !evolutionQrRef.current) {
+          setEvolutionQrDataUrl(qrDataUrlFromStatus);
+        }
+
+        const qrCodeFromStatus = (status?.qrCode || '').toString().trim();
+        if (qrCodeFromStatus && !evolutionQrRef.current) {
+          try {
+            const QRCode = await import('qrcode');
+            const dataUrl = await QRCode.toDataURL(qrCodeFromStatus, { margin: 1, width: 280 });
+            setEvolutionQrDataUrl(dataUrl);
+          } catch {
+            // ignore
+          }
+        }
         if (status?.connected && status?.number) {
           setConnectedNumber(status.number);
           setShowSelectModal(false);

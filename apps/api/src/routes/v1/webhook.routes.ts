@@ -58,8 +58,13 @@ function resolveInfobipBaseUrl(apiUrl?: string | null): string {
 }
 
 function resolveEvolutionBaseUrl(apiUrl?: string | null): string {
-  const cleaned = (apiUrl || '').trim().replace(/\/$/, '');
-  const envUrl = (process.env.EVOLUTION_BASE_URL || '').trim().replace(/\/$/, '');
+  const normalize = (value: string): string => {
+    let out = (value || '').trim().replace(/\/+$/, '');
+    if (out && !/^https?:\/\//i.test(out)) out = `https://${out}`;
+    return out;
+  };
+  const cleaned = normalize(apiUrl || '');
+  const envUrl = normalize(process.env.EVOLUTION_BASE_URL || '');
   return cleaned || envUrl;
 }
 
@@ -111,6 +116,38 @@ function extractEvolutionMessages(payload: any): any[] {
   if (!data) return [];
   if (Array.isArray(data)) return data;
   return [data];
+}
+
+function extractEvolutionQrInfo(payload: any): { qrCode?: string; qrDataUrl?: string; pairingCode?: string } {
+  const getString = (value: unknown): string | undefined =>
+    typeof value === 'string' && value.trim() ? value.trim() : undefined;
+
+  const qrCandidate =
+    getString(payload?.data?.qrcode)
+    || getString(payload?.data?.qrCode)
+    || getString(payload?.data?.code)
+    || getString(payload?.qrcode)
+    || getString(payload?.qrCode)
+    || getString(payload?.code);
+
+  const isDataUrl = !!qrCandidate && /^data:image\//i.test(qrCandidate);
+
+  const pairingCandidate =
+    getString(payload?.data?.pairingCode)
+    || getString(payload?.data?.pairing_code)
+    || getString(payload?.pairingCode)
+    || getString(payload?.pairing_code);
+
+  const qrCode = qrCandidate && !isDataUrl ? qrCandidate : undefined;
+  const qrDataUrl = qrCandidate && isDataUrl ? qrCandidate : undefined;
+
+  const pairingCode = pairingCandidate;
+
+  return {
+    ...(qrCode ? { qrCode } : {}),
+    ...(qrDataUrl ? { qrDataUrl } : {}),
+    ...(pairingCode ? { pairingCode } : {}),
+  };
 }
 
 function evolutionRemoteJidToE164(remoteJid: string | null | undefined): string | null {
@@ -521,8 +558,36 @@ export async function webhookRoutes(
             ? payload.eventType.toUpperCase()
             : '';
 
+        if (event === 'QRCODE_UPDATED') {
+          const qr = extractEvolutionQrInfo(payload);
+          const currentCfg =
+            whatsappNumber.providerConfig && typeof whatsappNumber.providerConfig === 'object'
+              ? (whatsappNumber.providerConfig as Record<string, unknown>)
+              : {};
+
+          await app.prisma.whatsAppNumber.update({
+            where: { id: whatsappNumber.id },
+            data: {
+              providerConfig: {
+                ...currentCfg,
+                ...(qr.qrCode ? { qrCode: qr.qrCode } : {}),
+                ...(qr.qrDataUrl ? { qrDataUrl: qr.qrDataUrl } : {}),
+                ...(qr.pairingCode ? { pairingCode: qr.pairingCode } : {}),
+                qrUpdatedAt: new Date().toISOString(),
+              } as Prisma.InputJsonValue,
+            },
+          });
+
+          return reply.send({ status: 'received', event: 'QRCODE_UPDATED', ...qr });
+        }
+
+        if (event === 'CONNECTION_UPDATE') {
+          // We keep this endpoint lightweight. The workspace polls status via /whatsapp/evolution/status.
+          return reply.send({ status: 'received', event: 'CONNECTION_UPDATE' });
+        }
+
         if (event && event !== 'MESSAGES_UPSERT') {
-          // For now we only process inbound messages. Other events are ignored.
+          // Ignore other non-message events.
           return reply.send({ status: 'ignored', reason: 'non_message_event', event });
         }
 

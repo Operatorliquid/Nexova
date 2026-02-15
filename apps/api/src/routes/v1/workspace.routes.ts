@@ -759,6 +759,19 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
           },
         });
       } else {
+        const currentCfg =
+          number.providerConfig && typeof number.providerConfig === 'object'
+            ? (number.providerConfig as Record<string, unknown>)
+            : {};
+        // Clear previous QR/pairing artifacts to avoid showing stale QR codes.
+        // New QR will arrive either in the connect response or via webhook `QRCODE_UPDATED`.
+        const {
+          qrCode: _qrCode,
+          qrDataUrl: _qrDataUrl,
+          pairingCode: _pairingCode,
+          qrUpdatedAt: _qrUpdatedAt,
+          ...cfgRest
+        } = currentCfg;
         // Keep record fresh if env/baseUrl changed
         await fastify.prisma.whatsAppNumber.updateMany({
           where: { id: number.id, workspaceId: id },
@@ -766,7 +779,7 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
             apiUrl: evolutionCfg.baseUrl,
             webhookSecret,
             providerConfig: {
-              ...(number.providerConfig as Record<string, unknown>),
+              ...cfgRest,
               instanceName,
               integration: 'WHATSAPP-BAILEYS',
               webhookUrl,
@@ -1005,14 +1018,36 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
 
       const refreshed = await fastify.prisma.whatsAppNumber.findUnique({
         where: { id: number.id },
-        select: { id: true, phoneNumber: true, displayName: true, provider: true, isActive: true, healthStatus: true },
+        select: { id: true, phoneNumber: true, displayName: true, provider: true, isActive: true, healthStatus: true, providerConfig: true },
       });
+
+      const refreshedCfg =
+        refreshed?.providerConfig && typeof refreshed.providerConfig === 'object'
+          ? (refreshed.providerConfig as Record<string, unknown>)
+          : {};
+      const qrCode = typeof refreshedCfg.qrCode === 'string' ? refreshedCfg.qrCode.trim() : null;
+      const qrDataUrl = typeof refreshedCfg.qrDataUrl === 'string' ? refreshedCfg.qrDataUrl.trim() : null;
+      const pairingCode = typeof refreshedCfg.pairingCode === 'string' ? refreshedCfg.pairingCode.trim() : null;
+
+      const numberInfo = refreshed
+        ? {
+            id: refreshed.id,
+            phoneNumber: refreshed.phoneNumber,
+            displayName: refreshed.displayName,
+            provider: refreshed.provider,
+            isActive: refreshed.isActive,
+            healthStatus: refreshed.healthStatus,
+          }
+        : null;
 
       return reply.send({
         provider: 'evolution',
         state,
         connected,
-        number: refreshed,
+        ...(qrCode ? { qrCode } : {}),
+        ...(qrDataUrl ? { qrDataUrl } : {}),
+        ...(pairingCode ? { pairingCode } : {}),
+        number: numberInfo,
       });
     }
   );
