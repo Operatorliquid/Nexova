@@ -115,22 +115,53 @@ function extractEvolutionMessages(payload: any): any[] {
   const candidates: unknown[] = [
     payload?.data?.messages,
     payload?.messages,
-    payload?.data?.message,
-    payload?.message,
     payload?.data,
+    payload?.message,
+    payload?.data?.message,
   ];
 
   const out: any[] = [];
+  const fallbackKey =
+    payload?.data && typeof payload.data === 'object' ? (payload.data as any)?.key
+      : payload?.key && typeof payload.key === 'object' ? payload.key
+        : null;
+
+  const wrapMessageIfNeeded = (value: any): any => {
+    if (!value || typeof value !== 'object') return null;
+    if (value.key && typeof value.key === 'object') return value;
+
+    const hasRawMessageShape =
+      typeof value.conversation === 'string'
+      || !!value.extendedTextMessage
+      || !!value.imageMessage
+      || !!value.documentMessage
+      || !!value.listResponseMessage
+      || !!value.buttonsResponseMessage;
+
+    if (hasRawMessageShape && fallbackKey) {
+      return {
+        key: fallbackKey,
+        message: value,
+      };
+    }
+
+    return null;
+  };
+
   for (const candidate of candidates) {
     if (!candidate) continue;
     if (Array.isArray(candidate)) {
-      out.push(...candidate);
+      for (const item of candidate) {
+        const normalized = wrapMessageIfNeeded(item);
+        if (normalized) out.push(normalized);
+      }
       continue;
     }
-    out.push(candidate);
+    const normalized = wrapMessageIfNeeded(candidate);
+    if (normalized) out.push(normalized);
   }
 
-  return out.filter((item) => item && typeof item === 'object');
+  return out;
 }
 
 function extractEvolutionQrInfo(payload: any): { qrCode?: string; qrDataUrl?: string; pairingCode?: string } {

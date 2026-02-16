@@ -1482,7 +1482,17 @@ export class AgentWorker {
     // Evolution (Baileys) webhook format (we store one message per webhook row under payload.data)
     const evoEvent = typeof payload?.event === 'string' ? payload.event.toUpperCase() : '';
     const evoMsg = payload?.data;
-    if ((evoEvent === 'MESSAGES_UPSERT' || (!!evoMsg?.key?.id && !!evoMsg?.key?.remoteJid)) && evoMsg) {
+    const looksEvolutionPayload =
+      !!evoMsg && (
+        !!evoMsg?.message
+        || !!evoMsg?.key?.remoteJid
+        || typeof evoMsg?.status === 'string'
+        || typeof evoMsg?.conversation === 'string'
+        || !!evoMsg?.extendedTextMessage
+        || !!evoMsg?.imageMessage
+        || !!evoMsg?.documentMessage
+      );
+    if ((evoEvent === 'MESSAGES_UPSERT' || looksEvolutionPayload) && evoMsg) {
       const attachment = this.extractAttachment(payload);
       const attachmentText = attachment
         ? `El cliente envió un archivo adjunto (${attachment.fileType}). fileRef: ${attachment.fileRef}${attachment.caption ? `\nMensaje: ${attachment.caption}` : ''}`
@@ -1494,7 +1504,7 @@ export class AgentWorker {
         || msg?.viewOnceMessageV2?.message
         || msg;
 
-      const message = unwrap(evoMsg?.message);
+      const message = unwrap(evoMsg?.message || evoMsg);
 
       const selectedRowId =
         message?.listResponseMessage?.singleSelectReply?.selectedRowId
