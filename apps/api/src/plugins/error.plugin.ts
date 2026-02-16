@@ -47,7 +47,7 @@ const errorPluginCallback: FastifyPluginAsync = async (fastify) => {
     if (error instanceof ZodError) {
       return reply.code(400).send({
         error: 'VALIDATION_ERROR',
-        message: 'Request validation failed',
+        message: 'La solicitud tiene datos inválidos',
         details: error.flatten(),
       } as ErrorResponse);
     }
@@ -56,7 +56,7 @@ const errorPluginCallback: FastifyPluginAsync = async (fastify) => {
     if (error.validation) {
       return reply.code(400).send({
         error: 'VALIDATION_ERROR',
-        message: 'Request validation failed',
+        message: 'La solicitud tiene datos inválidos',
         details: error.validation,
       } as ErrorResponse);
     }
@@ -73,7 +73,7 @@ const errorPluginCallback: FastifyPluginAsync = async (fastify) => {
     if (error.statusCode === 429) {
       return reply.code(429).send({
         error: 'RATE_LIMIT_EXCEEDED',
-        message: 'Too many requests, please try again later',
+        message: 'Demasiadas solicitudes. Intentá nuevamente más tarde',
       } as ErrorResponse);
     }
 
@@ -84,7 +84,7 @@ const errorPluginCallback: FastifyPluginAsync = async (fastify) => {
     return reply.code(statusCode).send({
       error: isServerError ? 'INTERNAL_ERROR' : 'REQUEST_ERROR',
       message: isServerError
-        ? 'An unexpected error occurred'
+        ? 'Ocurrió un error inesperado'
         : error.message,
     } as ErrorResponse);
   });
@@ -93,7 +93,7 @@ const errorPluginCallback: FastifyPluginAsync = async (fastify) => {
   fastify.setNotFoundHandler((request, reply) => {
     reply.code(404).send({
       error: 'NOT_FOUND',
-      message: `Route ${request.method} ${request.url} not found`,
+      message: `Ruta ${request.method} ${request.url} no encontrada`,
     } as ErrorResponse);
   });
 };
@@ -142,11 +142,11 @@ function getPrismaErrorStatusCode(code: string): number {
 function getPrismaErrorMessage(code: string): string {
   switch (code) {
     case 'P2002':
-      return 'A record with this value already exists';
+      return 'Ya existe un registro con ese valor';
     case 'P2025':
-      return 'Record not found';
+      return 'Registro no encontrado';
     default:
-      return 'Database operation failed';
+      return 'Falló la operación en la base de datos';
   }
 }
 

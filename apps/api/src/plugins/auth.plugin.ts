@@ -45,7 +45,7 @@ const authPluginCallback: FastifyPluginAsync = async (fastify) => {
       if (!authHeader?.startsWith('Bearer ') && !cookieToken) {
         return reply.code(401).send({
           error: 'UNAUTHORIZED',
-          message: 'Missing or invalid authorization header',
+          message: 'Falta el encabezado de autorización o es inválido',
         });
       }
 
@@ -73,7 +73,7 @@ const authPluginCallback: FastifyPluginAsync = async (fastify) => {
           if (!payload.isSuperAdmin && !allowMissingWorkspace) {
             return reply.code(400).send({
               error: 'BAD_REQUEST',
-              message: 'x-workspace-id header is required',
+              message: 'El encabezado x-workspace-id es obligatorio',
             });
           }
           return;
@@ -94,7 +94,7 @@ const authPluginCallback: FastifyPluginAsync = async (fastify) => {
           if (request.permissions.length === 0) {
             return reply.code(403).send({
               error: 'FORBIDDEN',
-              message: 'You are not a member of this workspace',
+              message: 'No sos miembro de este workspace',
             });
           }
         }
@@ -109,7 +109,7 @@ const authPluginCallback: FastifyPluginAsync = async (fastify) => {
           if (!workspace) {
             return reply.code(404).send({
               error: 'NOT_FOUND',
-              message: 'Workspace not found',
+              message: 'Workspace no encontrado',
             });
           }
 
@@ -132,7 +132,7 @@ const authPluginCallback: FastifyPluginAsync = async (fastify) => {
       } catch (err) {
         return reply.code(401).send({
           error: 'INVALID_TOKEN',
-          message: 'Invalid or expired access token',
+          message: 'El token de acceso es inválido o expiró',
         });
       }
     }
@@ -147,7 +147,7 @@ const authPluginCallback: FastifyPluginAsync = async (fastify) => {
       if (!request.user?.isSuperAdmin) {
         return reply.code(403).send({
           error: 'FORBIDDEN',
-          message: 'Super admin access required',
+          message: 'Se requiere acceso de superadmin',
         });
       }
     }
@@ -161,7 +161,7 @@ const authPluginCallback: FastifyPluginAsync = async (fastify) => {
       if (!request.workspaceId) {
         return reply.code(400).send({
           error: 'BAD_REQUEST',
-          message: 'x-workspace-id header is required',
+          message: 'El encabezado x-workspace-id es obligatorio',
         });
       }
 
@@ -181,7 +181,7 @@ const authPluginCallback: FastifyPluginAsync = async (fastify) => {
       if (!hasPermission) {
         return reply.code(403).send({
           error: 'FORBIDDEN',
-          message: `Permission '${permission}' required`,
+          message: `Se requiere el permiso '${permission}'`,
         });
       }
     };

@@ -15,15 +15,18 @@ import { getDashboardUrl } from '../../utils/billing.js';
 import { isMailerConfigured, sendMail } from '../../utils/mailer.js';
 
 const registerSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(8).max(128),
-  firstName: z.string().min(1).max(100).optional(),
-  lastName: z.string().min(1).max(100).optional(),
+  email: z.string().email('Email inválido'),
+  password: z
+    .string()
+    .min(8, 'La contraseña debe tener al menos 8 caracteres')
+    .max(128, 'La contraseña debe tener como máximo 128 caracteres'),
+  firstName: z.string().min(1, 'El nombre es obligatorio').max(100, 'El nombre es demasiado largo').optional(),
+  lastName: z.string().min(1, 'El apellido es obligatorio').max(100, 'El apellido es demasiado largo').optional(),
 });
 
 const loginSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(1),
+  email: z.string().email('Email inválido'),
+  password: z.string().min(1, 'La contraseña es obligatoria'),
   rememberMe: z.boolean().optional(),
 });
 
@@ -32,12 +35,15 @@ const refreshSchema = z.object({
 });
 
 const forgotPasswordSchema = z.object({
-  email: z.string().email(),
+  email: z.string().email('Email inválido'),
 });
 
 const resetPasswordSchema = z.object({
-  token: z.string().min(16).max(256),
-  password: z.string().min(8).max(128),
+  token: z.string().min(16, 'El token de recuperación es inválido').max(256, 'El token de recuperación es inválido'),
+  password: z
+    .string()
+    .min(8, 'La contraseña debe tener al menos 8 caracteres')
+    .max(128, 'La contraseña debe tener como máximo 128 caracteres'),
 });
 
 export const authRoutes: FastifyPluginAsync = async (fastify) => {
@@ -501,7 +507,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       if (!user) {
         return reply.code(404).send({
           error: 'NOT_FOUND',
-          message: 'User not found',
+          message: 'Usuario no encontrado',
         });
       }
 

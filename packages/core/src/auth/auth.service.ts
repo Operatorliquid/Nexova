@@ -46,7 +46,7 @@ export class AuthService {
     });
 
     if (existing) {
-      throw new AuthError('EMAIL_EXISTS', 'An account with this email already exists');
+      throw new AuthError('EMAIL_EXISTS', 'Ya existe una cuenta con este email');
     }
 
     // Hash password and create user
@@ -85,20 +85,17 @@ export class AuthService {
     });
 
     if (!user) {
-      throw new AuthError('INVALID_CREDENTIALS', 'Invalid email or password');
+      throw new AuthError('INVALID_CREDENTIALS', 'Email o contraseña inválidos');
     }
 
     // Check if account is locked
     if (user.lockedUntil && user.lockedUntil > new Date()) {
-      throw new AuthError(
-        'ACCOUNT_LOCKED',
-        `Account is locked until ${user.lockedUntil.toISOString()}`
-      );
+      throw new AuthError('ACCOUNT_LOCKED', 'Tu cuenta está bloqueada temporalmente. Intentá de nuevo más tarde.');
     }
 
     // Check if account is suspended
     if (user.status === 'suspended') {
-      throw new AuthError('ACCOUNT_SUSPENDED', 'Account has been suspended');
+      throw new AuthError('ACCOUNT_SUSPENDED', 'Tu cuenta está suspendida.');
     }
 
     // Verify password
@@ -119,7 +116,7 @@ export class AuthService {
         },
       });
 
-      throw new AuthError('INVALID_CREDENTIALS', 'Invalid email or password');
+      throw new AuthError('INVALID_CREDENTIALS', 'Email o contraseña inválidos');
     }
 
     // Reset failed login count and update last login
@@ -158,7 +155,7 @@ export class AuthService {
     try {
       payload = verifyRefreshToken(refreshToken);
     } catch {
-      throw new AuthError('INVALID_TOKEN', 'Invalid or expired refresh token');
+      throw new AuthError('INVALID_TOKEN', 'El token de sesión es inválido o expiró');
     }
 
     const tokenHash = hashToken(refreshToken);
@@ -176,7 +173,7 @@ export class AuthService {
         where: { family: payload.family },
         data: { revokedAt: new Date(), revokeReason: 'token_reuse_detected' },
       });
-      throw new AuthError('INVALID_TOKEN', 'Invalid refresh token');
+      throw new AuthError('INVALID_TOKEN', 'El token de sesión es inválido');
     }
 
     if (storedToken.revokedAt) {
@@ -186,11 +183,11 @@ export class AuthService {
         where: { family: storedToken.family },
         data: { revokedAt: new Date(), revokeReason: 'token_reuse_detected' },
       });
-      throw new AuthError('TOKEN_REVOKED', 'Token has been revoked');
+      throw new AuthError('TOKEN_REVOKED', 'La sesión fue revocada');
     }
 
     if (storedToken.expiresAt < new Date()) {
-      throw new AuthError('TOKEN_EXPIRED', 'Refresh token has expired');
+      throw new AuthError('TOKEN_EXPIRED', 'La sesión expiró');
     }
 
     // Revoke the old token (rotation)
