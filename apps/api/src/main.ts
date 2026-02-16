@@ -62,6 +62,7 @@ const __dirname = path.dirname(__filename);
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, '..', 'uploads');
 
 const prisma = new PrismaClient();
+const DEPLOY_STAMP = '2026-02-16.api.1';
 
 // Redis connection for BullMQ
 const redisConnection = {
@@ -188,6 +189,7 @@ async function bootstrap() {
 
   try {
     await app.listen({ port, host });
+    logger.info({ deployStamp: DEPLOY_STAMP }, 'API deploy stamp');
     logger.info(`Server listening on http://${host}:${port}`);
   } catch (err) {
     logger.error(err, 'Failed to start server');
