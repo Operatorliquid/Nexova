@@ -673,22 +673,22 @@ export default function CustomersPage() {
   ];
 
   return (
-    <div className="h-full overflow-y-auto scrollbar-hide p-6">
-      <AnimatedPage className="max-w-7xl mx-auto space-y-6">
+    <div className="h-full overflow-y-auto scrollbar-hide p-4 md:p-6">
+      <AnimatedPage className="max-w-7xl mx-auto space-y-4 md:space-y-6">
         {/* Page header */}
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <h1 className="text-2xl font-semibold text-foreground">Clientes</h1>
             <p className="text-sm text-muted-foreground">Gestiona tu base de clientes y su historial</p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex w-full flex-col gap-3 md:w-auto md:flex-row md:items-center">
             <Input
               placeholder="Buscar por nombre, telefono..."
-              className="w-72"
+              className="w-full md:w-72"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
-            <Button onClick={() => setShowCreateModal(true)}>
+            <Button className="w-full md:w-auto" onClick={() => setShowCreateModal(true)}>
               <UserPlus className="w-4 h-4 mr-2" />
               Agregar cliente
             </Button>
@@ -696,7 +696,7 @@ export default function CustomersPage() {
         </div>
 
         {/* Stats */}
-        <AnimatedStagger className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <AnimatedStagger className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
           <StatCard label="Total clientes" value={(stats?.totalCustomers ?? 0).toString()} icon={Users} color="primary" isLoading={isLoading} />
           <StatCard label="Activos (30 dias)" value={(stats?.activeCustomers ?? 0).toString()} icon={Clock} color="emerald" isLoading={isLoading} />
           <StatCard label="Nuevos este mes" value={(stats?.newCustomers ?? 0).toString()} icon={UserPlus} color="blue" isLoading={isLoading} />
@@ -731,68 +731,110 @@ export default function CustomersPage() {
               </div>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-border">
-                    <th className="text-left px-5 py-3 text-sm font-medium text-muted-foreground">Cliente</th>
-                    <th className="text-left px-5 py-3 text-sm font-medium text-muted-foreground">Telefono</th>
-                    <th className="text-center px-5 py-3 text-sm font-medium text-muted-foreground">Score</th>
-                    <th className="text-center px-5 py-3 text-sm font-medium text-muted-foreground">Pedidos</th>
-                    <th className="text-right px-5 py-3 text-sm font-medium text-muted-foreground">Deuda</th>
-                    <th className="text-right px-5 py-3 text-sm font-medium text-muted-foreground">Ultima visita</th>
-                  </tr>
-                </thead>
-                <AnimatedTableBody>
-                  {customers.map((customer) => (
-                    <AnimatedTableRow
-                      key={customer.id}
-                      onClick={() => handleSelectCustomer(customer)}
-                      className="border-b border-border hover:bg-secondary/50 transition-colors cursor-pointer"
-                    >
-                      <td className="px-5 py-4">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center">
-                            <span className="text-sm font-medium text-primary">
-                              {customer.firstName?.[0]?.toUpperCase() || customer.phone.slice(-2)}
-                            </span>
-                          </div>
-                          <div>
-                            <p className="font-medium text-foreground">
-                              {customer.fullName || 'Sin nombre'}
-                            </p>
-                            {customer.dni && (
-                              <p className="text-xs text-muted-foreground">DNI: {customer.dni}</p>
-                            )}
-                          </div>
+            <>
+              {/* Mobile: card list */}
+              <div className="md:hidden divide-y divide-border">
+                {customers.map((customer) => (
+                  <button
+                    key={customer.id}
+                    onClick={() => handleSelectCustomer(customer)}
+                    className="w-full text-left px-4 py-3.5 hover:bg-secondary/50 transition-colors active:bg-secondary"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
+                        <span className="text-sm font-medium text-primary">
+                          {customer.firstName?.[0]?.toUpperCase() || customer.phone.slice(-2)}
+                        </span>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="font-medium text-sm text-foreground truncate">
+                            {customer.fullName || 'Sin nombre'}
+                          </p>
+                          <span className="text-xs text-muted-foreground flex-shrink-0">{timeAgo(customer.lastSeenAt)}</span>
                         </div>
-                      </td>
-                      <td className="px-5 py-4">
-                        <span className="font-mono text-sm text-foreground/80">{formatPhone(customer.phone)}</span>
-                      </td>
-                      <td className="px-5 py-4 text-center">
-                        <Badge variant={getScoreVariant(customer.paymentScore)}>
-                          {getScoreLabel(customer.paymentScore)}
-                        </Badge>
-                      </td>
-                      <td className="px-5 py-4 text-center">
-                        <span className="text-foreground">{customer.orderCount}</span>
-                      </td>
-                      <td className="px-5 py-4 text-right">
-                        {customer.currentBalance > 0 ? (
-                          <span className="debt-warning-text font-medium">{formatCurrency(customer.currentBalance)}</span>
-                        ) : (
-                          <span className="text-emerald-400">$0</span>
-                        )}
-                      </td>
-                      <td className="px-5 py-4 text-right">
-                        <span className="text-sm text-muted-foreground">{timeAgo(customer.lastSeenAt)}</span>
-                      </td>
-                    </AnimatedTableRow>
-                  ))}
-                </AnimatedTableBody>
-              </table>
-            </div>
+                        <p className="text-xs text-muted-foreground font-mono mt-0.5">{formatPhone(customer.phone)}</p>
+                        <div className="flex items-center gap-2 mt-1.5">
+                          <Badge variant={getScoreVariant(customer.paymentScore)} className="text-[10px] px-1.5 py-0">
+                            {getScoreLabel(customer.paymentScore)}
+                          </Badge>
+                          <span className="text-xs text-muted-foreground">{customer.orderCount} pedidos</span>
+                          {customer.currentBalance > 0 ? (
+                            <span className="text-xs debt-warning-text font-medium ml-auto">{formatCurrency(customer.currentBalance)}</span>
+                          ) : (
+                            <span className="text-xs text-emerald-400 ml-auto">$0</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+
+              {/* Desktop: table */}
+              <div className="hidden md:block overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="text-left px-5 py-3 text-sm font-medium text-muted-foreground">Cliente</th>
+                      <th className="text-left px-5 py-3 text-sm font-medium text-muted-foreground">Telefono</th>
+                      <th className="text-center px-5 py-3 text-sm font-medium text-muted-foreground">Score</th>
+                      <th className="text-center px-5 py-3 text-sm font-medium text-muted-foreground">Pedidos</th>
+                      <th className="text-right px-5 py-3 text-sm font-medium text-muted-foreground">Deuda</th>
+                      <th className="text-right px-5 py-3 text-sm font-medium text-muted-foreground">Ultima visita</th>
+                    </tr>
+                  </thead>
+                  <AnimatedTableBody>
+                    {customers.map((customer) => (
+                      <AnimatedTableRow
+                        key={customer.id}
+                        onClick={() => handleSelectCustomer(customer)}
+                        className="border-b border-border hover:bg-secondary/50 transition-colors cursor-pointer"
+                      >
+                        <td className="px-5 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center">
+                              <span className="text-sm font-medium text-primary">
+                                {customer.firstName?.[0]?.toUpperCase() || customer.phone.slice(-2)}
+                              </span>
+                            </div>
+                            <div>
+                              <p className="font-medium text-foreground">
+                                {customer.fullName || 'Sin nombre'}
+                              </p>
+                              {customer.dni && (
+                                <p className="text-xs text-muted-foreground">DNI: {customer.dni}</p>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-5 py-4">
+                          <span className="font-mono text-sm text-foreground/80">{formatPhone(customer.phone)}</span>
+                        </td>
+                        <td className="px-5 py-4 text-center">
+                          <Badge variant={getScoreVariant(customer.paymentScore)}>
+                            {getScoreLabel(customer.paymentScore)}
+                          </Badge>
+                        </td>
+                        <td className="px-5 py-4 text-center">
+                          <span className="text-foreground">{customer.orderCount}</span>
+                        </td>
+                        <td className="px-5 py-4 text-right">
+                          {customer.currentBalance > 0 ? (
+                            <span className="debt-warning-text font-medium">{formatCurrency(customer.currentBalance)}</span>
+                          ) : (
+                            <span className="text-emerald-400">$0</span>
+                          )}
+                        </td>
+                        <td className="px-5 py-4 text-right">
+                          <span className="text-sm text-muted-foreground">{timeAgo(customer.lastSeenAt)}</span>
+                        </td>
+                      </AnimatedTableRow>
+                    ))}
+                  </AnimatedTableBody>
+                </table>
+              </div>
+            </>
           )}
         </div>
       </AnimatedPage>
@@ -844,7 +886,7 @@ export default function CustomersPage() {
             </div>
 
             {/* Optional fields in a grid */}
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {/* DNI field */}
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
@@ -883,7 +925,7 @@ export default function CustomersPage() {
                 <FileText className="w-4 h-4 text-muted-foreground" />
                 <label className="text-sm font-medium text-foreground">Datos fiscales (opcional)</label>
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <label className="text-xs text-muted-foreground">CUIT</label>
                   <Input
@@ -905,8 +947,8 @@ export default function CustomersPage() {
                   />
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2 col-span-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-2 sm:col-span-2">
                   <label className="text-xs text-muted-foreground">Domicilio fiscal</label>
                   <Input
                     placeholder="Calle, número, localidad"
@@ -996,21 +1038,21 @@ export default function CustomersPage() {
               </SheetHeader>
 
               {/* Tabs */}
-              <div className="flex gap-1 p-1 bg-secondary/50 rounded-xl mx-6 mt-2">
+              <div className="flex gap-1 p-1 bg-secondary/50 rounded-xl mx-4 sm:mx-6 mt-2">
                 {tabs.map((tab) => {
                   const Icon = tab.icon;
                   return (
                     <button
                       key={tab.id}
                       onClick={() => setActiveTab(tab.id)}
-                      className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                      className={`flex-1 flex items-center justify-center gap-1.5 px-2 sm:px-3 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all ${
                         activeTab === tab.id
                           ? 'bg-background text-foreground shadow-sm'
                           : 'text-muted-foreground hover:text-foreground'
                       }`}
                     >
-                      <Icon className="w-4 h-4" />
-                      <span>{tab.label}</span>
+                      <Icon className="w-4 h-4 flex-shrink-0" />
+                      <span className="truncate">{tab.label}</span>
                       {tab.count !== undefined && tab.count > 0 && (
                         <span className={`text-xs px-1.5 py-0.5 rounded-full ${
                           activeTab === tab.id ? 'bg-primary/15 text-primary' : 'bg-muted text-muted-foreground'
@@ -1024,7 +1066,7 @@ export default function CustomersPage() {
               </div>
 
               {/* Content */}
-              <div className="flex-1 overflow-y-auto px-6 py-4">
+              <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4">
                 {/* Info Tab */}
                 {activeTab === 'info' && (
                   <div className="space-y-4">
@@ -1063,7 +1105,7 @@ export default function CustomersPage() {
                     )}
 
                     {/* Info grid */}
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div className="p-3 rounded-xl bg-secondary/50">
                         <div className="flex items-center justify-between mb-1">
                           <div className="flex items-center gap-2">
@@ -1173,7 +1215,7 @@ export default function CustomersPage() {
                     {/* Fiscal info */}
                     <div className="space-y-2">
                       <p className="text-xs font-medium text-muted-foreground">Datos fiscales</p>
-                      <div className="grid grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div className="p-3 rounded-xl bg-secondary/50">
                           <div className="flex items-center justify-between mb-1">
                             <div className="flex items-center gap-2">
@@ -1264,7 +1306,7 @@ export default function CustomersPage() {
                             <p className="font-medium text-foreground text-sm truncate">{selectedCustomer.businessName || 'No registrada'}</p>
                           )}
                         </div>
-                        <div className="p-3 rounded-xl bg-secondary/50 col-span-2">
+                        <div className="p-3 rounded-xl bg-secondary/50 sm:col-span-2">
                           <div className="flex items-center justify-between mb-1">
                             <div className="flex items-center gap-2">
                               <FileText className="w-3.5 h-3.5 text-muted-foreground" />
@@ -1381,13 +1423,13 @@ export default function CustomersPage() {
                     )}
 
                     {/* Dates */}
-                    <div className="flex items-center justify-between text-sm text-muted-foreground p-3 rounded-xl bg-secondary/30">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between text-sm text-muted-foreground p-3 rounded-xl bg-secondary/30">
                       <div className="flex items-center gap-2">
-                        <Calendar className="w-3.5 h-3.5" />
+                        <Calendar className="w-3.5 h-3.5 flex-shrink-0" />
                         <span>Primera vez: {formatDate(selectedCustomer.firstSeenAt)}</span>
                       </div>
                       <div className="flex items-center gap-2">
-                        <Clock className="w-3.5 h-3.5" />
+                        <Clock className="w-3.5 h-3.5 flex-shrink-0" />
                         <span>Ultima: {formatDate(selectedCustomer.lastSeenAt)}</span>
                       </div>
                     </div>
@@ -1516,24 +1558,26 @@ export default function CustomersPage() {
                             <div
                               key={order.id}
                               onClick={() => openOrderDetail()}
-                              className="p-4 rounded-xl bg-secondary/50 hover:bg-secondary/70 transition-colors cursor-pointer"
+                              className="p-3 sm:p-4 rounded-xl bg-secondary/50 hover:bg-secondary/70 transition-colors cursor-pointer"
                             >
-                              <div className="flex items-center justify-between mb-2">
-                                <div className="flex items-center gap-2">
+                              <div className="flex items-start justify-between gap-2 mb-2">
+                                <div className="min-w-0">
                                   <span className="font-medium text-foreground">#{order.orderNumber}</span>
-                                  <Badge variant="secondary" className={`text-xs border ${statusBadges.acceptance.className}`}>
-                                    {statusBadges.acceptance.label}
-                                  </Badge>
-                                  <Badge variant="secondary" className={`text-xs border ${statusBadges.payment.className}`}>
-                                    {statusBadges.payment.label}
-                                  </Badge>
-                                  {statusBadges.invoice && (
-                                    <Badge variant="secondary" className={`text-xs border ${statusBadges.invoice.className}`}>
-                                      {statusBadges.invoice.label}
+                                  <div className="flex flex-wrap gap-1 mt-1">
+                                    <Badge variant="secondary" className={`text-xs border ${statusBadges.acceptance.className}`}>
+                                      {statusBadges.acceptance.label}
                                     </Badge>
-                                  )}
+                                    <Badge variant="secondary" className={`text-xs border ${statusBadges.payment.className}`}>
+                                      {statusBadges.payment.label}
+                                    </Badge>
+                                    {statusBadges.invoice && (
+                                      <Badge variant="secondary" className={`text-xs border ${statusBadges.invoice.className}`}>
+                                        {statusBadges.invoice.label}
+                                      </Badge>
+                                    )}
+                                  </div>
                                 </div>
-                                <div className="text-right">
+                                <div className="text-right flex-shrink-0">
                                   <p className="font-medium text-foreground">{formatCurrency(order.total)}</p>
                                   {order.paidAmount < order.total && order.paidAmount > 0 && (
                                     <p className="text-xs text-cyan-400">Pagado: {formatCurrency(order.paidAmount)}</p>

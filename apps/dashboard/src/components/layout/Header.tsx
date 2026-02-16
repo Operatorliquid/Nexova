@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   Bell,
   FileText,
+  Menu,
   Package,
   Pencil,
   ShoppingCart,
@@ -25,6 +26,7 @@ import {
 
 interface HeaderProps {
   title?: string;
+  onMenuClick?: () => void;
 }
 
 type WorkspaceWhatsAppNumber = {
@@ -49,7 +51,7 @@ interface NotificationItem {
   createdAt: string;
 }
 
-export function Header({ title }: HeaderProps) {
+export function Header({ title, onMenuClick }: HeaderProps) {
   const { theme, toggleTheme } = useTheme();
   const { workspace } = useAuth();
   const toast = useToast();
@@ -304,9 +306,15 @@ export function Header({ title }: HeaderProps) {
 
   return (
     <header className="relative z-50 h-16 flex-shrink-0 border-b border-border bg-background/60 backdrop-blur-xl">
-      <div className="flex items-center justify-between h-full px-6">
+      <div className="flex items-center justify-between h-full px-4 md:px-6">
         {/* Left side */}
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={onMenuClick}
+            className="md:hidden p-2 rounded-xl hover:bg-secondary transition-colors"
+          >
+            <Menu className="w-5 h-5 text-muted-foreground" />
+          </button>
           {title && (
             <h1 className="text-xl font-semibold text-foreground">{title}</h1>
           )}
@@ -353,7 +361,7 @@ export function Header({ title }: HeaderProps) {
                 )}
               </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-96 p-0">
+            <DropdownMenuContent align="end" className="w-[calc(100vw-2rem)] sm:w-96 p-0">
               <div className="px-4 py-3 border-b border-border flex items-center justify-between">
                 <div>
                   <DropdownMenuLabel className="px-0 py-0 text-sm">Notificaciones</DropdownMenuLabel>
@@ -420,7 +428,7 @@ export function Header({ title }: HeaderProps) {
           </DropdownMenu>
 
           {/* Agent status */}
-          <div className="relative group">
+          <div className="relative group hidden md:block">
             {(() => {
               const agentActive = !!whatsappNumber?.isActive;
               const hasNumber = !!whatsappNumber;

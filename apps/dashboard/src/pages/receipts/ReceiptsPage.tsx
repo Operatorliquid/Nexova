@@ -3,12 +3,12 @@ import { Button, Input, AnimatedPage, AnimatedStagger, StatCard } from '../../co
 
 export default function ReceiptsPage() {
   return (
-    <div className="h-full overflow-y-auto scrollbar-hide p-6">
-      <AnimatedPage className="max-w-7xl mx-auto space-y-6">
+    <div className="h-full overflow-y-auto scrollbar-hide p-4 md:p-6">
+      <AnimatedPage className="max-w-7xl mx-auto space-y-4 md:space-y-6">
         {/* Header actions */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Input placeholder="Buscar comprobantes..." className="w-64" />
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center">
+            <Input placeholder="Buscar comprobantes..." className="w-full md:w-64" />
             <Button variant="outline" size="sm">
               Filtrar por tipo
             </Button>
@@ -35,7 +35,7 @@ export default function ReceiptsPage() {
         </div>
 
         {/* Stats */}
-        <AnimatedStagger className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <AnimatedStagger className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
           <StatCard label="Total comprobantes" value="0" icon={FileText} color="primary" />
           <StatCard label="Este mes" value="0" icon={Calendar} color="primary" />
           <StatCard label="Facturado" value="$0" icon={DollarSign} color="emerald" />

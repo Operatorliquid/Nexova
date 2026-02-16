@@ -532,8 +532,8 @@ export default function DebtsPage() {
   });
 
   return (
-    <div className="h-full overflow-y-auto scrollbar-hide p-6">
-      <AnimatedPage className="max-w-7xl mx-auto space-y-6">
+    <div className="h-full overflow-y-auto scrollbar-hide p-4 md:p-6">
+      <AnimatedPage className="max-w-7xl mx-auto space-y-4 md:space-y-6">
         {/* Header */}
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
@@ -542,12 +542,12 @@ export default function DebtsPage() {
               Seguimiento de pagos pendientes
             </p>
           </div>
-          <div className="flex items-center gap-3">
-            <div className="relative">
+          <div className="flex w-full flex-col gap-3 md:w-auto md:flex-row md:items-center">
+            <div className="relative w-full md:w-64">
               <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
                 placeholder="Buscar cliente..."
-                className="w-64 pl-10"
+                className="w-full pl-10"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -556,7 +556,7 @@ export default function DebtsPage() {
               value={statusFilter}
               onValueChange={(value) => setStatusFilter(value as 'all' | 'normal' | 'seguimiento' | 'alerta' | 'severo')}
             >
-              <SelectTrigger className="w-44">
+              <SelectTrigger className="w-full md:w-44">
                 <SelectValue placeholder="Estado deuda" />
               </SelectTrigger>
               <SelectContent>
@@ -578,7 +578,7 @@ export default function DebtsPage() {
         </div>
 
         {/* Stats */}
-        <AnimatedStagger className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <AnimatedStagger className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-4">
           <StatCard label="Total por cobrar" value={formatCurrency(stats?.totalDebt ?? 0)} icon={DollarSign} color="primary" isLoading={isLoading} />
           <StatCard label="Clientes con deuda" value={(stats?.customersWithDebt ?? 0).toString()} icon={Users} color="primary" isLoading={isLoading} />
           <StatCard label="Vencido (+30 dias)" value={formatCurrency(stats?.overdueDebt ?? 0)} icon={Clock} color="red" isLoading={isLoading} />
@@ -620,7 +620,70 @@ export default function DebtsPage() {
               </p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
+            <>
+            {/* Mobile card list */}
+            <div className="md:hidden divide-y divide-border">
+              {filteredCustomers.map((customer) => {
+                const status = resolveDebtStatus(customer.debtDays ?? 0);
+                return (
+                  <button
+                    key={customer.id}
+                    onClick={() => openCustomerDetail(customer)}
+                    className="w-full text-left px-4 py-3.5 hover:bg-secondary/50 transition-colors active:bg-secondary"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
+                        <span className="text-sm font-medium text-primary">
+                          {customer.firstName?.[0]?.toUpperCase() || customer.phone.slice(-2)}
+                        </span>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="font-medium text-sm text-foreground truncate">
+                            {customer.fullName || 'Sin nombre'}
+                          </p>
+                          <span className={`text-sm font-semibold flex-shrink-0 ${getDebtSeverity(customer.currentBalance)}`}>
+                            {formatCurrency(customer.currentBalance)}
+                          </span>
+                        </div>
+                        <p className="text-xs text-muted-foreground font-mono mt-0.5">{customer.phone}</p>
+                        <div className="flex items-center gap-2 mt-1.5">
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${status.color}`}>
+                            {status.label}
+                          </span>
+                          <span className="text-xs text-muted-foreground">{customer.debtDays ?? 0} días</span>
+                          <span className="text-xs text-muted-foreground ml-auto">{customer.orderCount} pedidos</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-end gap-1 mt-2 -mb-1">
+                      <button
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openReminderModal(customer);
+                        }}
+                        className="p-2 rounded-lg hover:bg-secondary transition-colors text-muted-foreground hover:text-emerald-400"
+                        title="Enviar recordatorio"
+                      >
+                        <MessageSquare className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openPaymentModal(customer);
+                        }}
+                        className="p-2 rounded-lg hover:bg-secondary transition-colors text-muted-foreground hover:text-primary"
+                        title="Registrar pago"
+                      >
+                        <CreditCard className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+            {/* Desktop table */}
+            <div className="hidden md:block overflow-x-auto">
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-border">
@@ -737,6 +800,7 @@ export default function DebtsPage() {
                 </tbody>
               </table>
             </div>
+            </>
           )}
         </div>
 
@@ -750,7 +814,7 @@ export default function DebtsPage() {
             }
           }}
         >
-          <DialogContent className="max-w-lg max-h-[90vh] flex flex-col">
+          <DialogContent className="max-w-lg max-h-[90dvh] flex flex-col">
             {selectedCustomer && (
               <>
                 <DialogHeader className="pb-4 border-b border-border flex-shrink-0">
@@ -1023,7 +1087,7 @@ export default function DebtsPage() {
             }
           }}
         >
-          <DialogContent className="max-w-lg max-h-[90vh] flex flex-col">
+          <DialogContent className="max-w-lg max-h-[90dvh] flex flex-col">
             <DialogHeader className="pb-4 border-b border-border flex-shrink-0">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">

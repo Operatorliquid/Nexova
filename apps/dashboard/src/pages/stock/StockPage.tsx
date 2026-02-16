@@ -566,8 +566,8 @@ export default function StockPage() {
   }, [products, search, stockFilter]);
 
   return (
-    <div className="h-full overflow-y-auto scrollbar-hide p-6">
-      <AnimatedPage className="max-w-7xl mx-auto space-y-6">
+    <div className="h-full overflow-y-auto scrollbar-hide p-4 md:p-6">
+      <AnimatedPage className="max-w-7xl mx-auto space-y-4 md:space-y-6">
         {/* Header */}
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
@@ -576,9 +576,10 @@ export default function StockPage() {
               Gestiona tus productos y stock
             </p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="grid grid-cols-2 md:flex md:items-center gap-3">
             <Button
               variant="secondary"
+              className="w-full md:w-auto"
               onClick={() => {
                 setShowTrashModal(true);
                 setTrashSearchInput('');
@@ -592,6 +593,7 @@ export default function StockPage() {
             {capabilities.showStockReceiptImport && (
               <Button
                 variant="secondary"
+                className="w-full md:w-auto"
                 onClick={() => setShowReceiptModal(true)}
               >
                 <ReceiptText className="w-4 h-4 mr-2" />
@@ -600,12 +602,14 @@ export default function StockPage() {
             )}
             <Button
               variant="secondary"
+              className="w-full md:w-auto"
               onClick={() => setShowCategoriesModal(true)}
             >
               <Tags className="w-4 h-4 mr-2" />
               Categorías
             </Button>
             <Button
+              className="w-full md:w-auto"
               onClick={() => {
                 setEditingProduct(null);
                 setShowProductModal(true);
@@ -618,7 +622,7 @@ export default function StockPage() {
         </div>
 
         {/* Stats */}
-        <AnimatedStagger className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <AnimatedStagger className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
           <StatCard label="Total productos" value={(stats?.totalProducts || 0).toString()} icon={Package} color="primary" isLoading={isLoading} />
           <StatCard label="Activos" value={(stats?.activeProducts || 0).toString()} icon={CheckCircle} color="emerald" isLoading={isLoading} />
           <StatCard label="Stock bajo" value={(stats?.lowStockCount || 0).toString()} icon={Clock} color="amber" isLoading={isLoading} />
@@ -645,7 +649,7 @@ export default function StockPage() {
 
         {/* Selection actions bar */}
         {selectedProductIds.size > 0 && (
-          <div className="flex items-center justify-between p-4 rounded-xl bg-primary/10 border border-primary/20">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between p-4 rounded-xl bg-primary/10 border border-primary/20">
             <div className="flex items-center gap-3">
               <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-primary/20">
                 <span className="text-sm font-bold text-primary">{selectedProductIds.size}</span>
@@ -975,7 +979,7 @@ export default function StockPage() {
           }
         }}
       >
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+        <DialogContent className="max-w-4xl max-h-[90dvh] overflow-hidden flex flex-col">
           <DialogHeader className="pb-4 border-b border-border">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-red-500/10 flex items-center justify-center">
@@ -1032,40 +1036,44 @@ export default function StockPage() {
                   return (
                     <div
                       key={product.id}
-                      className="flex items-center gap-4 p-4 rounded-xl bg-secondary/50 hover:bg-secondary transition-colors"
+                      className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 p-4 rounded-xl bg-secondary/50 hover:bg-secondary transition-colors"
                     >
-                      <div className="w-12 h-12 rounded-xl bg-background/50 flex items-center justify-center flex-shrink-0">
-                        <Package className="w-5 h-5 text-muted-foreground/70" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <p className="font-medium text-foreground truncate">{product.name}</p>
-                          <Badge variant="secondary">{statusLabel}</Badge>
+                      <div className="flex items-center gap-3 sm:gap-4 flex-1 min-w-0">
+                        <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-background/50 flex items-center justify-center flex-shrink-0">
+                          <Package className="w-5 h-5 text-muted-foreground/70" />
                         </div>
-                        <p className="text-sm text-muted-foreground truncate">
-                          SKU: {product.sku}
-                        </p>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <p className="font-medium text-foreground truncate">{product.name}</p>
+                            <Badge variant="secondary">{statusLabel}</Badge>
+                          </div>
+                          <p className="text-sm text-muted-foreground truncate">
+                            SKU: {product.sku}
+                          </p>
+                        </div>
                       </div>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleRestoreProduct(product)}
-                        disabled={isBusy}
-                        className="text-blue-400 hover:text-blue-300 hover:bg-blue-500/10"
-                      >
-                        <RotateCcw className="w-4 h-4 mr-2" />
-                        Restaurar
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handlePermanentDeleteProduct(product)}
-                        disabled={isBusy}
-                        className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
-                      >
-                        <Trash2 className="w-4 h-4 mr-2" />
-                        Borrar permanente
-                      </Button>
+                      <div className="flex items-center gap-2 sm:gap-1 sm:flex-shrink-0">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleRestoreProduct(product)}
+                          disabled={isBusy}
+                          className="flex-1 sm:flex-initial text-blue-400 hover:text-blue-300 hover:bg-blue-500/10"
+                        >
+                          <RotateCcw className="w-4 h-4 mr-2" />
+                          Restaurar
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handlePermanentDeleteProduct(product)}
+                          disabled={isBusy}
+                          className="flex-1 sm:flex-initial text-red-400 hover:text-red-300 hover:bg-red-500/10"
+                        >
+                          <Trash2 className="w-4 h-4 mr-2" />
+                          Borrar
+                        </Button>
+                      </div>
                     </div>
                   );
                 })}

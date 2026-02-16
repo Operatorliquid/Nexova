@@ -135,22 +135,22 @@ function ProfileSettings() {
           <h3 className="font-semibold text-foreground">Mi perfil</h3>
         </div>
         <div className="p-5 space-y-4">
-          <div className="flex items-center gap-4 p-4 rounded-xl bg-secondary border border-border">
+          <div className="flex items-center gap-3 p-4 rounded-xl bg-secondary border border-border">
             <div
               className={cn(
-                'w-16 h-16 rounded-full flex items-center justify-center',
+                'w-14 h-14 sm:w-16 sm:h-16 rounded-full flex items-center justify-center flex-shrink-0',
                 profile.avatarUrl ? 'bg-cover bg-center' : 'bg-primary/20'
               )}
               style={profile.avatarUrl ? { backgroundImage: `url(${profile.avatarUrl})` } : {}}
             >
               {!profile.avatarUrl && (
-                <span className="text-2xl font-semibold text-primary">
+                <span className="text-xl sm:text-2xl font-semibold text-primary">
                   {(user?.firstName?.[0] || user?.email?.[0] || 'U').toUpperCase()}
                 </span>
               )}
             </div>
-            <div>
-              <p className="font-medium text-foreground">{user?.email}</p>
+            <div className="min-w-0">
+              <p className="font-medium text-foreground text-sm sm:text-base truncate">{user?.email}</p>
               {user?.isSuperAdmin && (
                 <p className="text-sm text-muted-foreground">Super Admin</p>
               )}
@@ -211,7 +211,7 @@ function ProfileSettings() {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Input
               label="Nombre"
               value={profile.firstName}
@@ -641,7 +641,7 @@ function BusinessSettings() {
             onChange={(e) => setProfile((p) => ({ ...p, businessName: e.target.value }))}
             hint="Se usa en los saludos y mensajes del agente"
           />
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Input
               label="WhatsApp de contacto"
               placeholder="+54 11 1234-5678"
@@ -700,7 +700,7 @@ function BusinessSettings() {
               />
             </div>
           )}
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Input
               label="Direccion del negocio"
               placeholder="Av. Corrientes 1234, CABA"
@@ -922,13 +922,13 @@ function BusinessSettings() {
             <label className="block text-sm font-medium text-foreground mb-3">
               Dias de atencion
             </label>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-1.5 sm:gap-2">
               {DAYS.map((day) => (
                 <button
                   key={day.id}
                   onClick={() => toggleDay(day.id)}
                   className={cn(
-                    'w-12 h-10 rounded-xl text-sm font-medium transition-all',
+                    'w-10 h-9 sm:w-12 sm:h-10 rounded-xl text-xs sm:text-sm font-medium transition-all',
                     profile.workingDays.includes(day.id)
                       ? 'bg-primary text-white'
                       : 'bg-secondary text-muted-foreground hover:bg-secondary-strong'
@@ -950,7 +950,7 @@ function BusinessSettings() {
 
           {/* Hours inputs */}
           {profile.continuousHours ? (
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-foreground mb-2">Desde</label>
                 <input
@@ -974,7 +974,7 @@ function BusinessSettings() {
             <div className="space-y-4">
               <div className="p-4 rounded-xl bg-secondary border border-border">
                 <p className="text-sm font-medium text-foreground mb-3">Turno manana</p>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-xs text-muted-foreground mb-1">Desde</label>
                     <input
@@ -998,7 +998,7 @@ function BusinessSettings() {
 
               <div className="p-4 rounded-xl bg-secondary border border-border">
                 <p className="text-sm font-medium text-foreground mb-3">Turno tarde</p>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-xs text-muted-foreground mb-1">Desde</label>
                     <input
@@ -1046,14 +1046,13 @@ function BusinessSettings() {
       </div>
 
       {/* Save button */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         {error && (
-          <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm flex-1 mr-4">
+          <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
             {error}
           </div>
         )}
-        {!error && <div className="flex-1" />}
-        <Button onClick={handleSave} isLoading={isSaving}>
+        <Button onClick={handleSave} isLoading={isSaving} className="w-full sm:w-auto sm:ml-auto">
           Guardar cambios
         </Button>
       </div>
@@ -1649,32 +1648,32 @@ function ApplicationsSettings() {
 
           {connectedNumber ? (
             connectedNumber.isActive ? (
-              <div className="flex items-center justify-between p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
-                <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 rounded-lg bg-emerald-500/20 flex items-center justify-center">
+              <div className="flex flex-col gap-3 p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-emerald-500/20 flex items-center justify-center flex-shrink-0">
                     <Check className="w-5 h-5 text-emerald-400" />
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <p className="font-medium text-emerald-400">Conectado</p>
-                    <p className="text-sm font-mono text-foreground/80">{connectedNumber.phoneNumber}</p>
+                    <p className="text-sm font-mono text-foreground/80 truncate">{connectedNumber.phoneNumber}</p>
                     {connectedNumber.provider && (
                       <p className="text-xs text-muted-foreground">Provider: {connectedNumber.provider}</p>
                     )}
                   </div>
                 </div>
-                <Button variant="destructive" size="sm" onClick={handleDisconnectWA} isLoading={isConnectingWA}>
+                <Button variant="destructive" size="sm" onClick={handleDisconnectWA} isLoading={isConnectingWA} className="w-full sm:w-auto">
                   Desconectar
                 </Button>
               </div>
             ) : (
-              <div className="flex items-center justify-between p-4 rounded-xl bg-secondary border border-border">
-                <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 rounded-lg bg-secondary flex items-center justify-center">
+              <div className="flex flex-col gap-3 p-4 rounded-xl bg-secondary border border-border sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-secondary flex items-center justify-center flex-shrink-0">
                     <Ban className="w-5 h-5 text-muted-foreground" />
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <p className="font-medium text-foreground">Conectando…</p>
-                    <p className="text-xs text-muted-foreground">
+                    <p className="text-xs text-muted-foreground truncate">
                       {connectedNumber.provider ? `Provider: ${connectedNumber.provider}` : 'WhatsApp'}
                       {connectedNumber.healthStatus ? ` · ${connectedNumber.healthStatus}` : ''}
                     </p>
@@ -1684,6 +1683,7 @@ function ApplicationsSettings() {
                   {(connectedNumber.provider || '').toLowerCase() === 'evolution' && (
                     <Button
                       size="sm"
+                      className="flex-1 sm:flex-none"
                       onClick={() => {
                         setShowSelectModal(true);
                         void handleConnectEvolution();
@@ -1693,25 +1693,25 @@ function ApplicationsSettings() {
                       Ver QR
                     </Button>
                   )}
-                  <Button variant="destructive" size="sm" onClick={handleDisconnectWA} isLoading={isConnectingWA}>
+                  <Button variant="destructive" size="sm" onClick={handleDisconnectWA} isLoading={isConnectingWA} className="flex-1 sm:flex-none">
                     Desconectar
                   </Button>
                 </div>
               </div>
             )
           ) : (
-            <div className="flex items-center justify-between p-4 rounded-xl bg-secondary border border-border">
-              <div className="flex items-center gap-4">
-                <div className="w-10 h-10 rounded-lg bg-secondary flex items-center justify-center">
+            <div className="flex flex-col gap-3 p-4 rounded-xl bg-secondary border border-border sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-secondary flex items-center justify-center flex-shrink-0">
                   <Ban className="w-5 h-5 text-muted-foreground" />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <p className="font-medium text-foreground">No conectado</p>
                   <p className="text-sm text-muted-foreground">Conecta WhatsApp para que el agente IA responda</p>
                 </div>
               </div>
               {isEvolutionEnabled ? (
-                <Button onClick={() => setShowSelectModal(true)}>
+                <Button onClick={() => setShowSelectModal(true)} className="w-full sm:w-auto">
                   Conectar
                 </Button>
               ) : (
@@ -1743,17 +1743,17 @@ function ApplicationsSettings() {
 
             {mpStatus?.connected ? (
               <div className="space-y-4">
-                <div className="flex items-center justify-between p-4 rounded-xl bg-sky-500/10 border border-sky-500/20">
-                  <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 rounded-lg bg-sky-500/20 flex items-center justify-center">
+                <div className="flex flex-col gap-3 p-4 rounded-xl bg-sky-500/10 border border-sky-500/20 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-lg bg-sky-500/20 flex items-center justify-center flex-shrink-0">
                       <Check className="w-5 h-5 text-sky-400" />
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <p className="font-medium text-sky-400">Conectado</p>
-                      <p className="text-sm text-muted-foreground">{mpStatus.externalEmail}</p>
+                      <p className="text-sm text-muted-foreground truncate">{mpStatus.externalEmail}</p>
                     </div>
                   </div>
-                  <Button variant="destructive" size="sm" onClick={handleDisconnectMP} isLoading={isConnectingMP}>
+                  <Button variant="destructive" size="sm" onClick={handleDisconnectMP} isLoading={isConnectingMP} className="w-full sm:w-auto">
                     Desconectar
                   </Button>
                 </div>
@@ -1761,17 +1761,17 @@ function ApplicationsSettings() {
                 {mpStatus.stats && null}
               </div>
             ) : (
-              <div className="flex items-center justify-between p-4 rounded-xl bg-secondary border border-border">
-                <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 rounded-lg bg-secondary flex items-center justify-center">
+              <div className="flex flex-col gap-3 p-4 rounded-xl bg-secondary border border-border sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-secondary flex items-center justify-center flex-shrink-0">
                     <Ban className="w-5 h-5 text-muted-foreground" />
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <p className="font-medium text-foreground">No conectado</p>
                     <p className="text-sm text-muted-foreground">Conecta MercadoPago para cobrar a clientes</p>
                   </div>
                 </div>
-                <Button onClick={handleConnectMP} isLoading={isConnectingMP}>
+                <Button onClick={handleConnectMP} isLoading={isConnectingMP} className="w-full sm:w-auto">
                   Conectar
                 </Button>
               </div>
@@ -1799,14 +1799,14 @@ function ApplicationsSettings() {
 
             {arcaStatus?.connected ? (
               <div className="space-y-4">
-                <div className="flex items-center justify-between p-4 rounded-xl bg-amber-500/10 border border-amber-500/20">
-                  <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 rounded-lg bg-amber-500/20 flex items-center justify-center">
+                <div className="flex flex-col gap-3 p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-lg bg-amber-500/20 flex items-center justify-center flex-shrink-0">
                       <Check className="w-5 h-5 text-amber-400" />
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <p className="font-medium text-amber-400">Conectado</p>
-                      <p className="text-sm text-muted-foreground">
+                      <p className="text-sm text-muted-foreground truncate">
                         CUIT {arcaStatus.cuit || '—'} · PV {arcaStatus.pointOfSale || '—'}
                       </p>
                       <p className="text-xs text-muted-foreground">
@@ -1814,18 +1814,18 @@ function ApplicationsSettings() {
                       </p>
                     </div>
                   </div>
-                  <Button variant="destructive" size="sm" onClick={handleDisconnectArca} isLoading={isConnectingArca}>
+                  <Button variant="destructive" size="sm" onClick={handleDisconnectArca} isLoading={isConnectingArca} className="w-full sm:w-auto">
                     Desconectar
                   </Button>
                 </div>
               </div>
             ) : (
-              <div className="flex items-center justify-between p-4 rounded-xl bg-secondary border border-border">
-                <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 rounded-lg bg-secondary flex items-center justify-center">
+              <div className="flex flex-col gap-3 p-4 rounded-xl bg-secondary border border-border sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-secondary flex items-center justify-center flex-shrink-0">
                     <Ban className="w-5 h-5 text-muted-foreground" />
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <p className="font-medium text-foreground">No conectado</p>
                     <p className="text-sm text-muted-foreground">
                       {arcaStatus?.status === 'pending'
@@ -1834,7 +1834,7 @@ function ApplicationsSettings() {
                     </p>
                   </div>
                 </div>
-                <Button onClick={() => setShowArcaModal(true)} isLoading={isConnectingArca}>
+                <Button onClick={() => setShowArcaModal(true)} isLoading={isConnectingArca} className="w-full sm:w-auto">
                   {arcaStatus?.status === 'pending' ? 'Continuar' : 'Conectar'}
                 </Button>
               </div>
@@ -1888,12 +1888,12 @@ function ApplicationsSettings() {
         <DialogContent className="max-w-lg">
           <DialogHeader className="pb-4 border-b border-border">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center">
+              <div className="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center shrink-0">
                 <svg className="w-5 h-5 text-emerald-400" fill="currentColor" viewBox="0 0 24 24">
                   <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
                 </svg>
               </div>
-              <div>
+              <div className="min-w-0">
                 <DialogTitle>Conectar WhatsApp</DialogTitle>
                 <DialogDescription>Conectá tu número escaneando un código QR</DialogDescription>
               </div>
@@ -1916,7 +1916,7 @@ function ApplicationsSettings() {
                     <p className="text-sm text-muted-foreground">Escaneá el código QR</p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <Button onClick={handleConnectEvolution} isLoading={isGeneratingEvolutionQr} disabled={!isEvolutionEnabled}>
                     Generar QR
                   </Button>
@@ -1948,7 +1948,7 @@ function ApplicationsSettings() {
                     <img
                       src={evolutionQrDataUrl}
                       alt="QR WhatsApp"
-                      className="w-60 h-60"
+                      className="w-48 h-48 sm:w-60 sm:h-60"
                     />
                   </div>
                   {evolutionPairingCode && (
@@ -1982,13 +1982,13 @@ function ApplicationsSettings() {
       {/* ARCA Connect Modal */}
       {canUseArca && (
         <Dialog open={showArcaModal} onOpenChange={(open) => { if (!open) { setShowArcaModal(false); } }}>
-          <DialogContent className="max-w-5xl w-full">
+          <DialogContent className="max-w-5xl">
           <DialogHeader className="pb-4 border-b border-border">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center">
+              <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center shrink-0">
                 <FileText className="w-5 h-5 text-amber-400" />
               </div>
-              <div>
+              <div className="min-w-0">
                 <DialogTitle>Conectar ARCA (AFIP)</DialogTitle>
                 <DialogDescription>Configurá la facturación electrónica en 3 pasos</DialogDescription>
               </div>
@@ -2621,10 +2621,10 @@ export default function SettingsPage() {
   });
 
   return (
-    <div className="h-full overflow-y-auto scrollbar-hide p-6">
-      <AnimatedPage className="max-w-5xl mx-auto space-y-6">
+    <div className="h-full overflow-y-auto scrollbar-hide p-4 md:p-6">
+      <AnimatedPage className="max-w-5xl mx-auto space-y-4 md:space-y-6">
         <div>
-          <h1 className="text-2xl font-semibold text-foreground">Configuración</h1>
+          <h1 className="text-xl sm:text-2xl font-semibold text-foreground">Configuración</h1>
           <p className="text-sm text-muted-foreground">Gestiona tu perfil, negocio e integraciones</p>
         </div>
         {/* Mobile navigation — horizontal scroll tabs */}

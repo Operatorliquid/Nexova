@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { MessageSquare, Trash2, Send, Loader2, AlertTriangle, MessagesSquare } from 'lucide-react';
+import { ArrowLeft, Info, MessageSquare, Trash2, Send, Loader2, AlertTriangle, MessagesSquare } from 'lucide-react';
 import { Button, Input, AnimatedPage } from '../../components/ui';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '../../components/ui/sheet';
 import { useAuth } from '../../contexts/AuthContext';
 import { cn } from '../../lib/utils';
 
@@ -58,6 +59,8 @@ export default function InboxPage() {
   const [isSending, setIsSending] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteCandidate, setDeleteCandidate] = useState<Conversation | null>(null);
+  const [mobileView, setMobileView] = useState<'list' | 'chat'>('list');
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const autoScrollRef = useRef(true);
@@ -98,6 +101,7 @@ export default function InboxPage() {
     const exists = conversations.some((conversation) => conversation.id === sessionParam);
     if (exists || conversations.length === 0) {
       setSelectedConversation(sessionParam);
+      setMobileView('chat');
     }
   }, [sessionParam, conversations, selectedConversation]);
 
@@ -232,6 +236,7 @@ export default function InboxPage() {
           setSelectedConversation(null);
           setMessages([]);
           setSessionInfo(null);
+          setMobileView('list');
         }
       }
     } catch (error) {
@@ -240,6 +245,16 @@ export default function InboxPage() {
       setDeletingId(null);
       setDeleteCandidate(null);
     }
+  };
+
+  const handleSelectConversation = (convId: string) => {
+    setSelectedConversation(convId);
+    setMobileView('chat');
+  };
+
+  const handleBackToList = () => {
+    setSelectedConversation(null);
+    setMobileView('list');
   };
 
   const formatTime = (dateStr: string) => {
@@ -262,10 +277,52 @@ export default function InboxPage() {
     );
   }
 
+  const customerDetailsContent = sessionInfo ? (
+    <div className="p-4 space-y-5 overflow-y-auto scrollbar-hide">
+      <div>
+        <p className="text-[11px] text-muted-foreground uppercase tracking-wider mb-1">Nombre</p>
+        <p className="font-medium text-foreground">
+          {sessionInfo.customer.firstName
+            ? `${sessionInfo.customer.firstName} ${sessionInfo.customer.lastName || ''}`
+            : 'Sin nombre'}
+        </p>
+      </div>
+      <div>
+        <p className="text-[11px] text-muted-foreground uppercase tracking-wider mb-1">Telefono</p>
+        <p className="font-medium font-mono text-sm text-foreground">{sessionInfo.customer.phone}</p>
+      </div>
+      <div>
+        <p className="text-[11px] text-muted-foreground uppercase tracking-wider mb-1">Estado</p>
+        {sessionInfo.agentActive ? (
+          <span className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg bg-primary/20 text-primary">
+            <span className="w-1.5 h-1.5 rounded-full bg-primary" />
+            Atendido por IA
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg bg-primary/20 text-primary">
+            <span className="w-1.5 h-1.5 rounded-full bg-primary" />
+            Atendido por humano
+          </span>
+        )}
+      </div>
+    </div>
+  ) : (
+    <div className="flex-1 flex items-center justify-center p-6">
+      <p className="text-sm text-muted-foreground text-center">
+        Selecciona una conversacion para ver los detalles
+      </p>
+    </div>
+  );
+
   return (
-    <AnimatedPage className="flex h-full gap-4 p-4 overflow-hidden">
+    <AnimatedPage className="flex h-full md:gap-4 p-4 overflow-hidden">
       {/* Conversations list */}
-      <div className="w-80 flex-shrink-0 glass-card rounded-2xl flex flex-col overflow-hidden">
+      <div className={cn(
+        'glass-card rounded-2xl flex flex-col overflow-hidden',
+        mobileView === 'chat' ? 'hidden md:flex' : 'flex',
+        'w-full md:w-80 md:flex-shrink-0'
+      )}>
+
         <div className="p-4 border-b border-border">
           <Input placeholder="Buscar conversaciones..." />
         </div>
@@ -275,7 +332,7 @@ export default function InboxPage() {
             {conversations.map((conv) => (
               <button
                 key={conv.id}
-                onClick={() => setSelectedConversation(conv.id)}
+                onClick={() => handleSelectConversation(conv.id)}
                 className={cn(
                   'w-full p-4 text-left border-b border-border transition-all duration-200 group',
                   selectedConversation === conv.id
@@ -348,12 +405,22 @@ export default function InboxPage() {
       </div>
 
       {/* Chat area */}
-      <div className="flex-1 glass-card rounded-2xl flex flex-col overflow-hidden min-w-0">
+      <div className={cn(
+        'flex-1 glass-card rounded-2xl flex flex-col overflow-hidden min-w-0',
+        // Mobile: hide when viewing list
+        mobileView === 'list' ? 'hidden md:flex' : 'flex'
+      )}>
         {selectedConversation && sessionInfo ? (
           <>
             {/* Chat header */}
             <div className="p-4 border-b border-border flex items-center justify-between flex-shrink-0">
               <div className="flex items-center gap-3 min-w-0">
+                <button
+                  onClick={handleBackToList}
+                  className="md:hidden p-1.5 -ml-1 rounded-lg hover:bg-secondary transition-colors"
+                >
+                  <ArrowLeft className="w-5 h-5 text-muted-foreground" />
+                </button>
                 <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
                   <span className="text-sm font-semibold text-primary">
                     {(sessionInfo.customer.firstName?.[0] || sessionInfo.customer.phone[0]).toUpperCase()}
@@ -368,12 +435,21 @@ export default function InboxPage() {
                   <p className="text-xs text-muted-foreground truncate">{sessionInfo.customer.phone}</p>
                 </div>
               </div>
-              <Button
-                variant={sessionInfo.agentActive ? 'secondary' : 'default'}
-                onClick={toggleAgentActive}
-              >
-                {sessionInfo.agentActive ? 'Tomar control' : 'Activar IA'}
-              </Button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setDetailsOpen(true)}
+                  className="md:hidden p-2 rounded-xl hover:bg-secondary transition-colors"
+                >
+                  <Info className="w-5 h-5 text-muted-foreground" />
+                </button>
+                <Button
+                  variant={sessionInfo.agentActive ? 'secondary' : 'default'}
+                  onClick={toggleAgentActive}
+                  size="sm"
+                >
+                  {sessionInfo.agentActive ? 'Tomar control' : 'Activar IA'}
+                </Button>
+              </div>
             </div>
 
             {/* Messages */}
@@ -392,7 +468,7 @@ export default function InboxPage() {
                 >
                   <div
                     className={cn(
-                      'max-w-[75%] rounded-2xl px-4 py-2.5',
+                      'max-w-[85%] md:max-w-[75%] rounded-2xl px-4 py-2.5',
                       msg.role === 'user'
                         ? 'bg-secondary text-foreground'
                         : 'bg-primary text-white'
@@ -437,7 +513,7 @@ export default function InboxPage() {
                   ) : (
                     <>
                       <Send className="w-4 h-4 mr-2" />
-                      Enviar
+                      <span className="hidden sm:inline">Enviar</span>
                     </>
                   )}
                 </Button>
@@ -463,48 +539,23 @@ export default function InboxPage() {
         )}
       </div>
 
-      {/* Customer details */}
-      <div className="w-72 flex-shrink-0 glass-card rounded-2xl flex flex-col overflow-hidden">
+      {/* Customer details - Desktop */}
+      <div className="w-72 flex-shrink-0 glass-card rounded-2xl hidden lg:flex flex-col overflow-hidden">
         <div className="p-4 border-b border-border">
           <h3 className="font-semibold text-foreground">Detalles del cliente</h3>
         </div>
-        {sessionInfo ? (
-          <div className="p-4 space-y-5 overflow-y-auto scrollbar-hide">
-            <div>
-              <p className="text-[11px] text-muted-foreground uppercase tracking-wider mb-1">Nombre</p>
-              <p className="font-medium text-foreground">
-                {sessionInfo.customer.firstName
-                  ? `${sessionInfo.customer.firstName} ${sessionInfo.customer.lastName || ''}`
-                  : 'Sin nombre'}
-              </p>
-            </div>
-            <div>
-              <p className="text-[11px] text-muted-foreground uppercase tracking-wider mb-1">Telefono</p>
-              <p className="font-medium font-mono text-sm text-foreground">{sessionInfo.customer.phone}</p>
-            </div>
-            <div>
-              <p className="text-[11px] text-muted-foreground uppercase tracking-wider mb-1">Estado</p>
-              {sessionInfo.agentActive ? (
-                <span className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg bg-primary/20 text-primary">
-                  <span className="w-1.5 h-1.5 rounded-full bg-primary" />
-                  Atendido por IA
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg bg-primary/20 text-primary">
-                  <span className="w-1.5 h-1.5 rounded-full bg-primary" />
-                  Atendido por humano
-                </span>
-              )}
-            </div>
-          </div>
-        ) : (
-          <div className="flex-1 flex items-center justify-center p-6">
-            <p className="text-sm text-muted-foreground text-center">
-              Selecciona una conversacion para ver los detalles
-            </p>
-          </div>
-        )}
+        {customerDetailsContent}
       </div>
+
+      {/* Customer details - Mobile Sheet */}
+      <Sheet open={detailsOpen} onOpenChange={setDetailsOpen}>
+        <SheetContent side="right" className="sm:max-w-sm p-0">
+          <SheetHeader className="p-4">
+            <SheetTitle>Detalles del cliente</SheetTitle>
+          </SheetHeader>
+          {customerDetailsContent}
+        </SheetContent>
+      </Sheet>
 
       {/* Delete confirmation modal */}
       <Dialog open={!!deleteCandidate} onOpenChange={(open) => !open && setDeleteCandidate(null)}>

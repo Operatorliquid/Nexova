@@ -1233,58 +1233,62 @@ export default function OrdersPage() {
   };
 
   return (
-    <div className="h-full overflow-y-auto scrollbar-hide p-6">
-      <AnimatedPage className="max-w-7xl mx-auto space-y-6">
+    <div className="h-full overflow-y-auto scrollbar-hide p-4 md:p-6">
+      <AnimatedPage className="max-w-7xl mx-auto space-y-4 md:space-y-6">
         {/* Page header */}
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <h1 className="text-2xl font-semibold text-foreground">Pedidos</h1>
             <p className="text-sm text-muted-foreground">Gestiona los pedidos de tus clientes</p>
           </div>
-          <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex w-full flex-col gap-3 md:w-auto md:flex-row md:items-center">
             <Input
               placeholder="Buscar por cliente..."
-              className="w-64"
+              className="w-full md:w-64"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
-            <Select value={dateFilter} onValueChange={setDateFilter}>
-              <SelectTrigger className="w-44">
-                <SelectValue placeholder="Días" />
-              </SelectTrigger>
-              <SelectContent>
-                {DATE_FILTER_OPTIONS.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-52">
-                <SelectValue placeholder="Todos los estados" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todos los estados</SelectItem>
-                <SelectItem value="awaiting_acceptance">Esperando aprobacion</SelectItem>
-                <SelectItem value="accepted">Aceptado</SelectItem>
-                <SelectItem value="pending_invoicing">Pendiente de facturación</SelectItem>
-                <SelectItem value="invoiced">Facturado</SelectItem>
-                <SelectItem value="invoice_cancelled">Factura cancelada</SelectItem>
-                <SelectItem value="cancelled">Cancelado</SelectItem>
-                <SelectItem value="paid">Pagado</SelectItem>
-                <SelectItem value="pending_payment">Pendiente de pago</SelectItem>
-                <SelectItem value="partial_payment">Pago parcial</SelectItem>
-              </SelectContent>
-            </Select>
-            <Button variant="secondary" onClick={() => setIsTrashOpen(true)}>
-              <Trash2 className="w-4 h-4 mr-2" />
-              Papelera
-            </Button>
-            <Button onClick={() => setIsCreateOpen(true)}>
-              <Plus className="w-4 h-4 mr-2" />
-              Nuevo pedido
-            </Button>
+            <div className="flex gap-3">
+              <Select value={dateFilter} onValueChange={setDateFilter}>
+                <SelectTrigger className="w-full md:w-44">
+                  <SelectValue placeholder="Días" />
+                </SelectTrigger>
+                <SelectContent>
+                  {DATE_FILTER_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger className="w-full md:w-52">
+                  <SelectValue placeholder="Todos los estados" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos los estados</SelectItem>
+                  <SelectItem value="awaiting_acceptance">Esperando aprobacion</SelectItem>
+                  <SelectItem value="accepted">Aceptado</SelectItem>
+                  <SelectItem value="pending_invoicing">Pendiente de facturación</SelectItem>
+                  <SelectItem value="invoiced">Facturado</SelectItem>
+                  <SelectItem value="invoice_cancelled">Factura cancelada</SelectItem>
+                  <SelectItem value="cancelled">Cancelado</SelectItem>
+                  <SelectItem value="paid">Pagado</SelectItem>
+                  <SelectItem value="pending_payment">Pendiente de pago</SelectItem>
+                  <SelectItem value="partial_payment">Pago parcial</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex gap-3">
+              <Button variant="secondary" className="flex-1 md:flex-none" onClick={() => setIsTrashOpen(true)}>
+                <Trash2 className="w-4 h-4 mr-2" />
+                Papelera
+              </Button>
+              <Button className="flex-1 md:flex-none" onClick={() => setIsCreateOpen(true)}>
+                <Plus className="w-4 h-4 mr-2" />
+                Nuevo pedido
+              </Button>
+            </div>
           </div>
         </div>
 
@@ -1307,7 +1311,7 @@ export default function OrdersPage() {
         )}
 
         {/* Stats */}
-        <AnimatedStagger className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <AnimatedStagger className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
           <StatCard label="Total pedidos" value={(stats?.totalOrders ?? 0).toString()} icon={ShoppingCart} color="primary" isLoading={isLoading} />
           <StatCard label="Pendientes de aprobación" value={(stats?.pendingOrders ?? 0).toString()} icon={Clock} color="amber" isLoading={isLoading} />
           <StatCard label="Ingresos" value={formatCurrency(stats?.totalRevenue ?? 0)} icon={DollarSign} color="emerald" isLoading={isLoading} />
@@ -1346,6 +1350,50 @@ export default function OrdersPage() {
               </div>
             </div>
           ) : (
+            <>
+            {/* Mobile card list */}
+            <div className="md:hidden divide-y divide-border">
+              {orders.map((order) => (
+                <button
+                  key={order.id}
+                  onClick={() => handleSelectOrder(order)}
+                  className="w-full text-left px-4 py-3.5 hover:bg-secondary/50 transition-colors active:bg-secondary"
+                >
+                  <div className="flex items-center justify-between gap-3 mb-1.5">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="font-mono text-sm font-medium text-foreground">#{order.orderNumber}</span>
+                      <span className="text-sm text-foreground truncate">{getCustomerName(order.customer)}</span>
+                    </div>
+                    <span className="text-xs text-muted-foreground flex-shrink-0">{timeAgo(order.createdAt)}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {getStatusBadges(order)}
+                    </div>
+                    <span className="text-sm font-medium flex-shrink-0">
+                      {order.pendingAmount === 0 ? (
+                        <span className="text-emerald-400">{formatCurrency(order.total)}</span>
+                      ) : order.paidAmount > 0 ? (
+                        <span>
+                          <span className="text-emerald-400">{formatCurrency(order.paidAmount)}</span>
+                          <span className="text-muted-foreground/50">/</span>
+                          <span className="text-muted-foreground">{formatCurrency(order.total)}</span>
+                        </span>
+                      ) : (
+                        <span className="text-foreground">{formatCurrency(order.total)}</span>
+                      )}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="text-xs text-muted-foreground">{order.itemCount} {order.itemCount === 1 ? 'item' : 'items'}</span>
+                    <span className="text-xs text-muted-foreground">·</span>
+                    <span className="text-xs text-muted-foreground font-mono">{order.customer.phone}</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+            {/* Desktop table */}
+            <div className="hidden md:block overflow-x-auto">
             <table className="w-full">
               <thead>
                 <tr className="border-b border-border">
@@ -1371,7 +1419,7 @@ export default function OrdersPage() {
                     </td>
                     <td className="px-5 py-4">
                       <div>
-                        <p className="font-medium text-foreground">{order.customer.name}</p>
+                        <p className="font-medium text-foreground">{getCustomerName(order.customer)}</p>
                         <p className="text-xs text-muted-foreground">{order.customer.phone}</p>
                       </div>
                     </td>
@@ -1413,6 +1461,8 @@ export default function OrdersPage() {
                 ))}
               </AnimatedTableBody>
             </table>
+            </div>
+            </>
           )}
         </div>
 
@@ -1442,33 +1492,33 @@ export default function OrdersPage() {
               </SheetHeader>
 
               {/* Tabs */}
-              <div className="flex gap-1 p-1 bg-secondary/50 rounded-xl mx-6 mt-2">
+              <div className="flex gap-1 p-1 bg-secondary/50 rounded-xl mx-4 sm:mx-6 mt-2">
                 <button
                   onClick={() => setActiveOrderTab('details')}
-                  className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                  className={`flex-1 flex items-center justify-center gap-1.5 px-2 sm:px-3 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all ${
                     activeOrderTab === 'details'
                       ? 'bg-background text-foreground shadow-sm'
                       : 'text-muted-foreground hover:text-foreground'
                   }`}
                 >
-                  <FileText className="w-4 h-4" />
+                  <FileText className="w-4 h-4 flex-shrink-0" />
                   <span>Detalles</span>
                 </button>
                 <button
                   onClick={() => setActiveOrderTab('receipts')}
-                  className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                  className={`flex-1 flex items-center justify-center gap-1.5 px-2 sm:px-3 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all ${
                     activeOrderTab === 'receipts'
                       ? 'bg-background text-foreground shadow-sm'
                       : 'text-muted-foreground hover:text-foreground'
                   }`}
                 >
-                  <Receipt className="w-4 h-4" />
+                  <Receipt className="w-4 h-4 flex-shrink-0" />
                   <span>Comprobantes</span>
                 </button>
               </div>
 
               {/* Content */}
-              <div className="flex-1 overflow-y-auto px-6 py-4">
+              <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4">
                 {isLoadingDetail ? (
                   <div className="flex items-center justify-center py-12">
                     <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary" />
@@ -1647,13 +1697,14 @@ export default function OrdersPage() {
                 ) : (
                   /* Receipts Tab */
                   <div className="space-y-4">
-                    <div className="flex items-center justify-between">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                       <div>
                         <p className="text-sm font-medium text-foreground">Comprobantes de pago</p>
                         <p className="text-xs text-muted-foreground">Cargá un comprobante manualmente</p>
                       </div>
                       <Button
                         size="sm"
+                        className="w-full sm:w-auto"
                         onClick={() => {
                           resetReceiptUpload();
                           setIsReceiptUploadOpen(true);
@@ -1681,8 +1732,8 @@ export default function OrdersPage() {
                             key={receipt.id}
                             className="p-4 rounded-xl border border-border bg-secondary/50 group relative"
                           >
-                            <div className="flex items-start gap-4">
-                              <div className="w-20 h-20 rounded-xl bg-secondary flex items-center justify-center overflow-hidden border border-border">
+                            <div className="flex items-start gap-3">
+                              <div className="w-14 h-14 sm:w-20 sm:h-20 rounded-xl bg-secondary flex items-center justify-center overflow-hidden border border-border flex-shrink-0">
                                 {previewUrl ? (
                                   <img
                                     src={previewUrl}
@@ -1943,7 +1994,7 @@ export default function OrdersPage() {
         setIsCreateOpen(open);
         if (!open) resetCreateForm();
       }}>
-        <DialogContent className="max-w-5xl max-h-[90vh] overflow-hidden flex flex-col">
+        <DialogContent className="max-w-5xl max-h-[90dvh] overflow-hidden flex flex-col">
           <DialogHeader className="pb-4 border-b border-border flex-shrink-0">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
@@ -2290,7 +2341,7 @@ export default function OrdersPage() {
 
       {/* Trash list modal */}
       <Dialog open={isTrashOpen} onOpenChange={setIsTrashOpen}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+        <DialogContent className="max-w-4xl max-h-[90dvh] overflow-hidden flex flex-col">
           <DialogHeader className="pb-4 border-b border-border flex-shrink-0">
             <div className="flex items-center gap-4 pr-8">
               <div className="w-10 h-10 rounded-xl bg-red-500/10 flex items-center justify-center">

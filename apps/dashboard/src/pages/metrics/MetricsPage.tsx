@@ -245,8 +245,8 @@ export default function MetricsPage() {
   }, [capabilities.showMetricsAiInsights, isInsightsOpen, range, workspace?.id]);
 
   return (
-    <div className="h-full overflow-y-auto scrollbar-hide p-6">
-      <AnimatedPage className="max-w-7xl mx-auto space-y-6">
+    <div className="h-full overflow-y-auto scrollbar-hide p-4 md:p-6">
+      <AnimatedPage className="max-w-7xl mx-auto space-y-4 md:space-y-6">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <h1 className="text-2xl font-semibold text-foreground">Métricas del negocio</h1>
@@ -283,7 +283,7 @@ export default function MetricsPage() {
         </div>
 
         {/* Summary cards */}
-        <AnimatedStagger className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <AnimatedStagger className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
           <StatCard label="Ventas totales" value={formatCurrency(metrics?.summary.totalRevenue ?? 0)} icon={DollarSign} color="emerald" isLoading={isLoading} />
           <StatCard label="Pedidos" value={(metrics?.summary.totalOrders ?? 0).toString()} icon={ShoppingCart} color="blue" isLoading={isLoading} />
           <StatCard label="Ticket promedio" value={formatCurrency(metrics?.summary.avgOrderValue ?? 0)} icon={TrendingUp} color="emerald" isLoading={isLoading} />
@@ -768,7 +768,7 @@ export default function MetricsPage() {
 
       {capabilities.showMetricsAiInsights && (
         <Dialog open={isInsightsOpen} onOpenChange={setIsInsightsOpen}>
-          <DialogContent className="max-w-5xl max-h-[90vh] overflow-hidden flex flex-col">
+          <DialogContent className="max-w-5xl max-h-[90dvh] overflow-hidden flex flex-col">
             <DialogHeader className="pb-4 border-b border-border flex-shrink-0">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">

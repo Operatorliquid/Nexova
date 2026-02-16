@@ -85,7 +85,8 @@
   }
 
   html, body, #root {
-    @apply h-full overflow-hidden;
+    height: 100dvh;
+    @apply overflow-hidden;
   }
 
   body {

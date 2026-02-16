@@ -49,9 +49,9 @@ export function StockFilters({
   ];
 
   return (
-    <div className="flex flex-wrap items-center gap-3">
+    <div className="flex flex-col gap-3 md:flex-row md:flex-wrap md:items-center">
       {/* Search */}
-      <div className="relative flex-1 min-w-[200px] max-w-sm">
+      <div className="relative w-full md:flex-1 md:min-w-[200px] md:max-w-sm">
         <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
         <Input
           value={search}
@@ -61,86 +61,88 @@ export function StockFilters({
         />
       </div>
 
-      {/* Category filter */}
-      <Select
-        value={selectedCategory || 'all'}
-        onValueChange={(value) => onCategoryChange(value === 'all' ? null : value)}
-      >
-        <SelectTrigger className="w-[200px]">
-          <SelectValue placeholder="Todas las categorías" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">Todas las categorías</SelectItem>
-          {categories.map((cat) => (
-            <SelectItem key={cat.id} value={cat.id}>
-              {cat.name} {cat.productCount !== undefined && `(${cat.productCount})`}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      <div className="flex flex-wrap items-center gap-3">
+        {/* Category filter */}
+        <Select
+          value={selectedCategory || 'all'}
+          onValueChange={(value) => onCategoryChange(value === 'all' ? null : value)}
+        >
+          <SelectTrigger className="w-full min-w-[160px] md:w-[200px]">
+            <SelectValue placeholder="Todas las categorías" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todas las categorías</SelectItem>
+            {categories.map((cat) => (
+              <SelectItem key={cat.id} value={cat.id}>
+                {cat.name} {cat.productCount !== undefined && `(${cat.productCount})`}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
 
-      {/* Stock filter */}
-      <div className="flex rounded-xl overflow-hidden border border-border">
-        {stockFilterOptions.map((option) => (
+        {/* Stock filter */}
+        <div className="flex rounded-xl overflow-hidden border border-border">
+          {stockFilterOptions.map((option) => (
+            <button
+              key={option.value}
+              onClick={() => onStockFilterChange(option.value as 'all' | 'inStock' | 'lowStock' | 'outOfStock')}
+              className={`px-3 py-2.5 text-xs md:text-sm md:px-3.5 font-medium transition-all ${
+                stockFilter === option.value
+                  ? 'bg-primary/20 text-primary'
+                  : 'bg-secondary text-muted-foreground hover:bg-accent hover:text-foreground'
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+
+        {/* View mode toggle */}
+        <div className="flex rounded-xl overflow-hidden border border-border">
           <button
-            key={option.value}
-            onClick={() => onStockFilterChange(option.value as 'all' | 'inStock' | 'lowStock' | 'outOfStock')}
+            onClick={() => onViewModeChange('grid')}
             className={`px-3.5 py-2.5 text-sm font-medium transition-all ${
-              stockFilter === option.value
+              viewMode === 'grid'
                 ? 'bg-primary/20 text-primary'
                 : 'bg-secondary text-muted-foreground hover:bg-accent hover:text-foreground'
             }`}
+            title="Vista tarjetas"
           >
-            {option.label}
+            <LayoutGrid className="w-4 h-4" />
           </button>
-        ))}
-      </div>
+          <button
+            onClick={() => onViewModeChange('list')}
+            className={`px-3.5 py-2.5 text-sm font-medium transition-all ${
+              viewMode === 'list'
+                ? 'bg-primary/20 text-primary'
+                : 'bg-secondary text-muted-foreground hover:bg-accent hover:text-foreground'
+            }`}
+            title="Vista lista"
+          >
+            <List className="w-4 h-4" />
+          </button>
+        </div>
 
-      {/* View mode toggle */}
-      <div className="flex rounded-xl overflow-hidden border border-border">
-        <button
-          onClick={() => onViewModeChange('grid')}
-          className={`px-3.5 py-2.5 text-sm font-medium transition-all ${
-            viewMode === 'grid'
-              ? 'bg-primary/20 text-primary'
-              : 'bg-secondary text-muted-foreground hover:bg-accent hover:text-foreground'
-          }`}
-          title="Vista tarjetas"
+        {/* Select mode toggle */}
+        <Button
+          variant={isSelectMode ? 'secondary' : 'outline'}
+          size="sm"
+          onClick={onSelectModeToggle}
+          className={isSelectMode ? 'bg-primary/20 text-primary hover:bg-primary/30 border border-primary/30' : ''}
         >
-          <LayoutGrid className="w-4 h-4" />
-        </button>
-        <button
-          onClick={() => onViewModeChange('list')}
-          className={`px-3.5 py-2.5 text-sm font-medium transition-all ${
-            viewMode === 'list'
-              ? 'bg-primary/20 text-primary'
-              : 'bg-secondary text-muted-foreground hover:bg-accent hover:text-foreground'
-          }`}
-          title="Vista lista"
-        >
-          <List className="w-4 h-4" />
-        </button>
+          {isSelectMode ? (
+            <>
+              <X className="w-4 h-4 mr-1" />
+              Cancelar
+            </>
+          ) : (
+            <>
+              <CheckSquare className="w-4 h-4 mr-1" />
+              Seleccionar
+            </>
+          )}
+        </Button>
       </div>
-
-      {/* Select mode toggle */}
-      <Button
-        variant={isSelectMode ? 'secondary' : 'outline'}
-        size="sm"
-        onClick={onSelectModeToggle}
-        className={isSelectMode ? 'bg-primary/20 text-primary hover:bg-primary/30 border border-primary/30' : ''}
-      >
-        {isSelectMode ? (
-          <>
-            <X className="w-4 h-4 mr-1" />
-            Cancelar
-          </>
-        ) : (
-          <>
-            <CheckSquare className="w-4 h-4 mr-1" />
-            Seleccionar
-          </>
-        )}
-      </Button>
     </div>
   );
 }

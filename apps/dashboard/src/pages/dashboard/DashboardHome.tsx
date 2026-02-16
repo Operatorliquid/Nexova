@@ -340,8 +340,8 @@ export default function DashboardHome() {
   const nivoTheme = useMemo(() => getNivoTheme(), []);
 
   return (
-    <div className="h-full overflow-y-auto scrollbar-hide p-6">
-      <AnimatedPage className="max-w-7xl mx-auto space-y-6">
+    <div className="h-full overflow-y-auto scrollbar-hide p-4 md:p-6">
+      <AnimatedPage className="max-w-7xl mx-auto space-y-4 md:space-y-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h1 className="text-2xl font-semibold text-foreground">
@@ -351,9 +351,9 @@ export default function DashboardHome() {
               Resumen general de tu negocio
             </p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex w-full flex-col gap-3 lg:w-auto lg:flex-row lg:items-center">
             <Select value={range} onValueChange={setRange}>
-              <SelectTrigger className="w-44">
+              <SelectTrigger className="w-full lg:w-44">
                 <SelectValue placeholder="Periodo" />
               </SelectTrigger>
               <SelectContent>
@@ -364,7 +364,7 @@ export default function DashboardHome() {
                 ))}
               </SelectContent>
             </Select>
-            <Button asChild variant="secondary">
+            <Button asChild variant="secondary" className="w-full lg:w-auto">
               <Link to="/orders">Ver pedidos</Link>
             </Button>
           </div>
@@ -391,7 +391,7 @@ export default function DashboardHome() {
           </div>
         )}
 
-        <AnimatedStagger className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
+        <AnimatedStagger className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3 md:gap-4">
           <StatCard label="Ventas" value={formatCurrency(summary.totalRevenue)} icon={DollarSign} color="emerald" isLoading={isLoading} />
           <StatCard label="Pedidos" value={summary.totalOrders.toString()} icon={ShoppingCart} color="primary" isLoading={isLoading} />
           <StatCard label="Nuevos pedidos" value={summary.newOrders.length.toString()} icon={Bell} color="primary" isLoading={isLoading} />

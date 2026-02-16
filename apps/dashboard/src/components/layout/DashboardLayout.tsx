@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
@@ -13,13 +14,19 @@ export function DashboardLayout() {
   const { theme } = useTheme();
   const { workspace } = useAuth();
   const capabilities = getWorkspaceCommerceCapabilities(workspace);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // Close sidebar on route change
+  useEffect(() => {
+    setSidebarOpen(false);
+  }, [location.pathname]);
 
   // Get title from module config
   const currentModule = Object.values(modules).find(m => m.path === location.pathname);
   const title = currentModule?.name || '';
 
   return (
-    <div className="h-screen bg-background overflow-hidden flex">
+    <div className="h-dvh bg-background overflow-hidden flex">
       {/* Background gradient - adapts to theme */}
       <div className="fixed inset-0 -z-10 overflow-hidden">
         {theme === 'dark' ? (
@@ -41,10 +48,10 @@ export function DashboardLayout() {
         )}
       </div>
 
-      <Sidebar />
+      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
       <div className="flex-1 flex flex-col overflow-hidden">
-        <Header title={title} />
+        <Header title={title} onMenuClick={() => setSidebarOpen(true)} />
         <main className="flex-1 overflow-hidden">
           <AnimatePresence mode="wait">
             <motion.div

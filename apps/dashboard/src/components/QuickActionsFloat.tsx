@@ -102,6 +102,17 @@ export function QuickActionsFloat() {
   const panelRef = useRef<HTMLDivElement>(null);
   const shouldShowResultsInModal = (data: QuickActionResult | null) => Boolean(data);
 
+  // ── Draggable button (mobile) ──
+  const [btnPos, setBtnPos] = useState({ bottom: 24, right: 24 });
+  const dragState = useRef<{
+    startX: number;
+    startY: number;
+    startBottom: number;
+    startRight: number;
+    moved: boolean;
+  } | null>(null);
+  const justDragged = useRef(false);
+
   // Fetch suggestions on mount
   useEffect(() => {
     const fetchSuggestions = async () => {
@@ -282,6 +293,49 @@ export function QuickActionsFloat() {
     inputRef.current?.focus();
   };
 
+  // ── Touch drag handlers ──
+  const handleTouchStart = (e: React.TouchEvent) => {
+    const touch = e.touches[0];
+    dragState.current = {
+      startX: touch.clientX,
+      startY: touch.clientY,
+      startBottom: btnPos.bottom,
+      startRight: btnPos.right,
+      moved: false,
+    };
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (!dragState.current) return;
+    const touch = e.touches[0];
+    const dx = dragState.current.startX - touch.clientX;
+    const dy = dragState.current.startY - touch.clientY;
+
+    if (!dragState.current.moved && (Math.abs(dx) > 5 || Math.abs(dy) > 5)) {
+      dragState.current.moved = true;
+    }
+    if (!dragState.current.moved) return;
+
+    const size = 56;
+    const pad = 8;
+    setBtnPos({
+      right: Math.max(pad, Math.min(window.innerWidth - size - pad, dragState.current.startRight + dx)),
+      bottom: Math.max(pad, Math.min(window.innerHeight - size - pad, dragState.current.startBottom + dy)),
+    });
+  };
+
+  const handleTouchEnd = () => {
+    if (!dragState.current) return;
+    const wasDrag = dragState.current.moved;
+    dragState.current = null;
+    if (wasDrag) {
+      justDragged.current = true;
+      setTimeout(() => { justDragged.current = false; }, 100);
+    } else {
+      setIsOpen(true);
+    }
+  };
+
   const filteredSuggestions = suggestions.filter(
     (s) =>
       command.length > 0 &&
@@ -293,13 +347,20 @@ export function QuickActionsFloat() {
     <>
       {/* Floating Button */}
       <button
-        onClick={() => setIsOpen(true)}
+        onClick={() => {
+          if (justDragged.current) return;
+          setIsOpen(true);
+        }}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        style={{ bottom: btnPos.bottom, right: btnPos.right }}
         className={cn(
-          'fixed bottom-6 right-6 z-50 w-14 h-14 rounded-2xl',
+          'fixed z-50 w-14 h-14 rounded-2xl touch-none select-none',
           'bg-primary text-white',
           'shadow-xl shadow-primary/30',
           'flex items-center justify-center',
-          'transition-all duration-300 ease-out',
+          '[transition-property:transform,opacity,box-shadow] duration-300 ease-out',
           'hover:scale-105 hover:shadow-2xl hover:shadow-primary/40',
           'active:scale-95',
           isOpen && 'scale-0 opacity-0 pointer-events-none'
@@ -322,13 +383,14 @@ export function QuickActionsFloat() {
       <div
         ref={panelRef}
         className={cn(
-          'fixed z-50 bottom-6 right-6 w-[480px] max-w-[calc(100vw-3rem)]',
+          'fixed z-50',
+          'left-3 right-3 bottom-3 sm:left-auto sm:right-6 sm:bottom-6 sm:w-[480px] sm:max-w-[calc(100vw-3rem)]',
           'rounded-2xl shadow-2xl overflow-hidden',
           'bg-popover border border-border',
-          'transition-all duration-300 ease-out origin-bottom-right',
+          'transition-all duration-300 ease-out origin-bottom sm:origin-bottom-right',
           isOpen
             ? 'scale-100 opacity-100 translate-y-0'
-            : 'scale-90 opacity-0 translate-y-4 pointer-events-none'
+            : 'scale-95 opacity-0 translate-y-4 pointer-events-none'
         )}
       >
         {/* Header */}
@@ -532,7 +594,7 @@ export function QuickActionsFloat() {
             </div>
           </DialogHeader>
           {result && (
-            <div className="space-y-4 max-h-[70vh] overflow-y-auto">
+            <div className="space-y-4 max-h-[70dvh] overflow-y-auto">
               {result.error && (
                 <p className="text-sm text-red-400 whitespace-pre-line">{result.error}</p>
               )}

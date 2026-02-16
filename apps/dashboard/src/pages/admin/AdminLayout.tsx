@@ -122,7 +122,7 @@ export default function AdminLayout() {
             </div>
           </div>
         </header>
-        <main className="flex-1 overflow-y-auto scrollbar-hide p-6">
+        <main className="flex-1 overflow-y-auto scrollbar-hide p-4 md:p-6">
           <AnimatePresence mode="wait">
             <motion.div
               key={location.pathname}

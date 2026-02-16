@@ -70,9 +70,9 @@ export function StatCard({ label, value, icon: Icon, color, sub, isLoading }: St
     return (
       <AnimatedCard className="!p-0 overflow-hidden">
         <div className="h-[3px] bg-gradient-to-r from-secondary to-transparent" />
-        <div className="p-5 space-y-3">
+        <div className="p-4 md:p-5 space-y-3">
           <div className="animate-pulse rounded-lg bg-secondary h-4 w-24" />
-          <div className="animate-pulse rounded-lg bg-secondary h-7 w-32" />
+          <div className="animate-pulse rounded-lg bg-secondary h-7 w-20 md:w-32" />
         </div>
       </AnimatedCard>
     );
@@ -81,15 +81,15 @@ export function StatCard({ label, value, icon: Icon, color, sub, isLoading }: St
   return (
     <AnimatedCard className="!p-0 overflow-hidden">
       <div className={`h-[3px] bg-gradient-to-r ${c.stripe}`} />
-      <div className="p-5">
+      <div className="p-4 md:p-5">
         <div className="flex items-start justify-between">
           <div className="min-w-0 flex-1">
-            <p className="text-sm text-muted-foreground">{label}</p>
-            <p className={`text-2xl font-bold mt-1 text-gradient ${c.gradient}`}>{value}</p>
-            {sub && <p className="text-xs text-muted-foreground mt-1">{sub}</p>}
+            <p className="text-xs md:text-sm text-muted-foreground truncate">{label}</p>
+            <p className={`text-lg md:text-2xl font-bold mt-1 text-gradient ${c.gradient} truncate`}>{value}</p>
+            {sub && <p className="text-xs text-muted-foreground mt-1 truncate">{sub}</p>}
           </div>
-          <div className={`w-11 h-11 rounded-xl ${c.bg} ${c.glow} flex items-center justify-center flex-shrink-0 ml-3`}>
-            <Icon className={`w-5 h-5 ${c.text}`} />
+          <div className={`w-9 h-9 md:w-11 md:h-11 rounded-xl ${c.bg} ${c.glow} flex items-center justify-center flex-shrink-0 ml-2 md:ml-3`}>
+            <Icon className={`w-4 h-4 md:w-5 md:h-5 ${c.text}`} />
           </div>
         </div>
       </div>

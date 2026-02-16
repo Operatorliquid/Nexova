@@ -102,7 +102,7 @@ const monthlyGrowth = [
 
 const paymentMethodData = [
   { name: 'Efectivo', value: 45, color: '#34d399' },
-  { name: 'Transferencia', value: 30, color: '#22d3ee' },
+  { name: 'Transferencia', value: 30, color: '#60A5FA' },
   { name: 'Link de pago', value: 20, color: '#4D7CFF' },
   { name: 'Otros', value: 5, color: '#6b7280' },
 ];
@@ -111,9 +111,9 @@ const features = [
   { icon: Bot, title: 'Agente IA 24/7', description: 'Un asistente inteligente que atiende a tus clientes por WhatsApp, toma pedidos y procesa pagos sin descanso.', color: 'from-emerald-500 to-teal-600', bg: 'bg-emerald-500/15', iconColor: 'text-emerald-400' },
   { icon: ShoppingCart, title: 'Gestión de pedidos', description: 'Desde la conversación hasta la entrega. Control total del ciclo de venta con seguimiento en tiempo real.', color: 'from-blue-500 to-indigo-600', bg: 'bg-blue-500/15', iconColor: 'text-blue-400' },
   { icon: Package, title: 'Control de stock', description: 'Inventario en tiempo real con alertas de stock bajo, múltiples unidades y categorías inteligentes.', color: 'from-amber-500 to-orange-600', bg: 'bg-amber-500/15', iconColor: 'text-amber-400' },
-  { icon: Users, title: 'CRM integrado', description: 'Base de clientes con historial de compras, scoring de pago, notas y seguimiento de deudas.', color: 'from-purple-500 to-violet-600', bg: 'bg-purple-500/15', iconColor: 'text-purple-400' },
-  { icon: BarChart3, title: 'Analytics con IA', description: 'Métricas de ventas, insights generados por IA, tendencias y recomendaciones accionables.', color: 'from-cyan-500 to-blue-600', bg: 'bg-cyan-500/15', iconColor: 'text-cyan-400' },
-  { icon: CreditCard, title: 'Pagos y facturación', description: 'Integración con MercadoPago, procesamiento de comprobantes con visión IA y facturación ARCA/AFIP.', color: 'from-rose-500 to-pink-600', bg: 'bg-rose-500/15', iconColor: 'text-rose-400' },
+  { icon: Users, title: 'CRM integrado', description: 'Base de clientes con historial de compras, scoring de pago, notas y seguimiento de deudas.', color: 'from-indigo-500 to-indigo-700', bg: 'bg-indigo-500/15', iconColor: 'text-indigo-400' },
+  { icon: BarChart3, title: 'Analytics con IA', description: 'Métricas de ventas, insights generados por IA, tendencias y recomendaciones accionables.', color: 'from-blue-400 to-blue-600', bg: 'bg-blue-400/15', iconColor: 'text-blue-400' },
+  { icon: CreditCard, title: 'Pagos y facturación', description: 'Integración con MercadoPago, procesamiento de comprobantes con visión IA y facturación ARCA/AFIP.', color: 'from-blue-300 to-blue-500', bg: 'bg-blue-300/15', iconColor: 'text-blue-300' },
 ];
 
 const solutions = [
@@ -184,7 +184,7 @@ function Navbar() {
 
   return (
     <>
-      <motion.div className="fixed top-0 left-0 right-0 h-[2px] z-[60] origin-left bg-gradient-to-r from-[#00FFD1] via-[#4D7CFF] via-60% via-[#8B5CF6] to-[#EC4899]" style={{ scaleX }} />
+      <motion.div className="fixed top-0 left-0 right-0 h-[2px] z-[60] origin-left bg-gradient-to-r from-[#60A5FA] via-[#4D7CFF] via-60% via-[#2563EB] to-[#93C5FD]" style={{ scaleX }} />
       <nav className={`fixed top-0 left-0 right-0 z-50 transition-all duration-500 ${scrolled ? 'bg-[#0a0a0f]/80 backdrop-blur-xl border-b border-white/[0.06] shadow-2xl' : 'bg-transparent'}`}>
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <a href="#hero" className="flex items-center gap-2 group">
@@ -197,7 +197,7 @@ function Navbar() {
           </div>
           <div className="hidden md:flex items-center gap-3">
             <a href={`${DASHBOARD_URL}/login`} className="text-sm text-white/70 hover:text-white transition-colors px-4 py-2">Iniciar sesión</a>
-            <a href="/cart?plan=standard" className="text-sm font-medium text-white bg-gradient-to-r from-[#4D7CFF] to-[#8B5CF6] px-5 py-2.5 rounded-xl transition-all duration-200 shadow-lg shadow-[#8B5CF6]/25 hover:shadow-[#8B5CF6]/40 hover:brightness-110">Empezar gratis</a>
+            <a href="/cart?plan=standard" className="text-sm font-medium text-white bg-gradient-to-r from-[#4D7CFF] to-[#2563EB] px-5 py-2.5 rounded-xl transition-all duration-200 shadow-lg shadow-[#2563EB]/25 hover:shadow-[#2563EB]/40 hover:brightness-110">Empezar gratis</a>
           </div>
           <button className="md:hidden p-2 text-white/70" onClick={() => setMobileOpen(!mobileOpen)}>
             <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -211,7 +211,7 @@ function Navbar() {
               {links.map((l) => (<a key={l.href} href={l.href} onClick={() => setMobileOpen(false)} className="block text-sm text-white/60 hover:text-white py-2">{l.label}</a>))}
               <div className="flex gap-3 pt-3 border-t border-white/[0.06]">
                 <a href={`${DASHBOARD_URL}/login`} className="text-sm text-white/70 py-2">Iniciar sesión</a>
-                <a href="/cart?plan=standard" className="text-sm font-medium text-white bg-gradient-to-r from-[#4D7CFF] to-[#8B5CF6] px-5 py-2.5 rounded-xl">Empezar gratis</a>
+                <a href="/cart?plan=standard" className="text-sm font-medium text-white bg-gradient-to-r from-[#4D7CFF] to-[#2563EB] px-5 py-2.5 rounded-xl">Empezar gratis</a>
               </div>
             </motion.div>
           )}
@@ -249,12 +249,12 @@ function HeroSection() {
     <section id="hero" ref={heroRef} className="relative min-h-screen flex items-center overflow-hidden pt-20 pb-16 lg:pt-24">
       <div className="absolute inset-0 overflow-hidden">
         <div className="absolute w-[700px] h-[700px] bg-[#4D7CFF]/[0.20] rounded-full blur-[140px] top-[-10%] left-[-10%]" style={{ animation: 'float 12s ease-in-out infinite' }} />
-        <div className="absolute w-[500px] h-[500px] bg-purple-600/[0.18] rounded-full blur-[120px] bottom-[-5%] right-[-5%]" style={{ animation: 'float 10s ease-in-out infinite reverse' }} />
+        <div className="absolute w-[500px] h-[500px] bg-blue-700/[0.18] rounded-full blur-[120px] bottom-[-5%] right-[-5%]" style={{ animation: 'float 10s ease-in-out infinite reverse' }} />
         <div className="absolute w-[400px] h-[400px] bg-emerald-500/[0.12] rounded-full blur-[100px] top-[40%] right-[20%]" style={{ animation: 'float 14s ease-in-out infinite', animationDelay: '3s' }} />
-        <div className="absolute w-[500px] h-[500px] bg-[#00FFD1]/[0.12] rounded-full blur-[130px] top-[-5%] right-[5%]" style={{ animation: 'float 11s ease-in-out infinite', animationDelay: '1s' }} />
-        <div className="absolute w-[400px] h-[400px] bg-[#EC4899]/[0.08] rounded-full blur-[110px] bottom-[10%] left-[5%]" style={{ animation: 'float 13s ease-in-out infinite', animationDelay: '5s' }} />
+        <div className="absolute w-[500px] h-[500px] bg-[#60A5FA]/[0.12] rounded-full blur-[130px] top-[-5%] right-[5%]" style={{ animation: 'float 11s ease-in-out infinite', animationDelay: '1s' }} />
+        <div className="absolute w-[400px] h-[400px] bg-[#93C5FD]/[0.08] rounded-full blur-[110px] bottom-[10%] left-[5%]" style={{ animation: 'float 13s ease-in-out infinite', animationDelay: '5s' }} />
         <div className="absolute inset-0 opacity-[0.08]" style={{ backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.6) 1px, transparent 1px)', backgroundSize: '32px 32px' }} />
-        <div className="absolute inset-0 opacity-20" style={{ background: 'conic-gradient(from 0deg at 50% 50%, #00FFD1, #4D7CFF, #8B5CF6, #EC4899, #00FFD1)', filter: 'blur(120px)', animation: 'aurora 20s linear infinite' }} />
+        <div className="absolute inset-0 opacity-20" style={{ background: 'conic-gradient(from 0deg at 50% 50%, #60A5FA, #4D7CFF, #2563EB, #93C5FD, #60A5FA)', filter: 'blur(120px)', animation: 'aurora 20s linear infinite' }} />
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_0%,#08080d_75%)]" />
       </div>
 
@@ -263,15 +263,15 @@ function HeroSection() {
           <div className="max-w-xl">
             <motion.div initial={{ opacity: 0, y: 20 }} animate={heroVisible ? { opacity: 1, y: 0 } : {}} transition={{ duration: 0.6 }} className="gradient-border inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/[0.04] backdrop-blur-sm mb-6">
               <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#00FFD1] opacity-75" />
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-[#00FFD1]" />
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#60A5FA] opacity-75" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-[#60A5FA]" />
               </span>
-              <span className="text-sm bg-gradient-to-r from-[#00FFD1] to-[#4D7CFF] bg-clip-text text-transparent font-medium">Potenciado por IA</span>
+              <span className="text-sm bg-gradient-to-r from-[#60A5FA] to-[#4D7CFF] bg-clip-text text-transparent font-medium">Potenciado por IA</span>
             </motion.div>
 
             <h1 className="text-4xl sm:text-5xl lg:text-[3.5rem] xl:text-6xl font-bold tracking-tight leading-[1.08] mb-6">
               {['Vendé', 'más.', 'Atendé', 'mejor.', 'Crecé', 'sin', 'límites.'].map((word, i) => (
-                <motion.span key={i} custom={i} initial="hidden" animate={heroVisible ? 'visible' : 'hidden'} variants={wordVariants} className={`inline-block mr-[0.3em] ${[0, 2, 4].includes(i) ? 'bg-gradient-to-r from-[#00FFD1] via-[#4D7CFF] to-[#EC4899] bg-clip-text text-transparent' : 'text-white'}`}>
+                <motion.span key={i} custom={i} initial="hidden" animate={heroVisible ? 'visible' : 'hidden'} variants={wordVariants} className={`inline-block mr-[0.3em] ${[0, 2, 4].includes(i) ? 'bg-gradient-to-r from-[#60A5FA] via-[#4D7CFF] to-[#93C5FD] bg-clip-text text-transparent' : 'text-white'}`}>
                   {word}
                 </motion.span>
               ))}
@@ -282,7 +282,7 @@ function HeroSection() {
             </motion.p>
 
             <motion.div initial={{ opacity: 0, y: 20 }} animate={heroVisible ? { opacity: 1, y: 0 } : {}} transition={{ duration: 0.6, delay: 0.95 }} className="flex flex-col sm:flex-row gap-3 mb-10">
-              <a href="/cart?plan=standard" className="group relative flex items-center justify-center gap-2 text-white font-medium px-7 py-3.5 rounded-2xl text-sm transition-all duration-300 shadow-[0_0_40px_rgba(0,255,209,0.3)] hover:shadow-[0_0_60px_rgba(0,255,209,0.4)] hover:-translate-y-0.5 overflow-hidden" style={{ background: 'linear-gradient(90deg, #00FFD1, #4D7CFF, #8B5CF6)', backgroundSize: '200% 100%', animation: 'gradient-shift 4s ease-in-out infinite' }}>
+              <a href="/cart?plan=standard" className="group relative flex items-center justify-center gap-2 text-white font-medium px-7 py-3.5 rounded-2xl text-sm transition-all duration-300 shadow-[0_0_40px_rgba(59,130,246,0.3)] hover:shadow-[0_0_60px_rgba(59,130,246,0.4)] hover:-translate-y-0.5 overflow-hidden" style={{ background: 'linear-gradient(90deg, #60A5FA, #4D7CFF, #2563EB)', backgroundSize: '200% 100%', animation: 'gradient-shift 4s ease-in-out infinite' }}>
                 <div className="absolute inset-0 -translate-x-full group-hover:translate-x-full transition-transform duration-700 bg-gradient-to-r from-transparent via-white/25 to-transparent" />
                 <span className="relative">Empezar gratis</span>
                 <ArrowRight className="relative w-4 h-4 group-hover:translate-x-1 transition-transform" />
@@ -295,7 +295,7 @@ function HeroSection() {
 
             <motion.div initial={{ opacity: 0, y: 20 }} animate={heroVisible ? { opacity: 1, y: 0 } : {}} transition={{ duration: 0.6, delay: 1.1 }} className="flex items-center gap-4">
               <div className="flex -space-x-2.5">
-                {['bg-gradient-to-br from-blue-400 to-indigo-500', 'bg-gradient-to-br from-emerald-400 to-teal-500', 'bg-gradient-to-br from-purple-400 to-pink-500', 'bg-gradient-to-br from-amber-400 to-orange-500'].map((bg, i) => (
+                {['bg-gradient-to-br from-blue-400 to-indigo-500', 'bg-gradient-to-br from-emerald-400 to-teal-500', 'bg-gradient-to-br from-blue-400 to-indigo-500', 'bg-gradient-to-br from-amber-400 to-orange-500'].map((bg, i) => (
                   <div key={i} className={`w-8 h-8 rounded-full border-2 border-[#08080d] ${bg} flex items-center justify-center`}>
                     <span className="text-[10px] font-bold text-white">{['MG', 'CS', 'LS', 'JP'][i]}</span>
                   </div>
@@ -310,7 +310,7 @@ function HeroSection() {
 
           {/* Bento Grid - Responsive */}
           <motion.div initial={{ opacity: 0, x: 40, scale: 0.95 }} animate={heroVisible ? { opacity: 1, x: 0, scale: 1 } : {}} transition={{ duration: 0.8, delay: 0.3 }} className="relative">
-            <div className="absolute -inset-8 bg-gradient-to-br from-[#4D7CFF]/10 via-transparent to-purple-600/10 rounded-[2rem] blur-2xl pointer-events-none" />
+            <div className="absolute -inset-8 bg-gradient-to-br from-[#4D7CFF]/10 via-transparent to-blue-700/10 rounded-[2rem] blur-2xl pointer-events-none" />
             <div className="relative grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 lg:grid-rows-5 gap-3 lg:min-h-[480px]">
               {/* Revenue card */}
               <div className="lg:col-span-3 lg:row-span-2 rounded-2xl border border-white/[0.10] bg-white/[0.05] backdrop-blur-md p-5 flex flex-col justify-between overflow-hidden group hover:border-white/[0.20] transition-all duration-500 relative">
@@ -360,7 +360,7 @@ function HeroSection() {
               {/* Mini chart - desktop only */}
               <div className="hidden lg:flex lg:col-span-2 lg:row-span-2 rounded-2xl border border-white/[0.10] bg-white/[0.05] backdrop-blur-md p-4 flex-col justify-between overflow-hidden hover:border-white/[0.20] transition-all duration-500">
                 <div><p className="text-[10px] text-white/30 uppercase tracking-wider font-medium">Semana</p><p className="text-xs text-white/50 mt-0.5">Ingresos</p></div>
-                <div className="flex-1 mt-3"><ResponsiveContainer width="100%" height="100%"><BarChart data={salesData} barSize={6}><Bar dataKey="ventas" fill="#A78BFA" radius={[3, 3, 0, 0]} opacity={0.6} /></BarChart></ResponsiveContainer></div>
+                <div className="flex-1 mt-3"><ResponsiveContainer width="100%" height="100%"><BarChart data={salesData} barSize={6}><Bar dataKey="ventas" fill="#60A5FA" radius={[3, 3, 0, 0]} opacity={0.6} /></BarChart></ResponsiveContainer></div>
               </div>
 
               {/* Quick stat - desktop only */}
@@ -374,7 +374,7 @@ function HeroSection() {
             <div className="absolute -left-4 top-0 bottom-0 w-64 pointer-events-none hidden lg:block">
               {notifs.includes(1) && (<div className="absolute top-12 -left-2" style={{ animation: 'slide-in-notification 0.5s ease-out forwards' }}><div className="flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl bg-[#0d0d14]/90 border border-emerald-500/15 backdrop-blur-xl shadow-2xl"><div className="w-7 h-7 rounded-lg bg-emerald-500/15 flex items-center justify-center flex-shrink-0"><ShoppingCart className="w-3.5 h-3.5 text-emerald-400" /></div><div><p className="text-[10px] text-emerald-400/70 font-medium">Nuevo pedido</p><p className="text-xs text-white/70 font-medium">ORD-00042 · $18.600</p></div></div></div>)}
               {notifs.includes(2) && (<div className="absolute top-32 -left-6" style={{ animation: 'slide-in-notification 0.5s ease-out forwards' }}><div className="flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl bg-[#0d0d14]/90 border border-[#4D7CFF]/15 backdrop-blur-xl shadow-2xl"><div className="w-7 h-7 rounded-lg bg-[#4D7CFF]/15 flex items-center justify-center flex-shrink-0"><CreditCard className="w-3.5 h-3.5 text-[#4D7CFF]" /></div><div><p className="text-[10px] text-[#4D7CFF]/70 font-medium">Pago recibido</p><p className="text-xs text-white/70 font-medium">MercadoPago · $12.400</p></div></div></div>)}
-              {notifs.includes(3) && (<div className="absolute top-52 -left-3" style={{ animation: 'slide-in-notification 0.5s ease-out forwards' }}><div className="flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl bg-[#0d0d14]/90 border border-purple-500/15 backdrop-blur-xl shadow-2xl"><div className="w-7 h-7 rounded-lg bg-purple-500/15 flex items-center justify-center flex-shrink-0"><Users className="w-3.5 h-3.5 text-purple-400" /></div><div><p className="text-[10px] text-purple-400/70 font-medium">Cliente nuevo</p><p className="text-xs text-white/70 font-medium">Laura Méndez registrada</p></div></div></div>)}
+              {notifs.includes(3) && (<div className="absolute top-52 -left-3" style={{ animation: 'slide-in-notification 0.5s ease-out forwards' }}><div className="flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl bg-[#0d0d14]/90 border border-blue-500/15 backdrop-blur-xl shadow-2xl"><div className="w-7 h-7 rounded-lg bg-blue-500/15 flex items-center justify-center flex-shrink-0"><Users className="w-3.5 h-3.5 text-blue-400" /></div><div><p className="text-[10px] text-blue-400/70 font-medium">Cliente nuevo</p><p className="text-xs text-white/70 font-medium">Laura Méndez registrada</p></div></div></div>)}
             </div>
           </motion.div>
         </div>
@@ -401,7 +401,7 @@ function StatsBar() {
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-8">
           {stats.map((s, i) => (
             <motion.div key={i} initial={{ opacity: 0, y: 20 }} animate={isInView ? { opacity: 1, y: 0 } : {}} transition={{ duration: 0.5, delay: i * 0.1 }} className="text-center">
-              <div className="text-3xl sm:text-4xl font-bold bg-gradient-to-r from-[#00FFD1] via-[#4D7CFF] to-[#8B5CF6] bg-clip-text text-transparent mb-2">{s.value}</div>
+              <div className="text-3xl sm:text-4xl font-bold bg-gradient-to-r from-[#60A5FA] via-[#4D7CFF] to-[#2563EB] bg-clip-text text-transparent mb-2">{s.value}</div>
               <p className="text-sm text-white/40">{s.label}</p>
             </motion.div>
           ))}
@@ -422,8 +422,8 @@ function FeatureCard({ f, index }: { f: typeof features[0]; index: number }) {
   }, []);
 
   return (
-    <motion.div ref={cardRef} initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: '-40px' }} transition={{ duration: 0.5, delay: index * 0.1 }} whileHover={{ y: -4, transition: { duration: 0.2 } }} onMouseMove={handleMouseMove} className="group relative rounded-2xl border border-white/[0.08] bg-white/[0.04] backdrop-blur-sm p-6 hover:border-[#00FFD1]/20 transition-all duration-500 hover:shadow-2xl">
-      <div className="pointer-events-none absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-500" style={{ background: 'radial-gradient(300px circle at var(--mouse-x, 50%) var(--mouse-y, 50%), rgba(0,255,209,0.08), transparent 60%)' }} />
+    <motion.div ref={cardRef} initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: '-40px' }} transition={{ duration: 0.5, delay: index * 0.1 }} whileHover={{ y: -4, transition: { duration: 0.2 } }} onMouseMove={handleMouseMove} className="group relative rounded-2xl border border-white/[0.08] bg-white/[0.04] backdrop-blur-sm p-6 hover:border-[#60A5FA]/20 transition-all duration-500 hover:shadow-2xl">
+      <div className="pointer-events-none absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-500" style={{ background: 'radial-gradient(300px circle at var(--mouse-x, 50%) var(--mouse-y, 50%), rgba(59,130,246,0.08), transparent 60%)' }} />
       <div className={`absolute inset-0 rounded-2xl bg-gradient-to-br ${f.color} opacity-0 group-hover:opacity-[0.03] transition-opacity duration-500`} />
       <motion.div initial={{ scale: 0 }} whileInView={{ scale: 1 }} viewport={{ once: true }} transition={{ type: 'spring', stiffness: 300, damping: 20, delay: index * 0.1 + 0.2 }} className={`relative w-12 h-12 rounded-xl ${f.bg} flex items-center justify-center mb-4`}>
         <f.icon className={`w-6 h-6 ${f.iconColor}`} />
@@ -478,7 +478,7 @@ function AIShowcase() {
             <div className="relative">
               <div className="absolute -inset-4 bg-gradient-to-br from-emerald-500/10 to-transparent rounded-3xl blur-xl" />
               <div className="relative rounded-2xl border border-white/[0.10] bg-[#0d0d14]/90 backdrop-blur-xl overflow-hidden">
-                <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-[#00FFD1]/40 to-transparent" />
+                <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-[#60A5FA]/40 to-transparent" />
                 <div className="flex items-center gap-3 px-5 py-4 border-b border-white/[0.06] bg-emerald-500/5">
                   <div className="w-10 h-10 rounded-full bg-emerald-500/20 flex items-center justify-center"><Bot className="w-5 h-5 text-emerald-400" /></div>
                   <div><p className="text-sm font-semibold text-white">Nexova AI</p><p className="text-xs text-emerald-400">En línea</p></div>
@@ -501,7 +501,7 @@ function AIShowcase() {
                   )}
                   {visibleMessages === 2 && (
                     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex gap-2 items-center pl-9">
-                      {[0, 1, 2].map((i) => <div key={i} className="w-1.5 h-1.5 rounded-full bg-[#00FFD1]/40" style={{ animation: 'pulse-dot 1.4s ease-in-out infinite', animationDelay: `${i * 200}ms` }} />)}
+                      {[0, 1, 2].map((i) => <div key={i} className="w-1.5 h-1.5 rounded-full bg-[#60A5FA]/40" style={{ animation: 'pulse-dot 1.4s ease-in-out infinite', animationDelay: `${i * 200}ms` }} />)}
                     </motion.div>
                   )}
                   {visibleMessages >= 3 && (
@@ -556,11 +556,11 @@ function AIShowcase() {
 function AnalyticsSection() {
   return (
     <section className="relative py-24 overflow-hidden">
-      <div className="absolute right-0 top-1/3 w-[500px] h-[500px] bg-purple-600/5 rounded-full blur-[120px]" />
+      <div className="absolute right-0 top-1/3 w-[500px] h-[500px] bg-blue-600/5 rounded-full blur-[120px]" />
       <div className="relative max-w-7xl mx-auto px-6">
         <div className="grid lg:grid-cols-2 gap-16 items-center">
           <div>
-            <Reveal><div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-purple-500/20 bg-purple-500/5 text-xs text-purple-400 font-medium mb-4"><BarChart3 className="w-3.5 h-3.5" />Analytics</div></Reveal>
+            <Reveal><div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-blue-500/20 bg-blue-500/5 text-xs text-blue-400 font-medium mb-4"><BarChart3 className="w-3.5 h-3.5" />Analytics</div></Reveal>
             <Reveal delay={100}><h2 className="text-3xl sm:text-4xl font-bold text-white mb-6">Decisiones basadas en datos reales</h2></Reveal>
             <Reveal delay={200}><p className="text-lg text-white/40 mb-8 leading-relaxed">Dashboard de métricas en tiempo real con insights generados por IA. Entendé qué vende más, quiénes son tus mejores clientes y dónde está la oportunidad de crecer.</p></Reveal>
             <div className="space-y-4">
@@ -571,7 +571,7 @@ function AnalyticsSection() {
                 { icon: FileText, text: 'Facturación electrónica ARCA/AFIP integrada' },
               ].map((item, i) => (
                 <Reveal key={i} delay={300 + i * 80}>
-                  <div className="flex items-center gap-3 group"><div className="w-9 h-9 rounded-xl bg-purple-500/10 flex items-center justify-center group-hover:bg-purple-500/20 transition-colors"><item.icon className="w-4.5 h-4.5 text-purple-400" /></div><span className="text-sm text-white/60 group-hover:text-white/80 transition-colors">{item.text}</span></div>
+                  <div className="flex items-center gap-3 group"><div className="w-9 h-9 rounded-xl bg-blue-500/10 flex items-center justify-center group-hover:bg-blue-500/20 transition-colors"><item.icon className="w-4.5 h-4.5 text-blue-400" /></div><span className="text-sm text-white/60 group-hover:text-white/80 transition-colors">{item.text}</span></div>
                 </Reveal>
               ))}
             </div>
@@ -582,7 +582,7 @@ function AnalyticsSection() {
               <div className="rounded-2xl border border-white/[0.12] bg-white/[0.04] backdrop-blur-sm p-5">
                 <div className="flex items-center justify-between mb-4">
                   <div><p className="text-sm font-medium text-white">Crecimiento mensual</p><p className="text-xs text-white/30">Comparado con el período anterior</p></div>
-                  <div className="flex items-center gap-4 text-xs"><span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-[#00FFD1]" /><span className="text-white/40">Actual</span></span><span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-white/10" /><span className="text-white/40">Anterior</span></span></div>
+                  <div className="flex items-center gap-4 text-xs"><span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-[#60A5FA]" /><span className="text-white/40">Actual</span></span><span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-white/10" /><span className="text-white/40">Anterior</span></span></div>
                 </div>
                 <div className="h-52">
                   <ResponsiveContainer width="100%" height="100%">
@@ -592,7 +592,7 @@ function AnalyticsSection() {
                       <YAxis stroke="rgba(255,255,255,0.2)" tick={{ fontSize: 12 }} tickFormatter={(v) => `${(v / 1000000).toFixed(1)}M`} />
                       <Tooltip contentStyle={{ background: '#1a1a2e', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', fontSize: '13px' }} labelStyle={{ color: 'rgba(255,255,255,0.5)' }} itemStyle={{ color: 'rgba(255,255,255,0.8)' }} formatter={(value) => [`$${(Number(value) / 100).toLocaleString('es-AR')}`, '']} />
                       <Bar dataKey="anterior" fill="rgba(255,255,255,0.06)" radius={[6, 6, 0, 0]} />
-                      <Bar dataKey="actual" fill="#00FFD1" radius={[6, 6, 0, 0]} />
+                      <Bar dataKey="actual" fill="#60A5FA" radius={[6, 6, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -610,7 +610,7 @@ function AnalyticsSection() {
                 </div>
 
                 <div className="rounded-2xl border border-white/[0.12] bg-white/[0.04] backdrop-blur-sm p-5 flex flex-col justify-between">
-                  <div><p className="text-sm font-medium text-white mb-1">Insight IA</p><div className="flex items-center gap-1 mb-3"><Sparkles className="w-3 h-3 text-purple-400" /><span className="text-[11px] text-purple-400 font-medium">Generado automáticamente</span></div></div>
+                  <div><p className="text-sm font-medium text-white mb-1">Insight IA</p><div className="flex items-center gap-1 mb-3"><Sparkles className="w-3 h-3 text-blue-400" /><span className="text-[11px] text-blue-400 font-medium">Generado automáticamente</span></div></div>
                   <div className="space-y-3">
                     <div className="px-3 py-2 rounded-lg bg-emerald-500/5 border border-emerald-500/10"><p className="text-[11px] text-emerald-400/70 mb-0.5">Oportunidad</p><p className="text-xs text-white/60">Los sábados representan un 22% de las ventas semanales. Considerá ampliar stock.</p></div>
                     <div className="px-3 py-2 rounded-lg bg-amber-500/5 border border-amber-500/10"><p className="text-[11px] text-amber-400/70 mb-0.5">Riesgo</p><p className="text-xs text-white/60">3 productos con stock bajo necesitan reposición esta semana.</p></div>
@@ -639,8 +639,8 @@ function SolutionsSection() {
         </Reveal>
         <div className="grid md:grid-cols-3 gap-6">
           {solutions.map((s, i) => (
-            <motion.div key={i} initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: '-40px' }} transition={{ duration: 0.5, delay: i * 0.12 }} whileHover={{ y: -4, transition: { duration: 0.2 } }} className="group relative h-full rounded-2xl border border-white/[0.08] bg-white/[0.04] backdrop-blur-sm p-7 hover:border-[#00FFD1]/20 transition-all duration-500">
-              <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-[#00FFD1]/[0.04] to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+            <motion.div key={i} initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: '-40px' }} transition={{ duration: 0.5, delay: i * 0.12 }} whileHover={{ y: -4, transition: { duration: 0.2 } }} className="group relative h-full rounded-2xl border border-white/[0.08] bg-white/[0.04] backdrop-blur-sm p-7 hover:border-[#60A5FA]/20 transition-all duration-500">
+              <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-[#60A5FA]/[0.04] to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
               <div className="relative">
                 <div className="w-14 h-14 rounded-2xl bg-[#4D7CFF]/10 flex items-center justify-center mb-5"><s.icon className="w-7 h-7 text-[#4D7CFF]" /></div>
                 <h3 className="text-xl font-semibold text-white mb-3">{s.title}</h3>
@@ -669,15 +669,15 @@ function PricingSection() {
         </Reveal>
         <div className="grid md:grid-cols-3 gap-6 max-w-5xl mx-auto">
           {plans.map((p, i) => (
-            <motion.div key={i} initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: '-40px' }} transition={{ duration: 0.5, delay: i * 0.12 }} whileHover={{ y: -6, boxShadow: p.highlighted ? '0 25px 60px -12px rgba(0,255,209,0.2), 0 0 40px rgba(139,92,246,0.15)' : '0 25px 60px -12px rgba(0,0,0,0.3)', transition: { duration: 0.2 } }} className={`relative h-full rounded-2xl border p-7 transition-colors duration-500 flex flex-col ${p.highlighted ? 'gradient-border border-transparent bg-gradient-to-b from-white/[0.06] to-transparent shadow-2xl shadow-[#8B5CF6]/10' : 'border-white/[0.08] bg-white/[0.04] hover:border-white/[0.15]'}`}>
-              {p.highlighted && <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-4 py-1 rounded-full bg-gradient-to-r from-[#00FFD1] to-[#4D7CFF] text-xs font-semibold text-white shadow-lg shadow-[#00FFD1]/30">Más popular</div>}
+            <motion.div key={i} initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: '-40px' }} transition={{ duration: 0.5, delay: i * 0.12 }} whileHover={{ y: -6, boxShadow: p.highlighted ? '0 25px 60px -12px rgba(59,130,246,0.2), 0 0 40px rgba(37,99,235,0.15)' : '0 25px 60px -12px rgba(0,0,0,0.3)', transition: { duration: 0.2 } }} className={`relative h-full rounded-2xl border p-7 transition-colors duration-500 flex flex-col ${p.highlighted ? 'gradient-border border-transparent bg-gradient-to-b from-white/[0.06] to-transparent shadow-2xl shadow-[#2563EB]/10' : 'border-white/[0.08] bg-white/[0.04] hover:border-white/[0.15]'}`}>
+              {p.highlighted && <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-4 py-1 rounded-full bg-gradient-to-r from-[#60A5FA] to-[#4D7CFF] text-xs font-semibold text-white shadow-lg shadow-[#60A5FA]/30">Más popular</div>}
               <div className="mb-6">
                 <h3 className="text-lg font-semibold text-white mb-1">{p.name}</h3>
                 <p className="text-sm text-white/30 mb-4">{p.description}</p>
-                <div className="flex items-baseline gap-1"><span className="text-sm text-white/40">USD</span><span className={`text-4xl font-bold ${p.highlighted ? 'bg-gradient-to-r from-[#00FFD1] to-[#8B5CF6] bg-clip-text text-transparent' : 'text-white'}`}>{p.price}</span><span className="text-sm text-white/40">{p.period}</span></div>
+                <div className="flex items-baseline gap-1"><span className="text-sm text-white/40">USD</span><span className={`text-4xl font-bold ${p.highlighted ? 'bg-gradient-to-r from-[#60A5FA] to-[#2563EB] bg-clip-text text-transparent' : 'text-white'}`}>{p.price}</span><span className="text-sm text-white/40">{p.period}</span></div>
               </div>
               <ul className="space-y-3 mb-8 flex-1">{p.features.map((f, j) => <li key={j} className="flex items-start gap-2.5 text-sm text-white/50"><Check className={`w-4 h-4 mt-0.5 flex-shrink-0 ${p.highlighted ? 'text-[#4D7CFF]' : 'text-white/20'}`} />{f}</li>)}</ul>
-              <a href={`/cart?plan=${encodeURIComponent(p.code)}`} className={`group relative w-full py-3 rounded-xl text-sm font-medium transition-all duration-300 flex items-center justify-center gap-2 overflow-hidden ${p.highlighted ? 'text-white shadow-lg shadow-[#00FFD1]/20 hover:shadow-[#00FFD1]/35' : 'border border-white/10 text-white/60 hover:text-white hover:border-white/20 hover:bg-white/[0.03]'}`} style={p.highlighted ? { background: 'linear-gradient(90deg, #00FFD1, #4D7CFF, #8B5CF6)', backgroundSize: '200% 100%', animation: 'gradient-shift 4s ease-in-out infinite' } : undefined}>
+              <a href={`/cart?plan=${encodeURIComponent(p.code)}`} className={`group relative w-full py-3 rounded-xl text-sm font-medium transition-all duration-300 flex items-center justify-center gap-2 overflow-hidden ${p.highlighted ? 'text-white shadow-lg shadow-[#60A5FA]/20 hover:shadow-[#60A5FA]/35' : 'border border-white/10 text-white/60 hover:text-white hover:border-white/20 hover:bg-white/[0.03]'}`} style={p.highlighted ? { background: 'linear-gradient(90deg, #60A5FA, #4D7CFF, #2563EB)', backgroundSize: '200% 100%', animation: 'gradient-shift 4s ease-in-out infinite' } : undefined}>
                 <div className="absolute inset-0 -translate-x-full group-hover:translate-x-full transition-transform duration-700 bg-gradient-to-r from-transparent via-white/20 to-transparent" />
                 <span className="relative">{p.cta}</span>
                 <ArrowRight className="relative w-4 h-4 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300" />
@@ -714,7 +714,7 @@ function TestimonialsSection() {
               <div className="flex gap-0.5 mb-4">{Array.from({ length: t.stars }).map((_, j) => <Star key={j} className="w-4 h-4 text-amber-400 fill-amber-400" />)}</div>
               <p className="text-sm text-white/50 leading-relaxed mb-5 italic">"{t.text}"</p>
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#4D7CFF]/30 to-purple-500/30 flex items-center justify-center"><span className="text-sm font-semibold text-white">{t.name[0]}</span></div>
+                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#4D7CFF]/30 to-[#2563EB]/30 flex items-center justify-center"><span className="text-sm font-semibold text-white">{t.name[0]}</span></div>
                 <div><p className="text-sm font-medium text-white">{t.name}</p><p className="text-xs text-white/30">{t.role}</p></div>
               </div>
             </div>
@@ -733,7 +733,7 @@ function TestimonialsSection() {
               <div className="flex gap-0.5 mb-4">{Array.from({ length: t.stars }).map((_, j) => <Star key={j} className="w-4 h-4 text-amber-400 fill-amber-400" />)}</div>
               <p className="text-sm text-white/50 leading-relaxed mb-5 italic">"{t.text}"</p>
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#4D7CFF]/30 to-purple-500/30 flex items-center justify-center"><span className="text-sm font-semibold text-white">{t.name[0]}</span></div>
+                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#4D7CFF]/30 to-[#2563EB]/30 flex items-center justify-center"><span className="text-sm font-semibold text-white">{t.name[0]}</span></div>
                 <div><p className="text-sm font-medium text-white">{t.name}</p><p className="text-xs text-white/30">{t.role}</p></div>
               </div>
             </div>
@@ -757,11 +757,11 @@ function FAQSection() {
         </Reveal>
         <div className="space-y-3">
           {faqs.map((faq, i) => (
-            <motion.div key={i} initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: '-20px' }} transition={{ duration: 0.4, delay: i * 0.06 }} className={`rounded-2xl border transition-colors duration-300 overflow-hidden relative ${openIndex === i ? 'border-[#00FFD1]/20 bg-[#00FFD1]/[0.03]' : 'border-white/[0.08] bg-white/[0.03] hover:border-white/[0.12]'}`}>
-              {openIndex === i && <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-gradient-to-b from-[#00FFD1] via-[#4D7CFF] to-[#8B5CF6]" />}
+            <motion.div key={i} initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: '-20px' }} transition={{ duration: 0.4, delay: i * 0.06 }} className={`rounded-2xl border transition-colors duration-300 overflow-hidden relative ${openIndex === i ? 'border-[#60A5FA]/20 bg-[#60A5FA]/[0.03]' : 'border-white/[0.08] bg-white/[0.03] hover:border-white/[0.12]'}`}>
+              {openIndex === i && <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-gradient-to-b from-[#60A5FA] via-[#4D7CFF] to-[#2563EB]" />}
               <button className="w-full flex items-center justify-between p-5 text-left" onClick={() => setOpenIndex(openIndex === i ? null : i)}>
                 <span className="text-sm font-medium text-white pr-4">{faq.q}</span>
-                <motion.div animate={{ rotate: openIndex === i ? 180 : 0 }} transition={{ duration: 0.3 }}><ChevronDown className={`w-5 h-5 flex-shrink-0 transition-colors duration-300 ${openIndex === i ? 'text-[#00FFD1]' : 'text-white/30'}`} /></motion.div>
+                <motion.div animate={{ rotate: openIndex === i ? 180 : 0 }} transition={{ duration: 0.3 }}><ChevronDown className={`w-5 h-5 flex-shrink-0 transition-colors duration-300 ${openIndex === i ? 'text-[#60A5FA]' : 'text-white/30'}`} /></motion.div>
               </button>
               <AnimatePresence initial={false}>
                 {openIndex === i && (
@@ -782,22 +782,17 @@ function CTASection() {
   return (
     <section className="relative py-24 overflow-hidden">
       <div className="absolute inset-0">
-        <div className="absolute w-[600px] h-[600px] bg-[#00FFD1]/[0.30] rounded-full blur-[140px] top-[-20%] left-[10%]" style={{ animation: 'float 12s ease-in-out infinite' }} />
-        <div className="absolute w-[500px] h-[500px] bg-[#8B5CF6]/[0.35] rounded-full blur-[130px] bottom-[-10%] right-[10%]" style={{ animation: 'float 10s ease-in-out infinite reverse' }} />
-        <div className="absolute w-[400px] h-[400px] bg-[#EC4899]/[0.20] rounded-full blur-[120px] top-[30%] right-[30%]" style={{ animation: 'float 14s ease-in-out infinite', animationDelay: '3s' }} />
-        <div className="absolute top-1/4 left-1/4 w-2 h-2 rounded-full bg-[#00FFD1]/40 blur-[1px]" style={{ animation: 'float 8s ease-in-out infinite' }} />
-        <div className="absolute top-1/3 right-1/3 w-2 h-2 rounded-full bg-white/25 blur-[1px]" style={{ animation: 'float 10s ease-in-out infinite reverse' }} />
-        <div className="absolute bottom-1/3 left-1/3 w-2.5 h-2.5 rounded-full bg-[#4D7CFF]/40 blur-[1px]" style={{ animation: 'float 12s ease-in-out infinite', animationDelay: '2s' }} />
-        <div className="absolute top-1/2 right-1/4 w-1.5 h-1.5 rounded-full bg-[#EC4899]/35 blur-[1px]" style={{ animation: 'float 9s ease-in-out infinite', animationDelay: '4s' }} />
-        <div className="absolute top-2/3 left-[15%] w-2 h-2 rounded-full bg-[#8B5CF6]/35 blur-[1px]" style={{ animation: 'float 11s ease-in-out infinite', animationDelay: '1s' }} />
-        <div className="absolute top-[20%] right-[15%] w-1.5 h-1.5 rounded-full bg-[#00FFD1]/30 blur-[1px]" style={{ animation: 'float 7s ease-in-out infinite', animationDelay: '3s' }} />
+        <div className="absolute w-[700px] h-[700px] bg-[#3B82F6]/20 rounded-full blur-[180px] top-[-25%] left-[5%]" style={{ animation: 'float 14s ease-in-out infinite' }} />
+        <div className="absolute w-[500px] h-[500px] bg-[#2563EB]/20 rounded-full blur-[160px] bottom-[-15%] right-[5%]" style={{ animation: 'float 12s ease-in-out infinite reverse' }} />
+        <div className="absolute inset-0 opacity-[0.03]" style={{ backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.5) 1px, transparent 1px)', backgroundSize: '32px 32px' }} />
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_0%,#08080d_70%)]" />
       </div>
       <div className="relative max-w-4xl mx-auto px-6 text-center">
         <Reveal><h2 className="text-3xl sm:text-4xl lg:text-5xl font-bold text-white mb-6">Llevá tu negocio al siguiente nivel</h2></Reveal>
         <Reveal delay={100}><p className="text-lg text-white/50 mb-10 max-w-2xl mx-auto">Sumate a los comercios que ya usan inteligencia artificial para vender más, atender mejor y crecer sin límites.</p></Reveal>
         <Reveal delay={200}>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <a href="/cart?plan=standard" className="group relative flex items-center gap-2 text-white font-medium px-8 py-4 rounded-2xl text-base transition-all duration-300 shadow-[0_0_50px_rgba(0,255,209,0.3)] hover:shadow-[0_0_70px_rgba(0,255,209,0.4)] hover:-translate-y-0.5 overflow-hidden" style={{ background: 'linear-gradient(90deg, #00FFD1, #4D7CFF, #8B5CF6)', backgroundSize: '200% 100%', animation: 'gradient-shift 4s ease-in-out infinite' }}>
+            <a href="/cart?plan=standard" className="group relative flex items-center gap-2 text-white font-medium px-8 py-4 rounded-2xl text-base transition-all duration-300 shadow-[0_0_50px_rgba(59,130,246,0.3)] hover:shadow-[0_0_70px_rgba(59,130,246,0.4)] hover:-translate-y-0.5 overflow-hidden" style={{ background: 'linear-gradient(90deg, #60A5FA, #4D7CFF, #2563EB)', backgroundSize: '200% 100%', animation: 'gradient-shift 4s ease-in-out infinite' }}>
               <div className="absolute inset-0 -translate-x-full group-hover:translate-x-full transition-transform duration-700 bg-gradient-to-r from-transparent via-white/25 to-transparent" />
               <span className="relative">Empezar ahora — Es gratis</span>
               <ArrowRight className="relative w-4 h-4 group-hover:translate-x-1 transition-transform" />

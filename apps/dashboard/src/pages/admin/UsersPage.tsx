@@ -474,21 +474,21 @@ export default function UsersPage() {
               </SheetHeader>
 
               {/* Tabs */}
-              <div className="flex gap-1 p-1 bg-secondary/50 rounded-xl mx-6 mt-2">
+              <div className="flex gap-1 p-1 bg-secondary/50 rounded-xl mx-4 sm:mx-6 mt-2">
                 {sheetTabs.map((tab) => {
                   const Icon = tab.icon;
                   return (
                     <button
                       key={tab.id}
                       onClick={() => setActiveTab(tab.id)}
-                      className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                      className={`flex-1 flex items-center justify-center gap-1.5 px-2 sm:px-3 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all ${
                         activeTab === tab.id
                           ? 'bg-background text-foreground shadow-sm'
                           : 'text-muted-foreground hover:text-foreground'
                       }`}
                     >
-                      <Icon className="w-4 h-4" />
-                      <span>{tab.label}</span>
+                      <Icon className="w-4 h-4 flex-shrink-0" />
+                      <span className="truncate">{tab.label}</span>
                       {tab.count !== undefined && tab.count > 0 && (
                         <span className={`text-xs px-1.5 py-0.5 rounded-full ${
                           activeTab === tab.id ? 'bg-primary/15 text-primary' : 'bg-muted text-muted-foreground'
@@ -502,10 +502,10 @@ export default function UsersPage() {
               </div>
 
               {/* Tab content */}
-              <div className="flex-1 overflow-y-auto px-6 py-4">
+              <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4">
                 {activeTab === 'info' && (
                   <div className="space-y-4">
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div className="p-3 rounded-xl bg-secondary/50">
                         <div className="flex items-center gap-2 mb-1">
                           <Mail className="w-3.5 h-3.5 text-muted-foreground" />

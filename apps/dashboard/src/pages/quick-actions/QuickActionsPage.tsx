@@ -280,8 +280,8 @@ export default function QuickActionsPage() {
   );
 
   return (
-    <div className="h-full overflow-y-auto scrollbar-hide p-6">
-      <AnimatedPage className="max-w-4xl mx-auto space-y-6">
+    <div className="h-full overflow-y-auto scrollbar-hide p-4 md:p-6">
+      <AnimatedPage className="max-w-4xl mx-auto space-y-4 md:space-y-6">
         {/* Header */}
         <div>
           <h1 className="text-2xl font-bold text-foreground">Quick Actions</h1>
