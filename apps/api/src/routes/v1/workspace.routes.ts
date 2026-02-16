@@ -918,14 +918,7 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
               url: webhookUrl,
               byEvents: true,
               base64: false,
-              events: [
-                'messages.upsert',
-                'connection.update',
-                'qrcode.updated',
-                'MESSAGES_UPSERT',
-                'CONNECTION_UPDATE',
-                'QRCODE_UPDATED',
-              ],
+              events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'],
               headers: {
                 authorization: '',
                 'Content-Type': 'application/json',
@@ -953,14 +946,7 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
           url: webhookUrl,
           byEvents: true,
           base64: false,
-          events: [
-            'messages.upsert',
-            'connection.update',
-            'qrcode.updated',
-            'MESSAGES_UPSERT',
-            'CONNECTION_UPDATE',
-            'QRCODE_UPDATED',
-          ],
+          events: ['MESSAGES_UPSERT', 'CONNECTION_UPDATE', 'QRCODE_UPDATED'],
         });
       } catch (err) {
         const { statusCode, message } = evolutionErrorToMessage(err);
