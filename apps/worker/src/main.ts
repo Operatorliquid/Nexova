@@ -25,8 +25,8 @@ const REDIS_PORT = parseInt(process.env.REDIS_PORT || '6379', 10);
 const REDIS_PASSWORD = process.env.REDIS_PASSWORD || undefined;
 const REALTIME_CHANNEL = process.env.REALTIME_CHANNEL || 'nexova:realtime';
 const EVOLUTION_INTERACTIVE_TEXT_BACKUP =
-  (process.env.EVOLUTION_INTERACTIVE_TEXT_BACKUP || 'true').toLowerCase() === 'true';
-const DEPLOY_STAMP = '2026-02-16.worker.6';
+  (process.env.EVOLUTION_INTERACTIVE_TEXT_BACKUP || 'false').toLowerCase() === 'true';
+const DEPLOY_STAMP = '2026-02-16.worker.7';
 
 const connection = {
   host: REDIS_HOST,
@@ -274,17 +274,37 @@ async function processSendJob(job: Job<MessageSendPayload>): Promise<void> {
       try {
         interactiveBackupText = renderInteractiveFallbackText(content);
         if (content.buttons && content.buttons.length > 0) {
-          const payload = {
-            body: content.text || '',
-            buttons: content.buttons.map((button) => ({
-              ...button,
-              title: truncateButtonTitle(button.title, 20),
-            })),
-            ...(content.header ? { header: content.header } : {}),
-            ...(content.footer ? { footer: content.footer } : {}),
-          };
-          result = await client.sendInteractiveButtons(normalizedTo, payload);
-          usageMessageType = 'interactive-buttons';
+          if (provider === 'evolution') {
+            const payload = {
+              body: truncateText(content.text || '', 1024),
+              buttonText: truncateText(content.buttonText || 'Ver opciones', 20),
+              sections: [
+                {
+                  ...(content.header ? { title: truncateText(content.header, 24) } : { title: 'Opciones' }),
+                  rows: content.buttons.map((button) => ({
+                    id: button.id,
+                    title: truncateText(button.title, 24),
+                  })),
+                },
+              ],
+              ...(content.header ? { header: content.header } : {}),
+              ...(content.footer ? { footer: content.footer } : {}),
+            };
+            result = await client.sendInteractiveList(normalizedTo, payload);
+            usageMessageType = 'interactive-list';
+          } else {
+            const payload = {
+              body: content.text || '',
+              buttons: content.buttons.map((button) => ({
+                ...button,
+                title: truncateButtonTitle(button.title, 20),
+              })),
+              ...(content.header ? { header: content.header } : {}),
+              ...(content.footer ? { footer: content.footer } : {}),
+            };
+            result = await client.sendInteractiveButtons(normalizedTo, payload);
+            usageMessageType = 'interactive-buttons';
+          }
         } else if (content.listSections && content.listSections.length > 0) {
           const payload = {
             body: truncateText(content.text || '', 1024),

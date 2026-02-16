@@ -615,7 +615,7 @@ export class AgentWorker {
           const isWhatsAppChannel = (channelType || 'whatsapp') === 'whatsapp';
           const effectiveCoalesceWindowMs =
             !isOwner && isWhatsAppChannel
-              ? Math.max(2000, runtimeSettings.coalesceWindowMs)
+              ? Math.max(3500, runtimeSettings.coalesceWindowMs)
               : runtimeSettings.coalesceWindowMs;
           const shouldCoalesce =
             isWhatsAppChannel && (runtimeSettings.coalesceEnabled || !isOwner) && effectiveCoalesceWindowMs > 0;

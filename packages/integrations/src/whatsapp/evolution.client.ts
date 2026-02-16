@@ -69,6 +69,14 @@ export interface EvolutionInteractiveButtonsPayload {
   footer?: string;
 }
 
+function parseBool(value: string | undefined, fallback: boolean): boolean {
+  if (value == null) return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return fallback;
+}
+
 function stripTrailingSlash(url: string): string {
   const trimmed = (url || '').trim();
   if (!trimmed) return '';
@@ -243,6 +251,29 @@ export class EvolutionClient extends EvolutionAdminClient {
 
   async sendInteractiveButtons(to: string, payload: EvolutionInteractiveButtonsPayload): Promise<EvolutionSendResponse> {
     const number = toDigits(to);
+    const fallbackListPayload: EvolutionInteractiveListPayload = {
+      body: payload.body,
+      buttonText: 'Elegir opción',
+      sections: [
+        {
+          title: payload.header || 'Opciones',
+          rows: payload.buttons.map((button, index) => ({
+            id: button.id,
+            title: (button.title || `Opción ${index + 1}`).trim(),
+          })),
+        },
+      ],
+      ...(payload.header ? { header: payload.header } : {}),
+      ...(payload.footer ? { footer: payload.footer } : {}),
+    };
+
+    // On Baileys (QR mode), native quick-reply buttons are unstable across versions.
+    // Use ListMessage by default and keep native buttons behind an explicit opt-in flag.
+    const useNativeButtons = parseBool(process.env.EVOLUTION_ENABLE_NATIVE_BUTTONS, false);
+    if (!useNativeButtons) {
+      return this.sendInteractiveList(to, fallbackListPayload);
+    }
+
     const title = (payload.header || 'Nexova').trim();
     const description = (payload.body || '').trim();
     const footer = (payload.footer || '').trim();
@@ -272,20 +303,7 @@ export class EvolutionClient extends EvolutionAdminClient {
         raw: data,
       };
     } catch {
-      // Fallback to list for builds where sendButtons is not supported.
-      const asList: EvolutionInteractiveListPayload = {
-        body: payload.body,
-        buttonText: payload.footer || 'Ver opciones',
-        sections: [
-          {
-            title: payload.header || 'Opciones',
-            rows: payload.buttons.map((b) => ({ id: b.id, title: b.title })),
-          },
-        ],
-        ...(payload.header ? { header: payload.header } : {}),
-        ...(payload.footer ? { footer: payload.footer } : {}),
-      };
-      return this.sendInteractiveList(to, asList);
+      return this.sendInteractiveList(to, fallbackListPayload);
     }
   }
 
