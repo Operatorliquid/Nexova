@@ -242,21 +242,51 @@ export class EvolutionClient extends EvolutionAdminClient {
   }
 
   async sendInteractiveButtons(to: string, payload: EvolutionInteractiveButtonsPayload): Promise<EvolutionSendResponse> {
-    // Buttons are not reliable on the Baileys engine; we convert to a List message instead.
-    const asList: EvolutionInteractiveListPayload = {
-      body: payload.body,
-      buttonText: payload.footer || 'Ver opciones',
-      sections: [
-        {
-          title: payload.header || 'Opciones',
-          rows: payload.buttons.map((b) => ({ id: b.id, title: b.title })),
-        },
-      ],
-      ...(payload.header ? { header: payload.header } : {}),
-      ...(payload.footer ? { footer: payload.footer } : {}),
-    };
+    const number = toDigits(to);
+    const title = (payload.header || 'Nexova').trim();
+    const description = (payload.body || '').trim();
+    const footer = (payload.footer || '').trim();
 
-    return this.sendInteractiveList(to, asList);
+    try {
+      // Prefer native buttons first. Payload includes aliases because Evolution/Baileys
+      // builds differ in the expected button field names.
+      const data = await this.request<any>('POST', `/message/sendButtons/${encodeURIComponent(this.instanceName)}`, {
+        number,
+        title,
+        description,
+        footer,
+        buttons: payload.buttons.map((button) => ({
+          type: 'reply',
+          id: button.id,
+          buttonId: button.id,
+          title: (button.title || '').trim(),
+          displayText: (button.title || '').trim(),
+          buttonText: (button.title || '').trim(),
+        })),
+      });
+
+      return {
+        messageId: data?.key?.id || '',
+        status: data?.status || 'PENDING',
+        to: number,
+        raw: data,
+      };
+    } catch {
+      // Fallback to list for builds where sendButtons is not supported.
+      const asList: EvolutionInteractiveListPayload = {
+        body: payload.body,
+        buttonText: payload.footer || 'Ver opciones',
+        sections: [
+          {
+            title: payload.header || 'Opciones',
+            rows: payload.buttons.map((b) => ({ id: b.id, title: b.title })),
+          },
+        ],
+        ...(payload.header ? { header: payload.header } : {}),
+        ...(payload.footer ? { footer: payload.footer } : {}),
+      };
+      return this.sendInteractiveList(to, asList);
+    }
   }
 
   async sendInteractiveList(to: string, payload: EvolutionInteractiveListPayload): Promise<EvolutionSendResponse> {
