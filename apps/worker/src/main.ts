@@ -268,11 +268,45 @@ async function processSendJob(job: Job<MessageSendPayload>): Promise<void> {
         throw new Error(`Unsupported media type: ${content.mediaType}`);
       }
     } else if (messageType === 'interactive') {
-      // Evolution/Baileys can fail with interactive payloads on some builds.
-      // To keep delivery reliable, we always send a text fallback for interactive content.
-      const fallbackText = renderInteractiveFallbackText(content);
-      result = await client.sendText(normalizedTo, fallbackText);
-      usageMessageType = 'text';
+      try {
+        if (content.buttons && content.buttons.length > 0) {
+          const payload = {
+            body: content.text || '',
+            buttons: content.buttons.map((button) => ({
+              ...button,
+              title: truncateButtonTitle(button.title, 20),
+            })),
+            ...(content.header ? { header: content.header } : {}),
+            ...(content.footer ? { footer: content.footer } : {}),
+          };
+          result = await client.sendInteractiveButtons(normalizedTo, payload);
+          usageMessageType = 'interactive-buttons';
+        } else if (content.listSections && content.listSections.length > 0) {
+          const payload = {
+            body: truncateText(content.text || '', 1024),
+            buttonText: truncateText(content.buttonText || 'Ver opciones', 20),
+            sections: content.listSections.map((section) => ({
+              ...(section.title ? { title: truncateText(section.title, 24) } : {}),
+              rows: section.rows.map((row) => ({
+                id: row.id,
+                title: truncateText(row.title, 24),
+                ...(row.description ? { description: truncateText(row.description, 72) } : {}),
+              })),
+            })),
+            ...(content.header ? { header: content.header } : {}),
+            ...(content.footer ? { footer: content.footer } : {}),
+          };
+          result = await client.sendInteractiveList(normalizedTo, payload);
+          usageMessageType = 'interactive-list';
+        } else {
+          throw new Error('Interactive message requires buttons or listSections');
+        }
+      } catch (error) {
+        const fallbackText = renderInteractiveFallbackText(content);
+        console.warn(`[Worker] Evolution interactive send failed, falling back to text: ${error instanceof Error ? error.message : String(error)}`);
+        result = await client.sendText(normalizedTo, fallbackText);
+        usageMessageType = 'text';
+      }
     } else {
       throw new Error(`Unsupported message type: ${messageType}`);
     }

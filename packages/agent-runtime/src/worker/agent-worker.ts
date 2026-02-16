@@ -1282,7 +1282,12 @@ export class AgentWorker {
 
       const parseBool = (value: unknown, fallback: boolean): boolean => {
         if (typeof value === 'boolean') return value;
-        if (typeof value === 'string') return value.toLowerCase() === 'true';
+        if (typeof value === 'number') return value !== 0;
+        if (typeof value === 'string') {
+          const normalized = value.trim().toLowerCase();
+          if (['true', '1', 'yes', 'si', 'on'].includes(normalized)) return true;
+          if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+        }
         return fallback;
       };
       const parseNumber = (value: unknown, fallback: number): number => {
@@ -1297,9 +1302,16 @@ export class AgentWorker {
         return typeof value === 'string' && value.trim() ? value : fallback;
       };
 
+      const coalesceEnabled = parseBool(settings.agentCoalesceEnabled, base.coalesceEnabled);
+      let coalesceWindowMs = parseNumber(settings.agentCoalesceWindowMs, base.coalesceWindowMs);
+      if (coalesceEnabled && coalesceWindowMs <= 0) {
+        coalesceWindowMs = base.coalesceWindowMs;
+      }
+      coalesceWindowMs = Math.max(0, coalesceWindowMs);
+
       const resolved: AgentRuntimeSettings = {
-        coalesceEnabled: parseBool(settings.agentCoalesceEnabled, base.coalesceEnabled),
-        coalesceWindowMs: parseNumber(settings.agentCoalesceWindowMs, base.coalesceWindowMs),
+        coalesceEnabled,
+        coalesceWindowMs,
         coalesceMaxMessages: parseNumber(settings.agentCoalesceMaxMessages, base.coalesceMaxMessages),
         coalesceJoiner: parseString(settings.agentCoalesceJoiner, base.coalesceJoiner),
         sessionLockEnabled: parseBool(settings.agentSessionLockEnabled, base.sessionLockEnabled),
