@@ -660,27 +660,46 @@ export async function webhookRoutes(
       }
 
       if (event === 'CONNECTION_UPDATE') {
+        const rawState =
+          payload?.data?.state
+          || payload?.state
+          || payload?.instance?.state
+          || '';
+        const state = typeof rawState === 'string' ? rawState.trim().toLowerCase() : '';
+
         // Some Evolution builds include the QR payload in CONNECTION_UPDATE.
         const qr = extractEvolutionQrInfo(payload);
-        if (qr.qrCode || qr.qrDataUrl || qr.pairingCode) {
-          const currentCfg =
-            whatsappNumber.providerConfig && typeof whatsappNumber.providerConfig === 'object'
-              ? (whatsappNumber.providerConfig as Record<string, unknown>)
-              : {};
+        const currentCfg =
+          whatsappNumber.providerConfig && typeof whatsappNumber.providerConfig === 'object'
+            ? (whatsappNumber.providerConfig as Record<string, unknown>)
+            : {};
 
-          await app.prisma.whatsAppNumber.update({
-            where: { id: whatsappNumber.id },
-            data: {
-              providerConfig: {
-                ...currentCfg,
-                ...(qr.qrCode ? { qrCode: qr.qrCode } : {}),
-                ...(qr.qrDataUrl ? { qrDataUrl: qr.qrDataUrl } : {}),
-                ...(qr.pairingCode ? { pairingCode: qr.pairingCode } : {}),
-                qrUpdatedAt: new Date().toISOString(),
-              } as Prisma.InputJsonValue,
-            },
-          });
+        const updateData: Prisma.WhatsAppNumberUpdateInput = {
+          providerConfig: {
+            ...currentCfg,
+            ...(qr.qrCode ? { qrCode: qr.qrCode } : {}),
+            ...(qr.qrDataUrl ? { qrDataUrl: qr.qrDataUrl } : {}),
+            ...(qr.pairingCode ? { pairingCode: qr.pairingCode } : {}),
+            ...(qr.qrCode || qr.qrDataUrl || qr.pairingCode ? { qrUpdatedAt: new Date().toISOString() } : {}),
+          } as Prisma.InputJsonValue,
+          healthCheckedAt: new Date(),
+        };
+
+        if (state === 'open') {
+          updateData.isActive = true;
+          updateData.healthStatus = 'healthy';
+          updateData.status = 'assigned';
+          updateData.lastError = null;
+          updateData.lastErrorAt = null;
+        } else if (state) {
+          updateData.isActive = false;
+          updateData.healthStatus = state;
         }
+
+        await app.prisma.whatsAppNumber.update({
+          where: { id: whatsappNumber.id },
+          data: updateData,
+        });
 
         // We keep this endpoint lightweight. The workspace polls status via /whatsapp/evolution/status.
         return reply.send({ status: 'received', event: 'CONNECTION_UPDATE' });
@@ -693,6 +712,22 @@ export async function webhookRoutes(
       }
       if (messages.length === 0) {
         return reply.send({ status: 'ignored', reason: 'missing_message' });
+      }
+
+      // If we are receiving inbound user messages, the instance is connected.
+      // Mark number active so outbound send jobs can resolve this workspace number.
+      if (!whatsappNumber.isActive || whatsappNumber.healthStatus !== 'healthy') {
+        await app.prisma.whatsAppNumber.update({
+          where: { id: whatsappNumber.id },
+          data: {
+            isActive: true,
+            status: 'assigned',
+            healthStatus: 'healthy',
+            healthCheckedAt: new Date(),
+            lastError: null,
+            lastErrorAt: null,
+          },
+        });
       }
 
       let queued = 0;
