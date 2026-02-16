@@ -247,6 +247,16 @@ export class EvolutionClient extends EvolutionAdminClient {
     const description = (payload.body || '').trim();
     const buttonText = (payload.buttonText || 'Ver opciones').trim();
     const footerText = (payload.footer || '').trim();
+    const sections = payload.sections.map((section) => ({
+      title: (section.title || '').trim(),
+      rows: section.rows.map((row) => ({
+        title: (row.title || '').trim(),
+        description: (row.description || '').trim(),
+        // Evolution builds differ in expected field name (id vs rowId)
+        id: row.id,
+        rowId: row.id,
+      })),
+    }));
 
     const data = await this.request<any>('POST', `/message/sendList/${encodeURIComponent(this.instanceName)}`, {
       number,
@@ -254,14 +264,9 @@ export class EvolutionClient extends EvolutionAdminClient {
       description,
       buttonText,
       footerText,
-      values: payload.sections.map((section) => ({
-        title: (section.title || '').trim(),
-        rows: section.rows.map((row) => ({
-          title: (row.title || '').trim(),
-          description: (row.description || '').trim(),
-          rowId: row.id,
-        })),
-      })),
+      // v2.3.x validates `sections`; older builds used `values`.
+      sections,
+      values: sections,
     });
 
     return {
