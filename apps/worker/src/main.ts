@@ -194,6 +194,11 @@ async function processSendJob(job: Job<MessageSendPayload>): Promise<void> {
   const normalizedTo = normalizePhone(to);
   console.log(`[Worker] Processing send job to: ${normalizedTo}`);
 
+  if (!normalizedTo || normalizedTo === 'unknown' || !/^\+\d+$/.test(normalizedTo)) {
+    console.warn(`[Worker] Skipping send job with invalid destination: ${to}`);
+    return;
+  }
+
   const whatsappNumber = await prisma.whatsAppNumber.findFirst({
     where: { workspaceId, isActive: true },
   });
