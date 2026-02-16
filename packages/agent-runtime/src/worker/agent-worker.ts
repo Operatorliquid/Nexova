@@ -612,10 +612,18 @@ export class AgentWorker {
           });
           batchIds = [webhookMessage.id];
 
-          if (runtimeSettings.coalesceEnabled && runtimeSettings.coalesceWindowMs > 0) {
+          const isWhatsAppChannel = (channelType || 'whatsapp') === 'whatsapp';
+          const effectiveCoalesceWindowMs =
+            !isOwner && isWhatsAppChannel
+              ? Math.max(2000, runtimeSettings.coalesceWindowMs)
+              : runtimeSettings.coalesceWindowMs;
+          const shouldCoalesce =
+            isWhatsAppChannel && (runtimeSettings.coalesceEnabled || !isOwner) && effectiveCoalesceWindowMs > 0;
+
+          if (shouldCoalesce) {
             // Sleep slightly longer than the query window (windowMs + 500)
             // so we don't query before late-arriving messages in the same burst.
-            await this.sleep(runtimeSettings.coalesceWindowMs + 550);
+            await this.sleep(effectiveCoalesceWindowMs + 550);
           }
 
           batchWebhooks = await this.collectBatchWebhooks({
@@ -626,7 +634,7 @@ export class AgentWorker {
             channelType: channelType || 'whatsapp',
             provider: webhookMessage.provider || 'infobip',
             maxMessages: runtimeSettings.coalesceMaxMessages,
-            windowMs: runtimeSettings.coalesceWindowMs,
+            windowMs: shouldCoalesce ? effectiveCoalesceWindowMs : 0,
           });
           batchIds = batchWebhooks.map((b) => b.webhook.id);
 

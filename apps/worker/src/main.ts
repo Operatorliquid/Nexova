@@ -24,6 +24,8 @@ const REDIS_HOST = process.env.REDIS_HOST || 'localhost';
 const REDIS_PORT = parseInt(process.env.REDIS_PORT || '6379', 10);
 const REDIS_PASSWORD = process.env.REDIS_PASSWORD || undefined;
 const REALTIME_CHANNEL = process.env.REALTIME_CHANNEL || 'nexova:realtime';
+const EVOLUTION_INTERACTIVE_TEXT_BACKUP =
+  (process.env.EVOLUTION_INTERACTIVE_TEXT_BACKUP || 'true').toLowerCase() === 'true';
 const DEPLOY_STAMP = '2026-02-16.worker.6';
 
 const connection = {
@@ -254,6 +256,7 @@ async function processSendJob(job: Job<MessageSendPayload>): Promise<void> {
     }
 
     const client = new EvolutionClient({ apiKey, baseUrl, instanceName });
+    let interactiveBackupText: string | null = null;
 
     if (messageType === 'text') {
       result = await client.sendText(normalizedTo, content.text || '');
@@ -269,6 +272,7 @@ async function processSendJob(job: Job<MessageSendPayload>): Promise<void> {
       }
     } else if (messageType === 'interactive') {
       try {
+        interactiveBackupText = renderInteractiveFallbackText(content);
         if (content.buttons && content.buttons.length > 0) {
           const payload = {
             body: content.text || '',
@@ -309,6 +313,23 @@ async function processSendJob(job: Job<MessageSendPayload>): Promise<void> {
       }
     } else {
       throw new Error(`Unsupported message type: ${messageType}`);
+    }
+
+    if (
+      EVOLUTION_INTERACTIVE_TEXT_BACKUP &&
+      interactiveBackupText &&
+      (usageMessageType === 'interactive-buttons' || usageMessageType === 'interactive-list')
+    ) {
+      try {
+        await client.sendText(normalizedTo, interactiveBackupText);
+        console.log(`[Worker] Evolution interactive backup text sent to ${normalizedTo}`);
+      } catch (backupError) {
+        console.warn(
+          `[Worker] Evolution interactive backup text failed: ${
+            backupError instanceof Error ? backupError.message : String(backupError)
+          }`
+        );
+      }
     }
 
     const evolutionStatus = String(result.status || '').toLowerCase();
