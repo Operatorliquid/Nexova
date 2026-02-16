@@ -37,6 +37,10 @@ const DEFAULT_SESSION_LOCK_ENABLED =
   (process.env.AGENT_SESSION_LOCK_ENABLED || 'true').toLowerCase() === 'true';
 const DEFAULT_SESSION_LOCK_TTL_MS = Number.parseInt(process.env.AGENT_SESSION_LOCK_TTL_MS || '15000', 10);
 const DEFAULT_SESSION_LOCK_RETRY_MS = Number.parseInt(process.env.AGENT_SESSION_LOCK_RETRY_MS || '500', 10);
+const DEFAULT_INTERACTIVE_REPLY_TTL_SECONDS = Number.parseInt(
+  process.env.AGENT_INTERACTIVE_REPLY_TTL_SECONDS || '1800',
+  10
+);
 const SETTINGS_CACHE_TTL_MS = 5 * 60 * 1000;
 const OWNER_AGENT_AUTH_TTL_SECONDS = Number.parseInt(process.env.OWNER_AGENT_AUTH_TTL_SECONDS || '604800', 10); // 7d
 const DEFAULT_TIMEZONE = process.env.DEFAULT_TIMEZONE?.trim() || 'America/Argentina/Buenos_Aires';
@@ -774,6 +778,13 @@ export class AgentWorker {
           }
 
           let combinedMessage = this.buildCoalescedMessage(sortedBatch, runtimeSettings.coalesceJoiner);
+          if (!isOwner && isWhatsAppChannel) {
+            combinedMessage = await this.resolveInteractiveReplyInput(
+              workspaceId,
+              normalizedSenderPhone,
+              combinedMessage
+            );
+          }
 
           if (isOwner && runtimeSettings.ownerAgentPinHash.trim()) {
             const authKey = this.buildOwnerAuthKey(workspaceId, senderDigits);
@@ -1208,6 +1219,70 @@ export class AgentWorker {
 
   private buildSessionLockKey(workspaceId: string, channelId: string, channelType: string): string {
     return `agent:lock:${workspaceId}:${channelType}:${channelId}`;
+  }
+
+  private buildInteractiveReplyKey(workspaceId: string, phone: string): string {
+    return `agent:interactive:${workspaceId}:${this.normalizePhone(phone)}`;
+  }
+
+  private async storeInteractiveReplyMap(
+    workspaceId: string,
+    phone: string,
+    options: Array<{ id: string; title: string }>
+  ): Promise<void> {
+    if (!options.length) return;
+    const payload = options
+      .map((option, index) => ({
+        index: index + 1,
+        id: (option.id || '').trim(),
+        title: (option.title || '').trim(),
+      }))
+      .filter((option) => option.id || option.title);
+    if (!payload.length) return;
+
+    const key = this.buildInteractiveReplyKey(workspaceId, phone);
+    try {
+      await this.redis.set(
+        key,
+        JSON.stringify({ options: payload }),
+        'EX',
+        Math.max(60, DEFAULT_INTERACTIVE_REPLY_TTL_SECONDS)
+      );
+    } catch (error) {
+      console.error('[AgentWorker] Failed to store interactive reply map:', error);
+    }
+  }
+
+  private async resolveInteractiveReplyInput(
+    workspaceId: string,
+    phone: string,
+    text: string
+  ): Promise<string> {
+    const normalized = (text || '').trim();
+    if (!normalized) return text;
+    if (!/^\d{1,2}$/.test(normalized)) return text;
+
+    const selectedIndex = Number.parseInt(normalized, 10);
+    if (!Number.isFinite(selectedIndex) || selectedIndex < 1) return text;
+
+    const key = this.buildInteractiveReplyKey(workspaceId, phone);
+    try {
+      const raw = await this.redis.get(key);
+      if (!raw) return text;
+      const parsed = JSON.parse(raw) as {
+        options?: Array<{ index: number; id?: string; title?: string }>;
+      };
+      const options = Array.isArray(parsed?.options) ? parsed.options : [];
+      const selected = options.find((option) => option.index === selectedIndex);
+      if (!selected) return text;
+
+      await this.redis.del(key);
+      const mapped = (selected.id || selected.title || '').trim();
+      return mapped || text;
+    } catch (error) {
+      console.error('[AgentWorker] Failed to resolve interactive numeric reply:', error);
+      return text;
+    }
   }
 
   private async acquireSessionLock(lockKey: string, ttlMs: number): Promise<string | null> {
@@ -1883,6 +1958,14 @@ export class AgentWorker {
         ...(payload.footer ? { footer: payload.footer } : {}),
       };
 
+      await this.storeInteractiveReplyMap(
+        workspaceId,
+        to,
+        sanitizedPayload.sections.flatMap((section) =>
+          section.rows.map((row) => ({ id: row.id, title: row.title }))
+        )
+      );
+
       const queued = await this.enqueueMessage({
         workspaceId,
         sessionId: sessionId || '',
@@ -2010,6 +2093,12 @@ export class AgentWorker {
     sessionId?: string
   ): Promise<void> {
     try {
+      await this.storeInteractiveReplyMap(
+        workspaceId,
+        to,
+        payload.buttons.map((button) => ({ id: button.id, title: button.title }))
+      );
+
       const queued = await this.enqueueMessage({
         workspaceId,
         sessionId: sessionId || '',
