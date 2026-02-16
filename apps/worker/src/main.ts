@@ -189,6 +189,33 @@ function truncateText(value: string, maxLength: number): string {
   return chars.slice(0, maxLength).join('');
 }
 
+function renderInteractiveFallbackText(content: MessageSendPayload['content']): string {
+  const body = (content.text || '').trim();
+
+  if (content.buttons && content.buttons.length > 0) {
+    const options = content.buttons
+      .map((button, index) => `${index + 1}. ${(button.title || '').trim()}`)
+      .filter((line) => line.length > 3);
+    const footer = options.length > 0 ? '\n\nRespondé con la opción que necesitás.' : '';
+    return `${body}${options.length > 0 ? `\n\n${options.join('\n')}` : ''}${footer}`.trim();
+  }
+
+  if (content.listSections && content.listSections.length > 0) {
+    const rows = content.listSections.flatMap((section) => section.rows || []);
+    const options = rows
+      .map((row, index) => {
+        const title = (row.title || '').trim();
+        const description = (row.description || '').trim();
+        return description ? `${index + 1}. ${title} - ${description}` : `${index + 1}. ${title}`;
+      })
+      .filter((line) => line.length > 3);
+    const footer = options.length > 0 ? '\n\nRespondé con la opción que necesitás.' : '';
+    return `${body}${options.length > 0 ? `\n\n${options.join('\n')}` : ''}${footer}`.trim();
+  }
+
+  return body || 'Te envié opciones para continuar.';
+}
+
 async function processSendJob(job: Job<MessageSendPayload>): Promise<void> {
   const { workspaceId, to, messageType, content, correlationId } = job.data;
   const normalizedTo = normalizePhone(to);
@@ -241,41 +268,23 @@ async function processSendJob(job: Job<MessageSendPayload>): Promise<void> {
         throw new Error(`Unsupported media type: ${content.mediaType}`);
       }
     } else if (messageType === 'interactive') {
-      if (content.buttons && content.buttons.length > 0) {
-        const payload = {
-          body: content.text || '',
-          buttons: content.buttons.map((button) => ({
-            ...button,
-            title: truncateButtonTitle(button.title, 20),
-          })),
-          ...(content.header ? { header: content.header } : {}),
-          ...(content.footer ? { footer: content.footer } : {}),
-        };
-        result = await client.sendInteractiveButtons(normalizedTo, payload);
-        usageMessageType = 'interactive-buttons';
-      } else if (content.listSections && content.listSections.length > 0) {
-        const payload = {
-          body: truncateText(content.text || '', 1024),
-          buttonText: truncateText(content.buttonText || 'Ver opciones', 20),
-          sections: content.listSections.map((section) => ({
-            ...(section.title ? { title: truncateText(section.title, 24) } : {}),
-            rows: section.rows.map((row) => ({
-              id: row.id,
-              title: truncateText(row.title, 24),
-              ...(row.description ? { description: truncateText(row.description, 72) } : {}),
-            })),
-          })),
-          ...(content.header ? { header: content.header } : {}),
-          ...(content.footer ? { footer: content.footer } : {}),
-        };
-        result = await client.sendInteractiveList(normalizedTo, payload);
-        usageMessageType = 'interactive-list';
-      } else {
-        throw new Error('Interactive message requires buttons or listSections');
-      }
+      // Evolution/Baileys can fail with interactive payloads on some builds.
+      // To keep delivery reliable, we always send a text fallback for interactive content.
+      const fallbackText = renderInteractiveFallbackText(content);
+      result = await client.sendText(normalizedTo, fallbackText);
+      usageMessageType = 'text';
     } else {
       throw new Error(`Unsupported message type: ${messageType}`);
     }
+
+    const evolutionStatus = String(result.status || '').toLowerCase();
+    if (['failed', 'error', 'rejected'].some((token) => evolutionStatus.includes(token))) {
+      throw new Error(`Evolution rejected message: ${result.status}`);
+    }
+
+    console.log(
+      `[Worker] Evolution send accepted to ${normalizedTo} (type=${usageMessageType}, status=${result.status}, messageId=${result.messageId || 'n/a'})`
+    );
   } else {
     if (!apiKey) {
       throw new Error('WhatsApp API key not configured');
