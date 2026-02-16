@@ -112,10 +112,25 @@ function buildPhoneCandidates(raw: string | null | undefined): string[] {
 }
 
 function extractEvolutionMessages(payload: any): any[] {
-  const data = payload?.data ?? payload?.message ?? payload?.messages;
-  if (!data) return [];
-  if (Array.isArray(data)) return data;
-  return [data];
+  const candidates: unknown[] = [
+    payload?.data?.messages,
+    payload?.messages,
+    payload?.data?.message,
+    payload?.message,
+    payload?.data,
+  ];
+
+  const out: any[] = [];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    if (Array.isArray(candidate)) {
+      out.push(...candidate);
+      continue;
+    }
+    out.push(candidate);
+  }
+
+  return out.filter((item) => item && typeof item === 'object');
 }
 
 function extractEvolutionQrInfo(payload: any): { qrCode?: string; qrDataUrl?: string; pairingCode?: string } {
@@ -205,6 +220,17 @@ function normalizeEvolutionEventName(value: unknown): string {
   return value.trim().toUpperCase().replace(/[^A-Z0-9]+/g, '_');
 }
 
+const EVOLUTION_MESSAGE_EVENTS = new Set([
+  'MESSAGE_UPSERT',
+  'MESSAGES_UPSERT',
+  'MESSAGE_CREATE',
+  'MESSAGES_CREATE',
+  'MESSAGE_UPDATE',
+  'MESSAGES_UPDATE',
+  'MESSAGE_RECEIVED',
+  'MESSAGES_RECEIVED',
+]);
+
 function evolutionRemoteJidToE164(remoteJid: string | null | undefined): string | null {
   if (!remoteJid || typeof remoteJid !== 'string') return null;
   // remoteJid example: "553198296801@s.whatsapp.net"
@@ -226,8 +252,10 @@ function extractEvolutionMessageId(msg: any): string | null {
 
 function isEvolutionInboundMessage(msg: any): boolean {
   // Baileys-style events include msg.key.fromMe
-  const fromMe = msg?.key?.fromMe;
+  const fromMe = msg?.key?.fromMe ?? msg?.fromMe;
   if (typeof fromMe === 'boolean') return !fromMe;
+  const status = typeof msg?.status === 'string' ? msg.status.toUpperCase() : '';
+  if (status.endsWith('_ACK') && !msg?.message) return false;
   // If not present, assume inbound
   return true;
 }
@@ -660,12 +688,11 @@ export async function webhookRoutes(
           return reply.send({ status: 'received', event: 'CONNECTION_UPDATE' });
         }
 
-        if (event && event !== 'MESSAGES_UPSERT') {
+        const messages = extractEvolutionMessages(payload);
+        if (event && !EVOLUTION_MESSAGE_EVENTS.has(event) && messages.length === 0) {
           // Ignore other non-message events.
           return reply.send({ status: 'ignored', reason: 'non_message_event', event });
         }
-
-        const messages = extractEvolutionMessages(payload);
         if (messages.length === 0) {
           return reply.send({ status: 'ignored', reason: 'missing_message' });
         }
