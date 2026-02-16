@@ -296,7 +296,7 @@ export class EvolutionClient extends EvolutionAdminClient {
         raw: data,
       };
     } catch {
-      // Some Evolution/Baileys builds fail sending ListMessage.
+      // Some Evolution/Baileys builds fail sending ListMessage (e.g. Long/isZero runtime issue).
       // Fallback to plain text so the conversation never gets stuck.
       return this.sendText(to, renderInteractiveListFallback(payload));
     }
