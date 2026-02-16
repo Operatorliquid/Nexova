@@ -246,6 +246,7 @@ export class EvolutionClient extends EvolutionAdminClient {
     const title = (payload.header || 'Nexova').trim();
     const description = (payload.body || '').trim();
     const buttonText = (payload.buttonText || 'Ver opciones').trim();
+    const normalizedButtonText = buttonText || 'Ver opciones';
     const footerText = (payload.footer || '').trim();
     const sections = payload.sections.map((section) => ({
       title: (section.title || '').trim(),
@@ -262,7 +263,7 @@ export class EvolutionClient extends EvolutionAdminClient {
       number,
       title,
       description,
-      buttonText,
+      buttonText: normalizedButtonText,
       footerText,
       // v2.3.x validates `sections`; older builds used `values`.
       sections,
