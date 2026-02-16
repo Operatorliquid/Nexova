@@ -605,41 +605,64 @@ export async function webhookRoutes(
    * We secure this endpoint by embedding a per-number secret in the URL and
    * matching it against whatsapp_numbers.webhook_secret.
    */
-  app.post<{
-    Params: { secret: string };
-    Body: any;
-  }>('/evolution/:secret', {
-    schema: {
-      params: {
-        type: 'object',
-        properties: { secret: { type: 'string' } },
-        required: ['secret'],
-      },
-    },
-    handler: async (request, reply) => {
-      const { secret } = request.params;
-      const payload = request.body as any;
+  const handleEvolutionWebhook = async (
+    request: FastifyRequest<{
+      Params: { secret: string; eventPath?: string };
+      Body: any;
+    }>,
+    reply: any
+  ) => {
+    const { secret, eventPath } = request.params;
+    const payload = request.body as any;
 
-      request.log.info({ provider: 'evolution', event: payload?.event, instance: payload?.instance }, 'Received Evolution webhook');
+    request.log.info(
+      { provider: 'evolution', event: payload?.event ?? payload?.eventType ?? eventPath, eventPath, instance: payload?.instance },
+      'Received Evolution webhook'
+    );
 
-      try {
-        const whatsappNumber = await app.prisma.whatsAppNumber.findFirst({
-          where: {
-            provider: 'evolution',
-            webhookSecret: secret,
+    try {
+      const whatsappNumber = await app.prisma.whatsAppNumber.findFirst({
+        where: {
+          provider: 'evolution',
+          webhookSecret: secret,
+        },
+      });
+
+      if (!whatsappNumber || !whatsappNumber.workspaceId) {
+        request.log.warn({ secret }, 'Evolution webhook ignored: number not found');
+        return reply.send({ status: 'ignored', reason: 'number_not_found' });
+      }
+
+      const rawEvent = (payload?.event ?? payload?.eventType ?? eventPath ?? '') as unknown;
+      const event = normalizeEvolutionEventName(rawEvent);
+
+      if (event === 'QRCODE_UPDATED') {
+        const qr = extractEvolutionQrInfo(payload);
+        const currentCfg =
+          whatsappNumber.providerConfig && typeof whatsappNumber.providerConfig === 'object'
+            ? (whatsappNumber.providerConfig as Record<string, unknown>)
+            : {};
+
+        await app.prisma.whatsAppNumber.update({
+          where: { id: whatsappNumber.id },
+          data: {
+            providerConfig: {
+              ...currentCfg,
+              ...(qr.qrCode ? { qrCode: qr.qrCode } : {}),
+              ...(qr.qrDataUrl ? { qrDataUrl: qr.qrDataUrl } : {}),
+              ...(qr.pairingCode ? { pairingCode: qr.pairingCode } : {}),
+              qrUpdatedAt: new Date().toISOString(),
+            } as Prisma.InputJsonValue,
           },
         });
 
-        if (!whatsappNumber || !whatsappNumber.workspaceId) {
-          request.log.warn({ secret }, 'Evolution webhook ignored: number not found');
-          return reply.send({ status: 'ignored', reason: 'number_not_found' });
-        }
+        return reply.send({ status: 'received', event: 'QRCODE_UPDATED', ...qr });
+      }
 
-        const rawEvent = (payload?.event ?? payload?.eventType ?? '') as unknown;
-        const event = normalizeEvolutionEventName(rawEvent);
-
-        if (event === 'QRCODE_UPDATED') {
-          const qr = extractEvolutionQrInfo(payload);
+      if (event === 'CONNECTION_UPDATE') {
+        // Some Evolution builds include the QR payload in CONNECTION_UPDATE.
+        const qr = extractEvolutionQrInfo(payload);
+        if (qr.qrCode || qr.qrDataUrl || qr.pairingCode) {
           const currentCfg =
             whatsappNumber.providerConfig && typeof whatsappNumber.providerConfig === 'object'
               ? (whatsappNumber.providerConfig as Record<string, unknown>)
@@ -657,183 +680,188 @@ export async function webhookRoutes(
               } as Prisma.InputJsonValue,
             },
           });
-
-          return reply.send({ status: 'received', event: 'QRCODE_UPDATED', ...qr });
         }
 
-        if (event === 'CONNECTION_UPDATE') {
-          // Some Evolution builds include the QR payload in CONNECTION_UPDATE.
-          const qr = extractEvolutionQrInfo(payload);
-          if (qr.qrCode || qr.qrDataUrl || qr.pairingCode) {
-            const currentCfg =
-              whatsappNumber.providerConfig && typeof whatsappNumber.providerConfig === 'object'
-                ? (whatsappNumber.providerConfig as Record<string, unknown>)
-                : {};
+        // We keep this endpoint lightweight. The workspace polls status via /whatsapp/evolution/status.
+        return reply.send({ status: 'received', event: 'CONNECTION_UPDATE' });
+      }
 
-            await app.prisma.whatsAppNumber.update({
-              where: { id: whatsappNumber.id },
-              data: {
-                providerConfig: {
-                  ...currentCfg,
-                  ...(qr.qrCode ? { qrCode: qr.qrCode } : {}),
-                  ...(qr.qrDataUrl ? { qrDataUrl: qr.qrDataUrl } : {}),
-                  ...(qr.pairingCode ? { pairingCode: qr.pairingCode } : {}),
-                  qrUpdatedAt: new Date().toISOString(),
-                } as Prisma.InputJsonValue,
-              },
-            });
-          }
+      const messages = extractEvolutionMessages(payload);
+      if (event && !EVOLUTION_MESSAGE_EVENTS.has(event) && messages.length === 0) {
+        // Ignore other non-message events.
+        return reply.send({ status: 'ignored', reason: 'non_message_event', event });
+      }
+      if (messages.length === 0) {
+        return reply.send({ status: 'ignored', reason: 'missing_message' });
+      }
 
-          // We keep this endpoint lightweight. The workspace polls status via /whatsapp/evolution/status.
-          return reply.send({ status: 'received', event: 'CONNECTION_UPDATE' });
+      let queued = 0;
+      for (const msg of messages) {
+        if (!isEvolutionInboundMessage(msg)) continue;
+
+        const messageId = extractEvolutionMessageId(msg) || crypto.randomUUID();
+        const remoteJid = msg?.key?.remoteJid || msg?.remoteJid || payload?.data?.key?.remoteJid;
+        if (typeof remoteJid === 'string' && remoteJid.includes('@g.us')) {
+          // Ignore group messages by default
+          continue;
         }
 
-        const messages = extractEvolutionMessages(payload);
-        if (event && !EVOLUTION_MESSAGE_EVENTS.has(event) && messages.length === 0) {
-          // Ignore other non-message events.
-          return reply.send({ status: 'ignored', reason: 'non_message_event', event });
-        }
-        if (messages.length === 0) {
-          return reply.send({ status: 'ignored', reason: 'missing_message' });
-        }
+        const senderPhone = evolutionRemoteJidToE164(remoteJid) || 'unknown';
 
-        let queued = 0;
-        for (const msg of messages) {
-          if (!isEvolutionInboundMessage(msg)) continue;
+        // Dedupe
+        const existing = await app.prisma.webhookInbox.findFirst({
+          where: {
+            externalId: messageId,
+            workspaceId: whatsappNumber.workspaceId,
+            provider: 'evolution',
+          },
+        });
+        if (existing) continue;
 
-          const messageId = extractEvolutionMessageId(msg) || crypto.randomUUID();
-          const remoteJid = msg?.key?.remoteJid || msg?.remoteJid || payload?.data?.key?.remoteJid;
-          if (typeof remoteJid === 'string' && remoteJid.includes('@g.us')) {
-            // Ignore group messages by default
-            continue;
-          }
+        const correlationId = crypto.randomUUID();
+        let attachment:
+          | { fileRef: string; fileType: 'image' | 'pdf'; caption?: string }
+          | null = null;
 
-          const senderPhone = evolutionRemoteJidToE164(remoteJid) || 'unknown';
+        const msgBody = msg?.message || {};
+        const imageMsg = msgBody?.imageMessage;
+        const docMsg = msgBody?.documentMessage;
+        const hasMedia = !!imageMsg || !!docMsg;
 
-          // Dedupe
-          const existing = await app.prisma.webhookInbox.findFirst({
-            where: {
-              externalId: messageId,
-              workspaceId: whatsappNumber.workspaceId,
-              provider: 'evolution',
-            },
-          });
-          if (existing) continue;
+        if (hasMedia) {
+          try {
+            const instanceName = extractEvolutionInstanceName(whatsappNumber.providerConfig);
+            const baseUrl = resolveEvolutionBaseUrl(whatsappNumber.apiUrl);
+            const apiKey = resolveEvolutionApiKey(whatsappNumber);
 
-          const correlationId = crypto.randomUUID();
-          let attachment:
-            | { fileRef: string; fileType: 'image' | 'pdf'; caption?: string }
-            | null = null;
+            if (instanceName && baseUrl && apiKey) {
+              const media = await fetchEvolutionMediaBase64({
+                baseUrl,
+                apiKey,
+                instanceName,
+                messageId,
+              });
 
-          const msgBody = msg?.message || {};
-          const imageMsg = msgBody?.imageMessage;
-          const docMsg = msgBody?.documentMessage;
-          const hasMedia = !!imageMsg || !!docMsg;
+              const caption =
+                (typeof imageMsg?.caption === 'string' && imageMsg.caption.trim())
+                  ? imageMsg.caption.trim()
+                  : (typeof docMsg?.caption === 'string' && docMsg.caption.trim())
+                    ? docMsg.caption.trim()
+                    : undefined;
 
-          if (hasMedia) {
-            try {
-              const instanceName = extractEvolutionInstanceName(whatsappNumber.providerConfig);
-              const baseUrl = resolveEvolutionBaseUrl(whatsappNumber.apiUrl);
-              const apiKey = resolveEvolutionApiKey(whatsappNumber);
+              const mimetype =
+                (typeof imageMsg?.mimetype === 'string' && imageMsg.mimetype.trim())
+                  ? imageMsg.mimetype.trim()
+                  : (typeof docMsg?.mimetype === 'string' && docMsg.mimetype.trim())
+                    ? docMsg.mimetype.trim()
+                    : media?.mimetype;
 
-              if (instanceName && baseUrl && apiKey) {
-                const media = await fetchEvolutionMediaBase64({
-                  baseUrl,
-                  apiKey,
-                  instanceName,
+              const filenameHint =
+                (typeof docMsg?.fileName === 'string' && docMsg.fileName.trim())
+                  ? docMsg.fileName.trim()
+                  : media?.filename;
+
+              if (media?.base64) {
+                const persisted = await persistEvolutionMedia({
+                  workspaceId: whatsappNumber.workspaceId,
                   messageId,
+                  base64: media.base64,
+                  mimetype,
+                  filenameHint,
                 });
 
-                const caption =
-                  (typeof imageMsg?.caption === 'string' && imageMsg.caption.trim())
-                    ? imageMsg.caption.trim()
-                    : (typeof docMsg?.caption === 'string' && docMsg.caption.trim())
-                      ? docMsg.caption.trim()
-                      : undefined;
-
-                const mimetype =
-                  (typeof imageMsg?.mimetype === 'string' && imageMsg.mimetype.trim())
-                    ? imageMsg.mimetype.trim()
-                    : (typeof docMsg?.mimetype === 'string' && docMsg.mimetype.trim())
-                      ? docMsg.mimetype.trim()
-                      : media?.mimetype;
-
-                const filenameHint =
-                  (typeof docMsg?.fileName === 'string' && docMsg.fileName.trim())
-                    ? docMsg.fileName.trim()
-                    : media?.filename;
-
-                if (media?.base64) {
-                  const persisted = await persistEvolutionMedia({
-                    workspaceId: whatsappNumber.workspaceId,
-                    messageId,
-                    base64: media.base64,
-                    mimetype,
-                    filenameHint,
-                  });
-
-                  if (persisted) {
-                    attachment = {
-                      fileRef: persisted.fileRef,
-                      fileType: persisted.fileType,
-                      ...(caption ? { caption } : {}),
-                    };
-                  }
+                if (persisted) {
+                  attachment = {
+                    fileRef: persisted.fileRef,
+                    fileType: persisted.fileType,
+                    ...(caption ? { caption } : {}),
+                  };
                 }
               }
-            } catch (err) {
-              request.log.warn(err, 'Failed to persist Evolution media (continuing)');
             }
+          } catch (err) {
+            request.log.warn(err, 'Failed to persist Evolution media (continuing)');
           }
-
-          const storedPayload = {
-            event: payload?.event,
-            instance: payload?.instance,
-            data: msg,
-            ...(attachment ? { __nexova: { attachment } } : {}),
-          };
-          await app.prisma.webhookInbox.create({
-            data: {
-              workspaceId: whatsappNumber.workspaceId,
-              provider: 'evolution',
-              externalId: messageId,
-              eventType: 'message.received',
-              payload: storedPayload as Prisma.InputJsonValue,
-              signature: null,
-              status: 'pending',
-              correlationId,
-            },
-          });
-
-          if (agentQueue) {
-            const ctx = extractEvolutionReplyContext(msg);
-            const jobPayload: AgentProcessPayload = {
-              workspaceId: whatsappNumber.workspaceId,
-              messageId,
-              channelId: senderPhone,
-              channelType: 'whatsapp',
-              correlationId,
-              metadata: {
-                isReply: ctx.isReply,
-                referredMessageId: ctx.referredMessageId,
-              },
-            };
-
-            await agentQueue.add(`msg-${messageId}`, jobPayload, {
-              attempts: QUEUES.AGENT_PROCESS.attempts,
-              backoff: QUEUES.AGENT_PROCESS.backoff,
-            });
-          }
-
-          queued += 1;
         }
 
-        return reply.send({ status: 'queued', queued });
-      } catch (error) {
-        request.log.error(error, 'Failed to process Evolution webhook');
-        return reply.send({ status: 'error', error: 'Internal processing error' });
+        const storedPayload = {
+          event: payload?.event,
+          instance: payload?.instance,
+          data: msg,
+          ...(attachment ? { __nexova: { attachment } } : {}),
+        };
+        await app.prisma.webhookInbox.create({
+          data: {
+            workspaceId: whatsappNumber.workspaceId,
+            provider: 'evolution',
+            externalId: messageId,
+            eventType: 'message.received',
+            payload: storedPayload as Prisma.InputJsonValue,
+            signature: null,
+            status: 'pending',
+            correlationId,
+          },
+        });
+
+        if (agentQueue) {
+          const ctx = extractEvolutionReplyContext(msg);
+          const jobPayload: AgentProcessPayload = {
+            workspaceId: whatsappNumber.workspaceId,
+            messageId,
+            channelId: senderPhone,
+            channelType: 'whatsapp',
+            correlationId,
+            metadata: {
+              isReply: ctx.isReply,
+              referredMessageId: ctx.referredMessageId,
+            },
+          };
+
+          await agentQueue.add(`msg-${messageId}`, jobPayload, {
+            attempts: QUEUES.AGENT_PROCESS.attempts,
+            backoff: QUEUES.AGENT_PROCESS.backoff,
+          });
+        }
+
+        queued += 1;
       }
+
+      return reply.send({ status: 'queued', queued });
+    } catch (error) {
+      request.log.error(error, 'Failed to process Evolution webhook');
+      return reply.send({ status: 'error', error: 'Internal processing error' });
+    }
+  };
+
+  app.post<{
+    Params: { secret: string };
+    Body: any;
+  }>('/evolution/:secret', {
+    schema: {
+      params: {
+        type: 'object',
+        properties: { secret: { type: 'string' } },
+        required: ['secret'],
+      },
     },
+    handler: handleEvolutionWebhook,
+  });
+
+  app.post<{
+    Params: { secret: string; eventPath: string };
+    Body: any;
+  }>('/evolution/:secret/:eventPath', {
+    schema: {
+      params: {
+        type: 'object',
+        properties: {
+          secret: { type: 'string' },
+          eventPath: { type: 'string' },
+        },
+        required: ['secret', 'eventPath'],
+      },
+    },
+    handler: handleEvolutionWebhook,
   });
 
   // ═══════════════════════════════════════════════════════════════════════════════
