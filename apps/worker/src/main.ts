@@ -26,7 +26,7 @@ const REDIS_PASSWORD = process.env.REDIS_PASSWORD || undefined;
 const REALTIME_CHANNEL = process.env.REALTIME_CHANNEL || 'nexova:realtime';
 const EVOLUTION_INTERACTIVE_TEXT_BACKUP =
   (process.env.EVOLUTION_INTERACTIVE_TEXT_BACKUP || 'false').toLowerCase() === 'true';
-const DEPLOY_STAMP = '2026-02-16.worker.7';
+const DEPLOY_STAMP = '2026-02-16.worker.8';
 
 const connection = {
   host: REDIS_HOST,
