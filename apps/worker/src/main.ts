@@ -26,7 +26,7 @@ const REDIS_PASSWORD = process.env.REDIS_PASSWORD || undefined;
 const REALTIME_CHANNEL = process.env.REALTIME_CHANNEL || 'nexova:realtime';
 const EVOLUTION_INTERACTIVE_TEXT_BACKUP =
   (process.env.EVOLUTION_INTERACTIVE_TEXT_BACKUP || 'false').toLowerCase() === 'true';
-const DEPLOY_STAMP = '2026-02-16.worker.8';
+const DEPLOY_STAMP = '2026-02-16.worker.9';
 
 const connection = {
   host: REDIS_HOST,
@@ -198,7 +198,7 @@ function renderInteractiveFallbackText(content: MessageSendPayload['content']): 
     const options = content.buttons
       .map((button, index) => `${index + 1}. ${(button.title || '').trim()}`)
       .filter((line) => line.length > 3);
-    const footer = options.length > 0 ? '\n\nRespondé con la opción que necesitás.' : '';
+    const footer = options.length > 0 ? '\n\nRespondé con el número de la opción que necesitás.' : '';
     return `${body}${options.length > 0 ? `\n\n${options.join('\n')}` : ''}${footer}`.trim();
   }
 
@@ -211,7 +211,7 @@ function renderInteractiveFallbackText(content: MessageSendPayload['content']): 
         return description ? `${index + 1}. ${title} - ${description}` : `${index + 1}. ${title}`;
       })
       .filter((line) => line.length > 3);
-    const footer = options.length > 0 ? '\n\nRespondé con la opción que necesitás.' : '';
+    const footer = options.length > 0 ? '\n\nRespondé con el número de la opción que necesitás.' : '';
     return `${body}${options.length > 0 ? `\n\n${options.join('\n')}` : ''}${footer}`.trim();
   }
 

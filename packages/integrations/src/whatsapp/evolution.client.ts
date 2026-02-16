@@ -120,7 +120,7 @@ function renderInteractiveListFallback(payload: EvolutionInteractiveListPayload)
 
   const footer =
     lines.length > 0
-      ? '\n\nRespondé con la opción que querés.'
+      ? '\n\nRespondé con el número de la opción que querés.'
       : '';
 
   return `${body}${lines.length > 0 ? `\n\n${lines.join('\n')}` : ''}${footer}`.trim();
@@ -267,6 +267,11 @@ export class EvolutionClient extends EvolutionAdminClient {
       ...(payload.footer ? { footer: payload.footer } : {}),
     };
 
+    const forceTextInteractive = parseBool(process.env.EVOLUTION_FORCE_TEXT_INTERACTIVE, true);
+    if (forceTextInteractive) {
+      return this.sendText(to, renderInteractiveListFallback(fallbackListPayload));
+    }
+
     // On Baileys (QR mode), native quick-reply buttons are unstable across versions.
     // Use ListMessage by default and keep native buttons behind an explicit opt-in flag.
     const useNativeButtons = parseBool(process.env.EVOLUTION_ENABLE_NATIVE_BUTTONS, false);
@@ -308,6 +313,11 @@ export class EvolutionClient extends EvolutionAdminClient {
   }
 
   async sendInteractiveList(to: string, payload: EvolutionInteractiveListPayload): Promise<EvolutionSendResponse> {
+    const forceTextInteractive = parseBool(process.env.EVOLUTION_FORCE_TEXT_INTERACTIVE, true);
+    if (forceTextInteractive) {
+      return this.sendText(to, renderInteractiveListFallback(payload));
+    }
+
     const number = toDigits(to);
     const title = (payload.header || 'Nexova').trim();
     const description = (payload.body || '').trim();
