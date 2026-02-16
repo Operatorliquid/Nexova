@@ -93,6 +93,16 @@ function normalizeToE164(value: string | null | undefined): string | null {
   return `+${digits}`;
 }
 
+function normalizeEvolutionSender(value: string | null | undefined): string | null {
+  if (!value || typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const base = trimmed.includes('@') ? trimmed.split('@')[0] || '' : trimmed;
+  const digits = toPhoneDigits(base);
+  if (!digits) return null;
+  return `+${digits}`;
+}
+
 function buildPhoneCandidates(raw: string | null | undefined): string[] {
   if (!raw) return [];
   const cleaned = raw.replace(/\s/g, '');
@@ -263,12 +273,29 @@ const EVOLUTION_MESSAGE_EVENTS = new Set([
 ]);
 
 function evolutionRemoteJidToE164(remoteJid: string | null | undefined): string | null {
-  if (!remoteJid || typeof remoteJid !== 'string') return null;
-  // remoteJid example: "553198296801@s.whatsapp.net"
-  const base = remoteJid.split('@')[0] || '';
-  const digits = toPhoneDigits(base);
-  if (!digits) return null;
-  return `+${digits}`;
+  return normalizeEvolutionSender(remoteJid);
+}
+
+function extractEvolutionSenderPhone(msg: any, payload: any): string | null {
+  const candidates: Array<string | null | undefined> = [
+    msg?.key?.remoteJid,
+    msg?.key?.remoteJidAlt,
+    msg?.key?.senderPn,
+    msg?.key?.cleanedSenderPn,
+    msg?.key?.participant,
+    msg?.remoteJid,
+    payload?.data?.key?.remoteJid,
+    payload?.data?.key?.remoteJidAlt,
+    payload?.data?.key?.senderPn,
+    payload?.data?.key?.cleanedSenderPn,
+    payload?.data?.key?.participant,
+  ];
+
+  for (const candidate of candidates) {
+    const normalized = normalizeEvolutionSender(candidate);
+    if (normalized) return normalized;
+  }
+  return null;
 }
 
 function extractEvolutionMessageId(msg: any): string | null {
@@ -761,18 +788,30 @@ export async function webhookRoutes(
         });
       }
 
-      let queued = 0;
-      for (const msg of messages) {
-        if (!isEvolutionInboundMessage(msg)) continue;
+        let queued = 0;
+        for (const msg of messages) {
+          if (!isEvolutionInboundMessage(msg)) continue;
 
-        const messageId = extractEvolutionMessageId(msg) || crypto.randomUUID();
-        const remoteJid = msg?.key?.remoteJid || msg?.remoteJid || payload?.data?.key?.remoteJid;
-        if (typeof remoteJid === 'string' && remoteJid.includes('@g.us')) {
-          // Ignore group messages by default
-          continue;
-        }
+          const messageId = extractEvolutionMessageId(msg) || crypto.randomUUID();
+          const remoteJid =
+            msg?.key?.remoteJid
+            || msg?.key?.remoteJidAlt
+            || msg?.remoteJid
+            || payload?.data?.key?.remoteJid
+            || payload?.data?.key?.remoteJidAlt;
+          if (typeof remoteJid === 'string' && remoteJid.includes('@g.us')) {
+            // Ignore group messages by default
+            continue;
+          }
 
-        const senderPhone = evolutionRemoteJidToE164(remoteJid) || 'unknown';
+          const senderPhone = extractEvolutionSenderPhone(msg, payload);
+          if (!senderPhone) {
+            request.log.warn(
+              { messageId, event, remoteJid, key: msg?.key },
+              'Evolution message ignored: sender phone not resolved'
+            );
+            continue;
+          }
 
         // Dedupe
         const existing = await app.prisma.webhookInbox.findFirst({
