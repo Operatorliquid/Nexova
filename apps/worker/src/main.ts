@@ -24,7 +24,7 @@ const REDIS_HOST = process.env.REDIS_HOST || 'localhost';
 const REDIS_PORT = parseInt(process.env.REDIS_PORT || '6379', 10);
 const REDIS_PASSWORD = process.env.REDIS_PASSWORD || undefined;
 const REALTIME_CHANNEL = process.env.REALTIME_CHANNEL || 'nexova:realtime';
-const DEPLOY_STAMP = '2026-02-16.worker.5';
+const DEPLOY_STAMP = '2026-02-16.worker.6';
 
 const connection = {
   host: REDIS_HOST,

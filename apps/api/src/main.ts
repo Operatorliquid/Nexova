@@ -62,7 +62,7 @@ const __dirname = path.dirname(__filename);
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, '..', 'uploads');
 
 const prisma = new PrismaClient();
-const DEPLOY_STAMP = '2026-02-16.api.5';
+const DEPLOY_STAMP = '2026-02-16.api.6';
 
 // Redis connection for BullMQ
 const redisConnection = {
