@@ -100,6 +100,24 @@ function inferFileNameFromUrl(url: string, fallback: string): string {
   }
 }
 
+function renderInteractiveListFallback(payload: EvolutionInteractiveListPayload): string {
+  const body = (payload.body || '').trim();
+  const rows = payload.sections.flatMap((section) => section.rows || []);
+  const lines = rows.map((row, index) => {
+    const title = (row.title || '').trim();
+    const description = (row.description || '').trim();
+    if (description) return `${index + 1}. ${title} - ${description}`;
+    return `${index + 1}. ${title}`;
+  });
+
+  const footer =
+    lines.length > 0
+      ? '\n\nRespondé con la opción que querés.'
+      : '';
+
+  return `${body}${lines.length > 0 ? `\n\n${lines.join('\n')}` : ''}${footer}`.trim();
+}
+
 export class EvolutionError extends Error {
   constructor(
     message: string,
@@ -259,23 +277,29 @@ export class EvolutionClient extends EvolutionAdminClient {
       })),
     }));
 
-    const data = await this.request<any>('POST', `/message/sendList/${encodeURIComponent(this.instanceName)}`, {
-      number,
-      title,
-      description,
-      buttonText: normalizedButtonText,
-      footerText,
-      // v2.3.x validates `sections`; older builds used `values`.
-      sections,
-      values: sections,
-    });
+    try {
+      const data = await this.request<any>('POST', `/message/sendList/${encodeURIComponent(this.instanceName)}`, {
+        number,
+        title,
+        description,
+        buttonText: normalizedButtonText,
+        footerText,
+        // v2.3.x validates `sections`; older builds used `values`.
+        sections,
+        values: sections,
+      });
 
-    return {
-      messageId: data?.key?.id || '',
-      status: data?.status || 'PENDING',
-      to: number,
-      raw: data,
-    };
+      return {
+        messageId: data?.key?.id || '',
+        status: data?.status || 'PENDING',
+        to: number,
+        raw: data,
+      };
+    } catch {
+      // Some Evolution/Baileys builds fail sending ListMessage.
+      // Fallback to plain text so the conversation never gets stuck.
+      return this.sendText(to, renderInteractiveListFallback(payload));
+    }
   }
 
   async sendDocument(to: string, mediaUrl: string, caption?: string): Promise<EvolutionSendResponse> {
