@@ -556,7 +556,7 @@ export class AgentWorker {
           requestId: correlationId || String(job.id ?? 'agent-worker'),
         },
         async () => {
-          const runtimeSettings = await this.getWorkspaceRuntimeSettings(workspaceId);
+          let runtimeSettings = await this.getWorkspaceRuntimeSettings(workspaceId);
 
           // Get the message from webhook inbox (allow retrying failed messages)
           const webhookMessage = await this.prisma.webhookInbox.findFirst({
@@ -775,6 +775,20 @@ export class AgentWorker {
           }
 
           if (!isOwner && !this.isWithinBusinessHours(runtimeSettings, new Date())) {
+            // Re-read settings once (without cache) to avoid stale cache false negatives
+            // right after users update business schedule from dashboard.
+            runtimeSettings = await this.getWorkspaceRuntimeSettings(workspaceId, true);
+          }
+
+          if (!isOwner && !this.isWithinBusinessHours(runtimeSettings, new Date())) {
+            console.log(
+              `[AgentWorker] Outside working hours for workspace ${workspaceId} ` +
+              `(tz=${runtimeSettings.timezone}, continuous=${runtimeSettings.continuousHours}, ` +
+              `days=${runtimeSettings.workingDays.join(',')}, ` +
+              `hours=${runtimeSettings.workingHoursStart}-${runtimeSettings.workingHoursEnd}, ` +
+              `morning=${runtimeSettings.morningShiftStart}-${runtimeSettings.morningShiftEnd}, ` +
+              `afternoon=${runtimeSettings.afternoonShiftStart}-${runtimeSettings.afternoonShiftEnd})`
+            );
             await this.storeAssistantMessage(
               sessionId,
               OFF_HOURS_AUTO_REPLY,
@@ -1380,10 +1394,13 @@ export class AgentWorker {
     await new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  private async getWorkspaceRuntimeSettings(workspaceId: string): Promise<AgentRuntimeSettings> {
+  private async getWorkspaceRuntimeSettings(
+    workspaceId: string,
+    forceRefresh = false
+  ): Promise<AgentRuntimeSettings> {
     const cached = this.settingsCache.get(workspaceId);
     const now = Date.now();
-    if (cached && cached.expiresAt > now) {
+    if (!forceRefresh && cached && cached.expiresAt > now) {
       return cached.value;
     }
 
