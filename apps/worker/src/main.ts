@@ -269,7 +269,19 @@ async function processSendJob(job: Job<MessageSendPayload>): Promise<void> {
       if (content.mediaType === 'image' && content.mediaUrl) {
         result = await client.sendImage(normalizedTo, content.mediaUrl, content.text);
       } else if (content.mediaType === 'document' && content.mediaUrl) {
-        result = await client.sendDocument(normalizedTo, content.mediaUrl, content.text);
+        try {
+          result = await client.sendDocument(normalizedTo, content.mediaUrl, content.text);
+        } catch (error) {
+          const fallbackText =
+            'No pude adjuntar el archivo directamente. Te dejo el enlace:\n' + content.mediaUrl;
+          console.warn(
+            `[Worker] Evolution document send failed, falling back to link text: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+          result = await client.sendText(normalizedTo, fallbackText);
+          usageMessageType = 'text';
+        }
       } else {
         throw new Error(`Unsupported media type: ${content.mediaType}`);
       }

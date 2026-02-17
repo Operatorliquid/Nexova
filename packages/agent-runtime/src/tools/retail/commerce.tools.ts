@@ -9,7 +9,12 @@ import { BaseTool } from '../base.js';
 import { ToolCategory, ToolContext, ToolResult, CommerceProfile } from '../../types/index.js';
 import { CatalogPdfService, CatalogOptions, CatalogProductFilter, OrderReceiptPdfService, decrypt } from '@nexova/core';
 import { withVisibleOrders } from '../../utils/orders.js';
-import { EvolutionClient, InfobipClient, type MercadoPagoIntegrationService } from '@nexova/integrations';
+import {
+  EvolutionClient,
+  EvolutionError,
+  InfobipClient,
+  type MercadoPagoIntegrationService,
+} from '@nexova/integrations';
 import { LocalFileUploader } from '../../utils/file-uploader.js';
 import { randomUUID } from 'crypto';
 
@@ -497,6 +502,7 @@ export class SendCatalogPdfTool extends BaseTool<typeof SendCatalogPdfInput> {
       const caption = `📋 ${catalog.filename}`;
       const provider = (whatsappNumber.provider || 'infobip').toLowerCase();
       let result: { messageId: string; status: string; to: string };
+      let sentAsLinkFallback = false;
       if (provider === 'evolution') {
         const baseUrl = this.resolveEvolutionBaseUrl(whatsappNumber.apiUrl);
         const instanceName = this.getEvolutionInstanceName(whatsappNumber.providerConfig);
@@ -504,7 +510,15 @@ export class SendCatalogPdfTool extends BaseTool<typeof SendCatalogPdfInput> {
           return { success: false, error: 'Evolution no está configurado (baseUrl / instanceName).' };
         }
         const client = new EvolutionClient({ apiKey, baseUrl, instanceName });
-        result = await client.sendDocument(to, mediaUrl, caption);
+        try {
+          result = await client.sendDocument(to, mediaUrl, caption);
+        } catch (error) {
+          if (!(error instanceof EvolutionError)) throw error;
+          const fallbackText =
+            'No pude adjuntar el PDF directamente. Te dejo el enlace del catálogo:\n' + mediaUrl;
+          result = await client.sendText(to, fallbackText);
+          sentAsLinkFallback = true;
+        }
       } else {
         const client = new InfobipClient({
           apiKey,
@@ -524,9 +538,13 @@ export class SendCatalogPdfTool extends BaseTool<typeof SendCatalogPdfInput> {
             payload: {
               to,
               content: {
-                mediaType: 'document',
-                mediaUrl,
-                text: caption,
+                ...(sentAsLinkFallback
+                  ? { text: `No pude adjuntar el PDF directamente. Te dejo el enlace del catálogo:\n${mediaUrl}` }
+                  : {
+                      mediaType: 'document',
+                      mediaUrl,
+                      text: caption,
+                    }),
               },
               status: result.status,
             },
@@ -544,7 +562,9 @@ export class SendCatalogPdfTool extends BaseTool<typeof SendCatalogPdfInput> {
           productCount: catalog.productCount,
           pageCount: catalog.pageCount,
           filename: catalog.filename,
-          message: `Catálogo enviado${category ? ` de "${category}"` : ''}.`,
+          message: sentAsLinkFallback
+            ? `Catálogo enviado por enlace${category ? ` de "${category}"` : ''}.`
+            : `Catálogo enviado${category ? ` de "${category}"` : ''}.`,
         },
       };
     } catch (error) {

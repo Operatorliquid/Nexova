@@ -97,17 +97,30 @@ export class LocalFileUploader implements FileUploader {
         );
       }
 
-      const rawUrl = payload?.url;
-      if (typeof rawUrl === 'string' && rawUrl.trim()) {
-        return rawUrl;
-      }
-
       const relativeUrl = payload?.relativeUrl;
       if (typeof relativeUrl === 'string' && relativeUrl.trim()) {
         const publicBase = await this.resolvePublicBaseUrl();
         if (publicBase) {
           return `${publicBase}${relativeUrl.startsWith('/') ? '' : '/'}${relativeUrl}`;
         }
+      }
+
+      const rawUrl = payload?.url;
+      if (typeof rawUrl === 'string' && rawUrl.trim()) {
+        // When API responds with an internal/private host URL, prefer rebuilding
+        // with our configured public base to ensure WhatsApp providers can fetch it.
+        const publicBase = await this.resolvePublicBaseUrl();
+        if (publicBase) {
+          try {
+            const parsed = new URL(rawUrl);
+            if (parsed.pathname.startsWith('/uploads/')) {
+              return `${publicBase}${parsed.pathname}${parsed.search || ''}`;
+            }
+          } catch {
+            // Keep raw URL fallback below.
+          }
+        }
+        return rawUrl;
       }
 
       return null;
