@@ -18,6 +18,7 @@ export interface CommercePlanCapabilities {
   showBusinessInvoicingSettings: boolean;
   showArcaIntegration: boolean;
   showMercadoPagoIntegration: boolean;
+  showWhatsappAudioTranscription: boolean;
   autoDetectManualReceiptAmount: boolean;
   askInvoiceAfterOrder: boolean;
 }
@@ -54,6 +55,7 @@ const PLAN_CAPABILITIES: Record<CommercePlan, CommercePlanCapabilities> = {
     showBusinessInvoicingSettings: false,
     showArcaIntegration: false,
     showMercadoPagoIntegration: false,
+    showWhatsappAudioTranscription: false,
     autoDetectManualReceiptAmount: false,
     askInvoiceAfterOrder: false,
   },
@@ -70,6 +72,7 @@ const PLAN_CAPABILITIES: Record<CommercePlan, CommercePlanCapabilities> = {
     showBusinessInvoicingSettings: true,
     showArcaIntegration: true,
     showMercadoPagoIntegration: true,
+    showWhatsappAudioTranscription: false,
     autoDetectManualReceiptAmount: true,
     askInvoiceAfterOrder: true,
   },
@@ -86,6 +89,7 @@ const PLAN_CAPABILITIES: Record<CommercePlan, CommercePlanCapabilities> = {
     showBusinessInvoicingSettings: true,
     showArcaIntegration: true,
     showMercadoPagoIntegration: true,
+    showWhatsappAudioTranscription: true,
     autoDetectManualReceiptAmount: true,
     askInvoiceAfterOrder: true,
   },

@@ -14,6 +14,26 @@ interface AdminStats {
   whatsappNumbers: { total: number };
 }
 
+interface AdminMonthlyUsage {
+  period: {
+    month: string;
+    start: string;
+    end: string;
+  };
+  totals: {
+    ordersCreated: number;
+    aiMetricsInsights: number;
+    aiCustomerSummaries: number;
+    debtReminders: number;
+    audioTranscriptions: number;
+  };
+  topAudioWorkspaces: Array<{
+    workspaceId: string;
+    workspaceName: string;
+    quantity: number;
+  }>;
+}
+
 interface AdminUser {
   id: string;
   email: string;
@@ -107,6 +127,7 @@ export default function AdminDashboard() {
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [recentUsers, setRecentUsers] = useState<AdminUser[]>([]);
   const [recentWorkspaces, setRecentWorkspaces] = useState<AdminWorkspace[]>([]);
+  const [monthlyUsage, setMonthlyUsage] = useState<AdminMonthlyUsage | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isPaywallPreviewOpen, setIsPaywallPreviewOpen] = useState(false);
@@ -117,10 +138,11 @@ export default function AdminDashboard() {
     else setIsLoading(true);
 
     try {
-      const [statsRes, usersRes, workspacesRes] = await Promise.all([
+      const [statsRes, usersRes, workspacesRes, usageRes] = await Promise.all([
         apiFetch('/api/v1/admin/stats'),
         apiFetch('/api/v1/admin/users?limit=5&page=1'),
         apiFetch('/api/v1/admin/workspaces?limit=5&page=1'),
+        apiFetch('/api/v1/admin/usage/monthly'),
       ]);
 
       if (!statsRes.ok) throw new Error(await readApiError(statsRes, 'No se pudieron cargar las métricas'));
@@ -128,16 +150,21 @@ export default function AdminDashboard() {
       if (!workspacesRes.ok) {
         throw new Error(await readApiError(workspacesRes, 'No se pudieron cargar los negocios'));
       }
+      if (!usageRes.ok) {
+        throw new Error(await readApiError(usageRes, 'No se pudieron cargar las métricas de uso'));
+      }
 
-      const [statsData, usersData, workspacesData] = await Promise.all([
+      const [statsData, usersData, workspacesData, usageData] = await Promise.all([
         statsRes.json() as Promise<{ stats: AdminStats }>,
         usersRes.json() as Promise<{ users: AdminUser[] }>,
         workspacesRes.json() as Promise<{ workspaces: AdminWorkspace[] }>,
+        usageRes.json() as Promise<AdminMonthlyUsage>,
       ]);
 
       setStats(statsData.stats);
       setRecentUsers(usersData.users || []);
       setRecentWorkspaces(workspacesData.workspaces || []);
+      setMonthlyUsage(usageData);
     } catch (error) {
       toastError(error instanceof Error ? error.message : 'No se pudo cargar el dashboard admin');
     } finally {
@@ -185,6 +212,37 @@ export default function AdminDashboard() {
         <StatCard label="Mensajes" value={(stats?.messages.total ?? 0).toString()} icon={MessageSquare} color="cyan" isLoading={isLoading} />
         <StatCard label="Números WhatsApp" value={(stats?.whatsappNumbers.total ?? 0).toString()} icon={Phone} color="emerald" isLoading={isLoading} />
       </AnimatedStagger>
+
+      <div className="glass-card rounded-2xl p-5 space-y-4">
+        <div className="flex flex-col gap-1">
+          <h3 className="font-semibold text-foreground">Uso mensual (UTC)</h3>
+          <p className="text-sm text-muted-foreground">
+            {monthlyUsage?.period?.month ? `Periodo ${monthlyUsage.period.month}` : 'Periodo actual'}
+          </p>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
+          <div className="rounded-xl border border-border/70 bg-secondary/30 p-3">
+            <p className="text-xs text-muted-foreground">Pedidos creados</p>
+            <p className="text-lg font-semibold text-foreground">{monthlyUsage?.totals.ordersCreated ?? 0}</p>
+          </div>
+          <div className="rounded-xl border border-border/70 bg-secondary/30 p-3">
+            <p className="text-xs text-muted-foreground">Insights IA</p>
+            <p className="text-lg font-semibold text-foreground">{monthlyUsage?.totals.aiMetricsInsights ?? 0}</p>
+          </div>
+          <div className="rounded-xl border border-border/70 bg-secondary/30 p-3">
+            <p className="text-xs text-muted-foreground">Resúmenes IA clientes</p>
+            <p className="text-lg font-semibold text-foreground">{monthlyUsage?.totals.aiCustomerSummaries ?? 0}</p>
+          </div>
+          <div className="rounded-xl border border-border/70 bg-secondary/30 p-3">
+            <p className="text-xs text-muted-foreground">Recordatorios de deuda</p>
+            <p className="text-lg font-semibold text-foreground">{monthlyUsage?.totals.debtReminders ?? 0}</p>
+          </div>
+          <div className="rounded-xl border border-border/70 bg-secondary/30 p-3">
+            <p className="text-xs text-muted-foreground">Audios transcritos</p>
+            <p className="text-lg font-semibold text-foreground">{monthlyUsage?.totals.audioTranscriptions ?? 0}</p>
+          </div>
+        </div>
+      </div>
 
       <div className="glass-card rounded-2xl p-5 space-y-4">
         <div className="flex flex-col gap-1">

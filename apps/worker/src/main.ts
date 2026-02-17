@@ -7,7 +7,9 @@ import { PrismaClient, Prisma } from '@prisma/client';
 import { Redis } from 'ioredis';
 import {
   QUEUES,
+  AgentProcessPayload,
   MessageSendPayload,
+  AudioTranscriptionPayload,
   OutboxRelayPayload,
   WebhookRetryPayload,
 } from '@nexova/shared';
@@ -18,6 +20,7 @@ import { createDebtReminderProcessor } from './jobs/debt-reminder.job.js';
 import { createOutboxRelayProcessor } from './jobs/outbox-relay.job.js';
 import { createWebhookRetryProcessor } from './jobs/webhook-retry.job.js';
 import { createScheduledProcessor, scheduleDefaultJobs } from './jobs/scheduled.job.js';
+import { createAudioTranscriptionProcessor } from './jobs/audio-transcription.job.js';
 
 // Configuration
 const REDIS_HOST = process.env.REDIS_HOST || 'localhost';
@@ -459,9 +462,10 @@ async function startWorkers(): Promise<void> {
   console.log(`[Worker] Redis: ${REDIS_HOST}:${REDIS_PORT}`);
 
   // Queues
-  const agentQueue = new Queue(QUEUES.AGENT_PROCESS.name, { connection });
+  const agentQueue = new Queue<AgentProcessPayload>(QUEUES.AGENT_PROCESS.name, { connection });
   const messageQueue = new Queue(QUEUES.MESSAGE_SEND.name, { connection });
   const debtReminderQueue = new Queue(QUEUES.DEBT_REMINDER.name, { connection });
+  const audioTranscriptionQueue = new Queue<AudioTranscriptionPayload>(QUEUES.AUDIO_TRANSCRIPTION.name, { connection });
   const outboxQueue = new Queue(QUEUES.OUTBOX_RELAY.name, { connection });
   const webhookRetryQueue = new Queue(QUEUES.WEBHOOK_RETRY.name, { connection });
   const scheduledQueue = new Queue(QUEUES.SCHEDULED.name, { connection });
@@ -558,6 +562,29 @@ async function startWorkers(): Promise<void> {
     }
   );
 
+  // Audio transcription worker
+  const audioTranscriptionProcessor = createAudioTranscriptionProcessor(prisma, agentQueue, messageQueue);
+  const audioTranscriptionWorker = new Worker(
+    QUEUES.AUDIO_TRANSCRIPTION.name,
+    audioTranscriptionProcessor,
+    {
+      connection,
+      concurrency: QUEUES.AUDIO_TRANSCRIPTION.concurrency,
+    }
+  );
+
+  audioTranscriptionWorker.on('completed', (job) => {
+    console.log(`[Worker] Audio transcription job ${job.id} completed`);
+  });
+
+  audioTranscriptionWorker.on('failed', (job, err) => {
+    console.error(`[Worker] Audio transcription job ${job?.id} failed:`, err.message);
+  });
+
+  audioTranscriptionWorker.on('error', (err) => {
+    console.error('[Worker] Audio transcription worker error:', err);
+  });
+
   // Schedule repeating jobs
   await debtReminderQueue.add(
     'daily-reminder',
@@ -590,6 +617,7 @@ async function startWorkers(): Promise<void> {
   console.log(`[Worker] Agent worker concurrency: ${QUEUES.AGENT_PROCESS.concurrency}`);
   console.log(`[Worker] Send worker concurrency: ${QUEUES.MESSAGE_SEND.concurrency}`);
   console.log(`[Worker] Debt reminder worker concurrency: ${QUEUES.DEBT_REMINDER.concurrency}`);
+  console.log(`[Worker] Audio transcription worker concurrency: ${QUEUES.AUDIO_TRANSCRIPTION.concurrency}`);
 
   // Graceful shutdown
   const shutdown = async (signal: string) => {
@@ -601,12 +629,14 @@ async function startWorkers(): Promise<void> {
     await outboxWorker.close();
     await webhookRetryWorker.close();
     await scheduledWorker.close();
+    await audioTranscriptionWorker.close();
     await agentQueue.close();
     await messageQueue.close();
     await debtReminderQueue.close();
     await outboxQueue.close();
     await webhookRetryQueue.close();
     await scheduledQueue.close();
+    await audioTranscriptionQueue.close();
     await realtimePublisher.quit();
     await prisma.$disconnect();
 

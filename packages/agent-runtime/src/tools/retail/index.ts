@@ -3,11 +3,13 @@
  * Exports all retail-specific tools and initializer
  */
 import { PrismaClient } from '@prisma/client';
+import { Queue } from 'bullmq';
 import { BaseTool } from '../base.js';
 import { ToolRegistry, toolRegistry } from '../registry.js';
 import { MemoryManager } from '../../core/memory-manager.js';
 import { LedgerService } from '@nexova/core';
 import type { MercadoPagoIntegrationService } from '@nexova/integrations';
+import type { AudioTranscriptionPayload } from '@nexova/shared';
 
 // Import tool creators
 import { createCustomerTools } from './customer.tools.js';
@@ -19,6 +21,7 @@ import { createCommerceTools } from './commerce.tools.js';
 import { createSystemTools } from './system.tools.js';
 import { createPaymentTools, type PaymentToolsDependencies } from './payment.tools.js';
 import { createCatalogTools, type CatalogToolsDependencies, type FileUploader } from './catalog.tools.js';
+import { createAudioTools } from './audio.tools.js';
 
 // Re-export individual tools for direct access if needed
 export * from './customer.tools.js';
@@ -30,6 +33,7 @@ export * from './commerce.tools.js';
 export * from './system.tools.js';
 export * from './payment.tools.js';
 export * from './catalog.tools.js';
+export * from './audio.tools.js';
 
 /**
  * Dependencies for retail tools initialization
@@ -42,6 +46,9 @@ export interface RetailToolsDependencies {
   catalogDeps?: {
     messageQueue: CatalogToolsDependencies['messageQueue'];
     fileUploader: FileUploader;
+  };
+  audioDeps?: {
+    queue: Queue<AudioTranscriptionPayload>;
   };
 }
 
@@ -57,6 +64,9 @@ export function createAllRetailTools(
     catalogDeps?: {
       messageQueue: CatalogToolsDependencies['messageQueue'];
       fileUploader: FileUploader;
+    };
+    audioDeps?: {
+      queue: Queue<AudioTranscriptionPayload>;
     };
   }
 ): BaseTool<any, any>[] {
@@ -92,6 +102,16 @@ export function createAllRetailTools(
     );
   }
 
+  // Add audio tools (owner/manual transcription)
+  if (options?.audioDeps) {
+    tools.push(
+      ...createAudioTools({
+        prisma,
+        queue: options.audioDeps.queue,
+      })
+    );
+  }
+
   return tools;
 }
 
@@ -108,6 +128,9 @@ export function initializeRetailTools(
     catalogDeps?: {
       messageQueue: CatalogToolsDependencies['messageQueue'];
       fileUploader: FileUploader;
+    };
+    audioDeps?: {
+      queue: Queue<AudioTranscriptionPayload>;
     };
   }
 ): void {

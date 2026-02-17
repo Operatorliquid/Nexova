@@ -47,6 +47,7 @@ model Workspace {
   orders          Order[]
   agentSessions   AgentSession[]
   webhookInbox    WebhookInbox[]
+  audioTranscriptions AudioTranscription[]
   eventOutbox     EventOutbox[]
   auditLogs       AuditLog[]
   usageRecords    UsageRecord[]
@@ -525,6 +526,7 @@ model AgentSession {
   toolExecutions  AgentToolExecution[]
   handoffRequests HandoffRequest[]
   receipts        Receipt[]
+  audioTranscriptions AudioTranscription[]
 
   @@unique([workspaceId, channelId, channelType])
   @@index([workspaceId, currentState])
@@ -747,6 +749,7 @@ model WebhookInbox {
 
   // Relations
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  audioTranscriptions AudioTranscription[]
 
   // Idempotency: same webhook from same provider should be unique per workspace
   @@unique([workspaceId, provider, externalId])
@@ -756,6 +759,56 @@ model WebhookInbox {
   @@index([correlationId])
   @@index([receivedAt])
   @@map("webhook_inbox")
+}
+
+/// AudioTranscription tracks WhatsApp audio-to-text processing lifecycle.
+model AudioTranscription {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId   String    @map("workspace_id") @db.Uuid
+  webhookInboxId String?  @map("webhook_inbox_id") @db.Uuid
+  sessionId     String?   @map("session_id") @db.Uuid
+  /// Source provider (infobip, evolution)
+  provider      String    @db.VarChar(50)
+  /// External message ID (provider message id)
+  messageId     String    @map("message_id") @db.VarChar(255)
+  /// Channel identifier (usually customer phone)
+  channelId     String?   @map("channel_id") @db.VarChar(100)
+  /// Processing status: pending, processing, completed, failed, skipped
+  status        String    @default("pending") @db.VarChar(20)
+  /// Audio MIME type when available
+  mimeType      String?   @map("mime_type") @db.VarChar(100)
+  /// Audio file size in bytes
+  sizeBytes     BigInt?   @map("size_bytes")
+  /// Audio duration in milliseconds
+  durationMs    Int?      @map("duration_ms")
+  /// Transcript language code (e.g. es, en)
+  language      String?   @db.VarChar(20)
+  /// Final transcript text
+  transcript    String?   @db.Text
+  /// Model confidence score (0-1) if provided
+  confidence    Float?
+  /// Last error message when processing fails
+  errorMessage  String?   @map("error_message") @db.Text
+  /// How many attempts were executed
+  attemptCount  Int       @default(0) @map("attempt_count")
+  /// STT provider/model metadata, file refs, diagnostics
+  metadata      Json      @default("{}")
+  startedAt     DateTime? @map("started_at")
+  completedAt   DateTime? @map("completed_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  webhookInbox WebhookInbox? @relation(fields: [webhookInboxId], references: [id], onDelete: SetNull)
+  session     AgentSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+
+  @@unique([workspaceId, provider, messageId])
+  @@index([workspaceId, status, createdAt])
+  @@index([webhookInboxId])
+  @@index([sessionId])
+  @@index([provider, messageId])
+  @@map("audio_transcriptions")
 }
 
 /// EventOutbox implements the transactional outbox pattern for event-driven architecture.

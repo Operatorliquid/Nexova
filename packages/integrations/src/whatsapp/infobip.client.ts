@@ -51,10 +51,13 @@ export interface IncomingWhatsAppMessage {
   to: string;
   receivedAt: Date;
   content: {
-    type: 'text' | 'image' | 'document' | 'location' | 'contact';
+    type: 'text' | 'image' | 'document' | 'audio' | 'location' | 'contact';
     text?: string;
     mediaUrl?: string;
     caption?: string;
+    mimeType?: string;
+    fileName?: string;
+    durationMs?: number;
     latitude?: number;
     longitude?: number;
   };
@@ -408,6 +411,24 @@ export class InfobipClient {
       const contentType = typeof content?.type === 'string' ? content.type.toUpperCase() : '';
       const messageType = typeof result.message?.type === 'string' ? result.message.type.toUpperCase() : '';
       const interactiveType = messageType || contentType;
+      const mediaUrl = content?.mediaUrl || content?.url || result.message?.url || result.message?.mediaUrl;
+      const mimeType = content?.mimeType || content?.mimetype || result.message?.mimeType || result.message?.mimetype;
+      const fileName = content?.fileName || content?.filename || result.message?.fileName || result.message?.filename;
+      const durationRaw = content?.duration || result.message?.duration || result.message?.durationMs || result.message?.audioDuration;
+      const durationMs =
+        typeof durationRaw === 'number' && Number.isFinite(durationRaw)
+          ? Math.trunc(durationRaw)
+          : typeof durationRaw === 'string'
+            ? Number.parseInt(durationRaw.trim(), 10)
+            : undefined;
+      const isAudioType =
+        contentType === 'AUDIO'
+        || contentType === 'VOICE'
+        || contentType === 'VOICE_MESSAGE'
+        || messageType === 'AUDIO'
+        || messageType === 'VOICE'
+        || messageType === 'VOICE_MESSAGE';
+      const isAudioMime = typeof mimeType === 'string' && mimeType.toLowerCase().startsWith('audio/');
 
       if (interactiveType.includes('INTERACTIVE') || interactiveType.includes('BUTTON_REPLY')) {
         const replyId = result.message?.id || content?.id || result.message?.payload || content?.payload;
@@ -422,21 +443,32 @@ export class InfobipClient {
           text: content?.text || result.message.text,
         };
       } else if (
-        (content?.mediaUrl || content?.url) &&
+        (mediaUrl || result.message?.audioUrl) &&
+        (isAudioType || isAudioMime || !!result.message?.audioUrl)
+      ) {
+        message.content = {
+          type: 'audio',
+          mediaUrl: mediaUrl || result.message?.audioUrl,
+          mimeType,
+          fileName,
+          ...(Number.isFinite(durationMs as number) ? { durationMs: durationMs as number } : {}),
+        };
+      } else if (
+        mediaUrl &&
         content?.type?.toLowerCase() === 'image'
       ) {
         message.content = {
           type: 'image',
-          mediaUrl: content.mediaUrl || content.url,
+          mediaUrl,
           caption: content.caption,
         };
       } else if (
-        (content?.mediaUrl || content?.url) &&
+        mediaUrl &&
         content?.type?.toLowerCase() === 'document'
       ) {
         message.content = {
           type: 'document',
-          mediaUrl: content.mediaUrl || content.url,
+          mediaUrl,
           caption: content.caption,
         };
       } else if (result.message?.imageUrl) {

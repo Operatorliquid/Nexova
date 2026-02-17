@@ -273,7 +273,10 @@ export interface FileUploader {
     buffer: Buffer,
     filename: string,
     mimeType: string,
-    workspaceId: string
+    workspaceId: string,
+    options?: {
+      category?: string;
+    }
   ): Promise<string>;
 }
 

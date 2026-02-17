@@ -11,6 +11,7 @@ import type { Queue } from 'bullmq';
 import {
   getCommercePlanCapabilities,
   resolveCommercePlan,
+  type AudioTranscriptionPayload,
   type MessageSendPayload,
 } from '@nexova/shared';
 
@@ -58,6 +59,9 @@ export interface AgentDependencies {
   catalogDeps?: {
     messageQueue: Queue<MessageSendPayload>;
     fileUploader: FileUploader;
+  };
+  audioDeps?: {
+    queue: Queue<AudioTranscriptionPayload>;
   };
 }
 
@@ -251,6 +255,7 @@ export class RetailAgent {
       ledgerService,
       mpService,
       ...(this.deps.catalogDeps ? { catalogDeps: this.deps.catalogDeps } : {}),
+      ...(this.deps.audioDeps ? { audioDeps: this.deps.audioDeps } : {}),
     });
     ownerRegistry.registerAll(
       createAdminTools(this.prisma, {
@@ -646,6 +651,9 @@ export class RetailAgent {
         'get_full_stock',
         // Stock mutations
         'adjust_stock',
+        // Audio tools
+        'transcribe_audio_message',
+        'get_audio_transcript',
       ]);
       const tools = registry
         .getToolDefinitions()

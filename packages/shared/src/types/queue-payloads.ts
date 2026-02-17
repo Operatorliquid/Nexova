@@ -165,6 +165,37 @@ export interface DebtReminderPayload {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// audio:transcription
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface AudioTranscriptionPayload {
+  /** Workspace ID */
+  workspaceId: string;
+  /** Audio transcription record ID */
+  audioTranscriptionId: string;
+  /** Source webhook inbox record ID */
+  webhookInboxId?: string;
+  /** Source provider message ID */
+  messageId: string;
+  /** Source provider */
+  provider: 'infobip' | 'evolution' | string;
+  /** Channel identifier (usually customer phone) */
+  channelId?: string;
+  /** Correlation ID for tracing */
+  correlationId?: string;
+  /** Force reprocessing even if already completed */
+  force?: boolean;
+  /** Additional metadata */
+  metadata?: {
+    fileRef?: string;
+    mimeType?: string;
+    sizeBytes?: number;
+    durationMs?: number;
+    languageHint?: string;
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // dlq:failed (Dead Letter Queue)
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -197,4 +228,5 @@ export type QueuePayload =
   | ScheduledJobPayload
   | NotificationPayload
   | DebtReminderPayload
+  | AudioTranscriptionPayload
   | DLQPayload;

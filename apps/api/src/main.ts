@@ -40,6 +40,7 @@ import { stockReceiptsRoutes } from './routes/v1/stock-receipts.routes.js';
 import { analyticsRoutes } from './routes/v1/analytics.routes.js';
 import { notificationsRoutes } from './routes/v1/notifications.routes.js';
 import { billingRoutes } from './routes/v1/billing.routes.js';
+import { audioTranscriptionsRoutes } from './routes/v1/audio-transcriptions.routes.js';
 
 const loadEnvFile = () => {
   const candidates = [
@@ -73,6 +74,7 @@ const redisConnection = {
 
 // Initialize queues
 let agentQueue: Queue | undefined;
+let audioTranscriptionQueue: Queue | undefined;
 
 async function bootstrap() {
   const app = Fastify({
@@ -139,6 +141,13 @@ async function bootstrap() {
         removeOnFail: 1000,
       },
     });
+    audioTranscriptionQueue = new Queue(QUEUES.AUDIO_TRANSCRIPTION.name, {
+      connection: redisConnection,
+      defaultJobOptions: {
+        removeOnComplete: 100,
+        removeOnFail: 1000,
+      },
+    });
     logger.info('BullMQ agent queue initialized');
   } catch (error) {
     logger.warn({ error }, 'Failed to initialize BullMQ queue - webhooks will store but not process');
@@ -148,9 +157,9 @@ async function bootstrap() {
   await app.register(healthRoutes, { prefix: '/health' });
 
   // Webhook routes (no auth - verified by signature)
-  await app.register(webhookRoutes, { prefix: '/api/v1/webhooks', queue: agentQueue });
+  await app.register(webhookRoutes, { prefix: '/api/v1/webhooks', queue: agentQueue, audioQueue: audioTranscriptionQueue });
   // Also register at /api/whatsapp for simpler Infobip config
-  await app.register(webhookRoutes, { prefix: '/api/whatsapp', queue: agentQueue });
+  await app.register(webhookRoutes, { prefix: '/api/whatsapp', queue: agentQueue, audioQueue: audioTranscriptionQueue });
 
   // API v1 routes
   await app.register(authRoutes, { prefix: '/api/v1/auth' });
@@ -165,6 +174,10 @@ async function bootstrap() {
   await app.register(ordersRoutes, { prefix: '/api/v1/orders' });
   await app.register(notificationsRoutes, { prefix: '/api/v1/notifications' });
   await app.register(billingRoutes, { prefix: '/api/v1/billing' });
+  await app.register(audioTranscriptionsRoutes, {
+    prefix: '/api/v1/workspaces',
+    queue: audioTranscriptionQueue,
+  });
   await app.register(uploadsRoutes, { prefix: '/api/v1/uploads' });
   await app.register(stockReceiptsRoutes, { prefix: '/api/v1/stock-receipts' });
   await app.register(analyticsRoutes, { prefix: '/api/v1/analytics' });
@@ -177,6 +190,9 @@ async function bootstrap() {
       await app.close();
       if (agentQueue) {
         await agentQueue.close();
+      }
+      if (audioTranscriptionQueue) {
+        await audioTranscriptionQueue.close();
       }
       await prisma.$disconnect();
       process.exit(0);

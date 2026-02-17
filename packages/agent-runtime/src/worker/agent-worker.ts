@@ -19,11 +19,16 @@ import {
   QUEUES,
   AgentProcessPayload,
   MessageSendPayload,
+  AudioTranscriptionPayload,
   getCommercePlanCapabilities,
   resolveCommercePlan,
 } from '@nexova/shared';
 import { decrypt, runWithContext } from '@nexova/core';
 import { LocalFileUploader } from '../utils/file-uploader.js';
+import {
+  extractAudioTranscriptFromPayload,
+  isAwaitingAudioTranscriptionPayload,
+} from './payload-audio.utils.js';
 
 // Max consecutive failures before triggering handoff
 const MAX_FAILURES_BEFORE_HANDOFF = 2;
@@ -341,6 +346,7 @@ export class AgentWorker {
   private dlqQueue: Queue | null = null;
   private messageQueue: Queue<MessageSendPayload> | null = null;
   private agentQueue: Queue<AgentProcessPayload> | null = null;
+  private audioTranscriptionQueue: Queue<AudioTranscriptionPayload> | null = null;
   private prisma: PrismaClient;
   private redis: InstanceType<typeof Redis>;
   private agent: RetailAgent;
@@ -368,6 +374,9 @@ export class AgentWorker {
     this.agentQueue = new Queue(QUEUES.AGENT_PROCESS.name, {
       connection: this.redisConnection,
     });
+    this.audioTranscriptionQueue = new Queue(QUEUES.AUDIO_TRANSCRIPTION.name, {
+      connection: this.redisConnection,
+    });
 
     // Create Redis connection for memory manager
     this.redis = new Redis({
@@ -383,6 +392,9 @@ export class AgentWorker {
     }, {
       catalogDeps: this.messageQueue
         ? { messageQueue: this.messageQueue, fileUploader: new LocalFileUploader() }
+        : undefined,
+      audioDeps: this.audioTranscriptionQueue
+        ? { queue: this.audioTranscriptionQueue }
         : undefined,
     });
 
@@ -565,6 +577,19 @@ export class AgentWorker {
           const messageContent = this.extractMessageContent(payload);
 
           if (!messageContent) {
+            if (this.isAwaitingAudioTranscription(payload)) {
+              console.log(
+                `[AgentWorker] Audio message ${webhookMessage.externalId} awaiting transcription, skipping`
+              );
+              await this.prisma.webhookInbox.updateMany({
+                where: { id: webhookMessage.id, workspaceId },
+                data: {
+                  status: 'pending',
+                  errorMessage: null,
+                },
+              });
+              return { status: 'skipped', reason: 'awaiting_audio_transcription' };
+            }
             console.warn(`[AgentWorker] Could not extract message content from payload`);
             await this.prisma.webhookInbox.updateMany({
               where: { id: webhookMessage.id, workspaceId },
@@ -775,6 +800,40 @@ export class AgentWorker {
               },
             });
             return { status: 'completed', reason: 'outside_working_hours' };
+          }
+
+          const stickerOnlyBatch =
+            !isOwner &&
+            sortedBatch.length > 0 &&
+            sortedBatch.every((entry) => this.isStickerPlaceholder(entry.content));
+
+          if (stickerOnlyBatch) {
+            const stickerReply = '🙂';
+            await this.storeAssistantMessage(
+              sessionId,
+              stickerReply,
+              `${correlationId}:sticker_auto_reply`
+            );
+            await this.sendWhatsAppMessage(
+              workspaceId,
+              normalizedSenderPhone,
+              stickerReply,
+              correlationId,
+              sessionId
+            );
+            await this.prisma.agentSession.updateMany({
+              where: { id: sessionId, workspaceId },
+              data: { lastActivityAt: new Date() },
+            });
+            await this.prisma.webhookInbox.updateMany({
+              where: { id: { in: sortedBatch.map((b) => b.webhook.id) }, workspaceId },
+              data: {
+                status: 'completed',
+                processedAt: new Date(),
+                result: { status: 'completed', reason: 'sticker_auto_reply', batchSize: sortedBatch.length },
+              },
+            });
+            return { status: 'completed', reason: 'sticker_auto_reply' };
           }
 
           let combinedMessage = this.buildCoalescedMessage(sortedBatch, runtimeSettings.coalesceJoiner);
@@ -1525,6 +1584,9 @@ export class AgentWorker {
 
       const content = this.extractMessageContent(payload);
       if (!content) {
+        if (this.isAwaitingAudioTranscription(payload)) {
+          continue;
+        }
         toFail.push(candidate);
         continue;
       }
@@ -1570,10 +1632,29 @@ export class AgentWorker {
       .join(separator);
   }
 
+  private isStickerPlaceholder(content: string): boolean {
+    const normalized = (content || '').trim().toLowerCase();
+    if (!normalized) return false;
+    return normalized.includes('cliente envió un sticker') || normalized.includes('cliente envio un sticker');
+  }
+
+  private isAwaitingAudioTranscription(payload: any): boolean {
+    return isAwaitingAudioTranscriptionPayload(payload);
+  }
+
   /**
    * Extract message content from provider payload (Infobip / Evolution)
    */
   private extractMessageContent(payload: any): string | null {
+    const nexovaMeta = payload?.__nexova;
+    if (nexovaMeta?.sticker === true) {
+      return 'El cliente envió un sticker.';
+    }
+    const audioTranscript = extractAudioTranscriptFromPayload(payload) || '';
+    if (audioTranscript) {
+      return audioTranscript;
+    }
+
     // Evolution (Baileys) webhook format (we store one message per webhook row under payload.data)
     const evoEvent = typeof payload?.event === 'string' ? payload.event.toUpperCase() : '';
     const evoMsg = payload?.data;
@@ -1600,6 +1681,20 @@ export class AgentWorker {
         || msg;
 
       const message = unwrap(evoMsg?.message || evoMsg);
+
+      const stickerMessage = message?.stickerMessage;
+      const imageMime =
+        typeof message?.imageMessage?.mimetype === 'string'
+          ? message.imageMessage.mimetype.toLowerCase().trim()
+          : '';
+      const imageCaption =
+        typeof message?.imageMessage?.caption === 'string'
+          ? message.imageMessage.caption.trim()
+          : '';
+      const looksLikeStickerFromImage = !!message?.imageMessage && imageMime.includes('webp') && !imageCaption;
+      if (stickerMessage || looksLikeStickerFromImage) {
+        return 'El cliente envió un sticker.';
+      }
 
       const selectedRowId =
         message?.listResponseMessage?.singleSelectReply?.selectedRowId
@@ -1707,6 +1802,9 @@ export class AgentWorker {
 
   private extractAttachment(payload: any): { fileRef: string; fileType: 'image' | 'pdf'; caption?: string } | null {
     const pre = payload?.__nexova?.attachment;
+    if (payload?.__nexova?.sticker === true) {
+      return null;
+    }
     if (pre && typeof pre === 'object') {
       const fileRef = typeof (pre as any).fileRef === 'string' ? (pre as any).fileRef : '';
       const fileTypeRaw = typeof (pre as any).fileType === 'string' ? (pre as any).fileType : '';
@@ -1727,8 +1825,26 @@ export class AgentWorker {
         : typeof content?.url === 'string'
           ? content.url
           : null;
+    const contentType = typeof content?.type === 'string' ? content.type.toLowerCase().trim() : '';
+    const messageType = typeof result?.message?.type === 'string' ? result.message.type.toLowerCase().trim() : '';
+    const mediaMime =
+      typeof content?.mimetype === 'string'
+        ? content.mimetype.toLowerCase().trim()
+        : typeof content?.mimeType === 'string'
+          ? content.mimeType.toLowerCase().trim()
+          : typeof content?.mediaType === 'string'
+            ? content.mediaType.toLowerCase().trim()
+            : '';
+    const caption = typeof content?.caption === 'string' ? content.caption : undefined;
+    const looksLikeSticker =
+      contentType.includes('sticker')
+      || messageType.includes('sticker')
+      || (mediaMime.includes('webp') && !caption);
+    if (looksLikeSticker) {
+      return null;
+    }
     if (mediaUrl) {
-      const type = typeof content.type === 'string' ? content.type.toLowerCase() : '';
+      const type = contentType;
       if (type === 'image') {
         return { fileRef: mediaUrl, fileType: 'image', caption: content.caption };
       }
@@ -2274,6 +2390,10 @@ export class AgentWorker {
     if (this.agentQueue) {
       await this.agentQueue.close();
       this.agentQueue = null;
+    }
+    if (this.audioTranscriptionQueue) {
+      await this.audioTranscriptionQueue.close();
+      this.audioTranscriptionQueue = null;
     }
 
     await this.redis.quit();

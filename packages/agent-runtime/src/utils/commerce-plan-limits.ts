@@ -37,12 +37,14 @@ function pickPlanLimitConfig(value: unknown): Partial<CommercePlanLimitConfig> {
   const aiMetricsInsightsPerMonth = normalizeLimit(obj.aiMetricsInsightsPerMonth);
   const aiCustomerSummariesPerMonth = normalizeLimit(obj.aiCustomerSummariesPerMonth);
   const debtRemindersPerMonth = normalizeLimit(obj.debtRemindersPerMonth);
+  const audioTranscriptionsPerMonth = normalizeLimit(obj.audioTranscriptionsPerMonth);
 
   return {
     ...(ordersPerMonth !== undefined ? { ordersPerMonth } : {}),
     ...(aiMetricsInsightsPerMonth !== undefined ? { aiMetricsInsightsPerMonth } : {}),
     ...(aiCustomerSummariesPerMonth !== undefined ? { aiCustomerSummariesPerMonth } : {}),
     ...(debtRemindersPerMonth !== undefined ? { debtRemindersPerMonth } : {}),
+    ...(audioTranscriptionsPerMonth !== undefined ? { audioTranscriptionsPerMonth } : {}),
   };
 }
 
@@ -84,4 +86,3 @@ export async function getEffectivePlanLimits(
     return defaults;
   }
 }
-

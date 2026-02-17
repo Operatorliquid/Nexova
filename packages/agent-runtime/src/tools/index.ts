@@ -21,3 +21,4 @@ export * from './retail/cart.tools.js';
 export * from './retail/order.tools.js';
 export * from './retail/commerce.tools.js';
 export * from './retail/system.tools.js';
+export * from './retail/audio.tools.js';

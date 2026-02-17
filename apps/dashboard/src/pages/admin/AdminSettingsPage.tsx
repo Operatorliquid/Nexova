@@ -75,18 +75,21 @@ type PlanLimitsForm = {
     aiMetricsInsightsPerMonth: string;
     aiCustomerSummariesPerMonth: string;
     debtRemindersPerMonth: string;
+    audioTranscriptionsPerMonth: string;
   };
   standard: {
     ordersPerMonth: string;
     aiMetricsInsightsPerMonth: string;
     aiCustomerSummariesPerMonth: string;
     debtRemindersPerMonth: string;
+    audioTranscriptionsPerMonth: string;
   };
   pro: {
     ordersPerMonth: string;
     aiMetricsInsightsPerMonth: string;
     aiCustomerSummariesPerMonth: string;
     debtRemindersPerMonth: string;
+    audioTranscriptionsPerMonth: string;
   };
 };
 
@@ -96,18 +99,21 @@ const DEFAULT_PLAN_LIMITS_FORM: PlanLimitsForm = {
     aiMetricsInsightsPerMonth: '',
     aiCustomerSummariesPerMonth: '',
     debtRemindersPerMonth: '',
+    audioTranscriptionsPerMonth: '',
   },
   standard: {
     ordersPerMonth: String(DEFAULT_COMMERCE_PLAN_LIMITS.standard.ordersPerMonth ?? 550),
     aiMetricsInsightsPerMonth: '',
     aiCustomerSummariesPerMonth: '',
     debtRemindersPerMonth: '',
+    audioTranscriptionsPerMonth: '',
   },
   pro: {
     ordersPerMonth: String(DEFAULT_COMMERCE_PLAN_LIMITS.pro.ordersPerMonth ?? 1700),
     aiMetricsInsightsPerMonth: '',
     aiCustomerSummariesPerMonth: '',
     debtRemindersPerMonth: '',
+    audioTranscriptionsPerMonth: '',
   },
 };
 
@@ -202,18 +208,21 @@ export default function AdminSettingsPage() {
           aiMetricsInsightsPerMonth: pickNumberOrEmpty(basicCfg.aiMetricsInsightsPerMonth),
           aiCustomerSummariesPerMonth: pickNumberOrEmpty(basicCfg.aiCustomerSummariesPerMonth),
           debtRemindersPerMonth: pickNumberOrEmpty(basicCfg.debtRemindersPerMonth),
+          audioTranscriptionsPerMonth: pickNumberOrEmpty(basicCfg.audioTranscriptionsPerMonth),
         },
         standard: {
           ordersPerMonth: pickNumberOrDefault(standardCfg.ordersPerMonth, DEFAULT_COMMERCE_PLAN_LIMITS.standard.ordersPerMonth ?? 550),
           aiMetricsInsightsPerMonth: pickNumberOrEmpty(standardCfg.aiMetricsInsightsPerMonth),
           aiCustomerSummariesPerMonth: pickNumberOrEmpty(standardCfg.aiCustomerSummariesPerMonth),
           debtRemindersPerMonth: pickNumberOrEmpty(standardCfg.debtRemindersPerMonth),
+          audioTranscriptionsPerMonth: pickNumberOrEmpty(standardCfg.audioTranscriptionsPerMonth),
         },
         pro: {
           ordersPerMonth: pickNumberOrDefault(proCfg.ordersPerMonth, DEFAULT_COMMERCE_PLAN_LIMITS.pro.ordersPerMonth ?? 1700),
           aiMetricsInsightsPerMonth: pickNumberOrEmpty(proCfg.aiMetricsInsightsPerMonth),
           aiCustomerSummariesPerMonth: pickNumberOrEmpty(proCfg.aiCustomerSummariesPerMonth),
           debtRemindersPerMonth: pickNumberOrEmpty(proCfg.debtRemindersPerMonth),
+          audioTranscriptionsPerMonth: pickNumberOrEmpty(proCfg.audioTranscriptionsPerMonth),
         },
       });
     } catch (error) {
@@ -315,18 +324,21 @@ export default function AdminSettingsPage() {
           aiMetricsInsightsPerMonth: toNullablePositiveInt(planLimits.basic.aiMetricsInsightsPerMonth),
           aiCustomerSummariesPerMonth: toNullablePositiveInt(planLimits.basic.aiCustomerSummariesPerMonth),
           debtRemindersPerMonth: toNullablePositiveInt(planLimits.basic.debtRemindersPerMonth),
+          audioTranscriptionsPerMonth: toNullablePositiveInt(planLimits.basic.audioTranscriptionsPerMonth),
         },
         standard: {
           ordersPerMonth: toPositiveInt(planLimits.standard.ordersPerMonth, DEFAULT_COMMERCE_PLAN_LIMITS.standard.ordersPerMonth ?? 550),
           aiMetricsInsightsPerMonth: toNullablePositiveInt(planLimits.standard.aiMetricsInsightsPerMonth),
           aiCustomerSummariesPerMonth: toNullablePositiveInt(planLimits.standard.aiCustomerSummariesPerMonth),
           debtRemindersPerMonth: toNullablePositiveInt(planLimits.standard.debtRemindersPerMonth),
+          audioTranscriptionsPerMonth: toNullablePositiveInt(planLimits.standard.audioTranscriptionsPerMonth),
         },
         pro: {
           ordersPerMonth: toPositiveInt(planLimits.pro.ordersPerMonth, DEFAULT_COMMERCE_PLAN_LIMITS.pro.ordersPerMonth ?? 1700),
           aiMetricsInsightsPerMonth: toNullablePositiveInt(planLimits.pro.aiMetricsInsightsPerMonth),
           aiCustomerSummariesPerMonth: toNullablePositiveInt(planLimits.pro.aiCustomerSummariesPerMonth),
           debtRemindersPerMonth: toNullablePositiveInt(planLimits.pro.debtRemindersPerMonth),
+          audioTranscriptionsPerMonth: toNullablePositiveInt(planLimits.pro.audioTranscriptionsPerMonth),
         },
       };
 
@@ -342,18 +354,21 @@ export default function AdminSettingsPage() {
           aiMetricsInsightsPerMonth: payload.basic.aiMetricsInsightsPerMonth ? String(payload.basic.aiMetricsInsightsPerMonth) : '',
           aiCustomerSummariesPerMonth: payload.basic.aiCustomerSummariesPerMonth ? String(payload.basic.aiCustomerSummariesPerMonth) : '',
           debtRemindersPerMonth: payload.basic.debtRemindersPerMonth ? String(payload.basic.debtRemindersPerMonth) : '',
+          audioTranscriptionsPerMonth: payload.basic.audioTranscriptionsPerMonth ? String(payload.basic.audioTranscriptionsPerMonth) : '',
         },
         standard: {
           ordersPerMonth: String(payload.standard.ordersPerMonth),
           aiMetricsInsightsPerMonth: payload.standard.aiMetricsInsightsPerMonth ? String(payload.standard.aiMetricsInsightsPerMonth) : '',
           aiCustomerSummariesPerMonth: payload.standard.aiCustomerSummariesPerMonth ? String(payload.standard.aiCustomerSummariesPerMonth) : '',
           debtRemindersPerMonth: payload.standard.debtRemindersPerMonth ? String(payload.standard.debtRemindersPerMonth) : '',
+          audioTranscriptionsPerMonth: payload.standard.audioTranscriptionsPerMonth ? String(payload.standard.audioTranscriptionsPerMonth) : '',
         },
         pro: {
           ordersPerMonth: String(payload.pro.ordersPerMonth),
           aiMetricsInsightsPerMonth: payload.pro.aiMetricsInsightsPerMonth ? String(payload.pro.aiMetricsInsightsPerMonth) : '',
           aiCustomerSummariesPerMonth: payload.pro.aiCustomerSummariesPerMonth ? String(payload.pro.aiCustomerSummariesPerMonth) : '',
           debtRemindersPerMonth: payload.pro.debtRemindersPerMonth ? String(payload.pro.debtRemindersPerMonth) : '',
+          audioTranscriptionsPerMonth: payload.pro.audioTranscriptionsPerMonth ? String(payload.pro.audioTranscriptionsPerMonth) : '',
         },
       });
 
@@ -644,6 +659,21 @@ export default function AdminSettingsPage() {
                       setPlanLimits((prev) => ({
                         ...prev,
                         [plan]: { ...prev[plan], debtRemindersPerMonth: e.target.value },
+                      }))
+                    }
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Transcripciones audio / mes</Label>
+                  <Input
+                    type="number"
+                    placeholder="Ilimitado"
+                    value={planLimits[plan].audioTranscriptionsPerMonth}
+                    onChange={(e) =>
+                      setPlanLimits((prev) => ({
+                        ...prev,
+                        [plan]: { ...prev[plan], audioTranscriptionsPerMonth: e.target.value },
                       }))
                     }
                   />

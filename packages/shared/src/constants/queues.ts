@@ -104,6 +104,18 @@ export const QUEUES = {
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // AUDIO TRANSCRIPTION
+  // ═══════════════════════════════════════════════════════════════════════════
+  AUDIO_TRANSCRIPTION: {
+    name: 'audio-transcription',
+    description: 'Process WhatsApp audio messages and generate transcripts',
+    concurrency: 5,
+    attempts: 3,
+    backoff: { type: 'exponential' as const, delay: 3000 },
+    timeout: 120000,
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // DEAD LETTER QUEUE
   // ═══════════════════════════════════════════════════════════════════════════
   DLQ: {

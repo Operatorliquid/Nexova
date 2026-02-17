@@ -10,8 +10,7 @@ import { ToolCategory, ToolContext, ToolResult, CommerceProfile } from '../../ty
 import { CatalogPdfService, CatalogOptions, CatalogProductFilter, OrderReceiptPdfService, decrypt } from '@nexova/core';
 import { withVisibleOrders } from '../../utils/orders.js';
 import { EvolutionClient, InfobipClient, type MercadoPagoIntegrationService } from '@nexova/integrations';
-import { promises as fs, existsSync } from 'fs';
-import path from 'path';
+import { LocalFileUploader } from '../../utils/file-uploader.js';
 import { randomUUID } from 'crypto';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -412,6 +411,7 @@ const SendCatalogPdfInput = z.object({
 export class SendCatalogPdfTool extends BaseTool<typeof SendCatalogPdfInput> {
   private prisma: PrismaClient;
   private catalogService: CatalogPdfService;
+  private fileUploader: LocalFileUploader;
 
   constructor(prisma: PrismaClient) {
     super({
@@ -422,6 +422,7 @@ export class SendCatalogPdfTool extends BaseTool<typeof SendCatalogPdfInput> {
     });
     this.prisma = prisma;
     this.catalogService = new CatalogPdfService(prisma);
+    this.fileUploader = new LocalFileUploader();
   }
 
   async execute(input: z.infer<typeof SendCatalogPdfInput>, context: ToolContext): Promise<ToolResult> {
@@ -462,24 +463,13 @@ export class SendCatalogPdfTool extends BaseTool<typeof SendCatalogPdfInput> {
         options
       );
 
-      const uploadsDir = this.getUploadDir();
-      const catalogsDir = path.join(uploadsDir, 'catalogs');
-      await fs.mkdir(catalogsDir, { recursive: true });
-
-      const safeName = this.sanitizeFilename(catalog.filename || 'catalogo.pdf');
-      const uniqueName = `${context.workspaceId}-${Date.now()}-${randomUUID().slice(0, 8)}-${safeName}`;
-      const filePath = path.join(catalogsDir, uniqueName);
-      await fs.writeFile(filePath, catalog.buffer);
-
-      const publicBase = await this.resolvePublicBaseUrl();
-      if (!publicBase) {
-        return {
-          success: false,
-          error: 'No hay una URL pública configurada para enviar el PDF. Configurá PUBLIC_BASE_URL o NGROK_URL.',
-        };
-      }
-
-      const mediaUrl = `${publicBase}/uploads/catalogs/${uniqueName}`;
+      const mediaUrl = await this.fileUploader.upload(
+        catalog.buffer,
+        catalog.filename || 'catalogo.pdf',
+        'application/pdf',
+        context.workspaceId,
+        { category: 'catalogs' }
+      );
 
       const customer = await this.prisma.customer.findFirst({
         where: { id: context.customerId, workspaceId: context.workspaceId },
@@ -566,19 +556,6 @@ export class SendCatalogPdfTool extends BaseTool<typeof SendCatalogPdfInput> {
     }
   }
 
-  private getUploadDir(): string {
-    if (process.env.UPLOAD_DIR) {
-      return process.env.UPLOAD_DIR;
-    }
-
-    const repoRoot = this.findRepoRoot(process.cwd()) || process.cwd();
-    return path.join(repoRoot, 'apps', 'api', 'uploads');
-  }
-
-  private sanitizeFilename(name: string): string {
-    return name.replace(/[^a-zA-Z0-9._-]/g, '_');
-  }
-
   private normalizePhone(phone: string): string {
     const trimmed = phone.trim();
     const digits = trimmed.replace(/\D/g, '');
@@ -612,56 +589,6 @@ export class SendCatalogPdfTool extends BaseTool<typeof SendCatalogPdfInput> {
       return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
     }
     return '';
-  }
-
-  private async resolvePublicBaseUrl(): Promise<string | null> {
-    const candidates = [
-      process.env.API_BASE_URL,
-      process.env.PUBLIC_BASE_URL,
-      process.env.PUBLIC_API_URL,
-      process.env.API_PUBLIC_URL,
-      process.env.NGROK_URL,
-      process.env.BASE_URL,
-      process.env.API_URL,
-    ];
-
-    for (const candidate of candidates) {
-      if (candidate && candidate.trim()) {
-        return candidate.replace(/\/$/, '');
-      }
-    }
-
-    return this.resolveNgrokBaseUrl();
-  }
-
-  private async resolveNgrokBaseUrl(): Promise<string | null> {
-    try {
-      const response = await fetch('http://127.0.0.1:4040/api/tunnels', {
-        signal: AbortSignal.timeout(1500),
-      });
-      if (!response.ok) return null;
-      const data = await response.json() as { tunnels?: Array<{ public_url?: string }> };
-      const httpsTunnel = data.tunnels?.find((t) => t.public_url?.startsWith('https://'));
-      return httpsTunnel?.public_url?.replace(/\/$/, '') || null;
-    } catch {
-      return null;
-    }
-  }
-
-  private findRepoRoot(startDir: string): string | null {
-    let current = startDir;
-    for (let i = 0; i < 8; i += 1) {
-      if (
-        existsSync(path.join(current, 'pnpm-workspace.yaml')) ||
-        existsSync(path.join(current, 'turbo.json'))
-      ) {
-        return current;
-      }
-      const parent = path.dirname(current);
-      if (parent === current) break;
-      current = parent;
-    }
-    return null;
   }
 
   private resolveInfobipBaseUrl(apiUrl?: string | null): string {
@@ -735,6 +662,7 @@ type OrderSummaryItem = {
 export class SendOrderPdfTool extends BaseTool<typeof SendOrderPdfInput> {
   private prisma: PrismaClient;
   private receiptService: OrderReceiptPdfService;
+  private fileUploader: LocalFileUploader;
 
   constructor(prisma: PrismaClient) {
     super({
@@ -745,6 +673,7 @@ export class SendOrderPdfTool extends BaseTool<typeof SendOrderPdfInput> {
     });
     this.prisma = prisma;
     this.receiptService = new OrderReceiptPdfService(prisma);
+    this.fileUploader = new LocalFileUploader();
   }
 
   async execute(input: z.infer<typeof SendOrderPdfInput>, context: ToolContext): Promise<ToolResult> {
@@ -839,24 +768,13 @@ export class SendOrderPdfTool extends BaseTool<typeof SendOrderPdfInput> {
 
       const receipt = await this.receiptService.generateReceipt(context.workspaceId, orderData);
 
-      const uploadsDir = this.getUploadDir();
-      const ordersDir = path.join(uploadsDir, 'orders');
-      await fs.mkdir(ordersDir, { recursive: true });
-
-      const safeName = this.sanitizeFilename(receipt.filename || 'pedido.pdf');
-      const uniqueName = `${context.workspaceId}-${Date.now()}-${randomUUID().slice(0, 8)}-${safeName}`;
-      const filePath = path.join(ordersDir, uniqueName);
-      await fs.writeFile(filePath, receipt.buffer);
-
-      const publicBase = await this.resolvePublicBaseUrl();
-      if (!publicBase) {
-        return {
-          success: false,
-          error: 'No hay una URL pública configurada para enviar el PDF. Configurá PUBLIC_BASE_URL o NGROK_URL.',
-        };
-      }
-
-      const mediaUrl = `${publicBase}/uploads/orders/${uniqueName}`;
+      const mediaUrl = await this.fileUploader.upload(
+        receipt.buffer,
+        receipt.filename || 'pedido.pdf',
+        'application/pdf',
+        context.workspaceId,
+        { category: 'orders' }
+      );
 
       const customer = await this.prisma.customer.findFirst({
         where: { id: context.customerId, workspaceId: context.workspaceId },
@@ -943,19 +861,6 @@ export class SendOrderPdfTool extends BaseTool<typeof SendOrderPdfInput> {
     }
   }
 
-  private getUploadDir(): string {
-    if (process.env.UPLOAD_DIR) {
-      return process.env.UPLOAD_DIR;
-    }
-
-    const repoRoot = this.findRepoRoot(process.cwd()) || process.cwd();
-    return path.join(repoRoot, 'apps', 'api', 'uploads');
-  }
-
-  private sanitizeFilename(name: string): string {
-    return name.replace(/[^a-zA-Z0-9._-]/g, '_');
-  }
-
   private normalizePhone(phone: string): string {
     const trimmed = phone.trim();
     const digits = trimmed.replace(/\D/g, '');
@@ -991,40 +896,6 @@ export class SendOrderPdfTool extends BaseTool<typeof SendOrderPdfInput> {
     return '';
   }
 
-  private async resolvePublicBaseUrl(): Promise<string | null> {
-    const candidates = [
-      process.env.API_BASE_URL,
-      process.env.PUBLIC_BASE_URL,
-      process.env.PUBLIC_API_URL,
-      process.env.API_PUBLIC_URL,
-      process.env.NGROK_URL,
-      process.env.BASE_URL,
-      process.env.API_URL,
-    ];
-
-    for (const candidate of candidates) {
-      if (candidate && candidate.trim()) {
-        return candidate.replace(/\/$/, '');
-      }
-    }
-
-    return this.resolveNgrokBaseUrl();
-  }
-
-  private async resolveNgrokBaseUrl(): Promise<string | null> {
-    try {
-      const response = await fetch('http://127.0.0.1:4040/api/tunnels', {
-        signal: AbortSignal.timeout(1500),
-      });
-      if (!response.ok) return null;
-      const data = await response.json() as { tunnels?: Array<{ public_url?: string }> };
-      const httpsTunnel = data.tunnels?.find((t) => t.public_url?.startsWith('https://'));
-      return httpsTunnel?.public_url?.replace(/\/$/, '') || null;
-    } catch {
-      return null;
-    }
-  }
-
   private resolveInfobipBaseUrl(apiUrl?: string | null): string {
     const cleaned = (apiUrl || '').trim().replace(/\/$/, '');
     const envUrl = (process.env.INFOBIP_BASE_URL || '').trim().replace(/\/$/, '');
@@ -1052,22 +923,6 @@ export class SendOrderPdfTool extends BaseTool<typeof SendOrderPdfInput> {
     return typeof value === 'string' ? value.trim() : '';
   }
 
-  private findRepoRoot(startDir: string): string | null {
-    let current = startDir;
-    for (let i = 0; i < 8; i += 1) {
-      if (
-        existsSync(path.join(current, 'pnpm-workspace.yaml')) ||
-        existsSync(path.join(current, 'turbo.json')) ||
-        existsSync(path.join(current, '.git'))
-      ) {
-        return current;
-      }
-      const parent = path.dirname(current);
-      if (parent === current) break;
-      current = parent;
-    }
-    return null;
-  }
 }
 
 /**

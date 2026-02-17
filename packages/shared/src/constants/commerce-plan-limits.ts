@@ -21,6 +21,11 @@ export interface CommercePlanLimitConfig {
    * null = unlimited.
    */
   debtRemindersPerMonth: number | null;
+  /**
+   * Max WhatsApp audio transcriptions per month (UTC).
+   * null = unlimited.
+   */
+  audioTranscriptionsPerMonth: number | null;
 }
 
 export type CommercePlanLimitsConfig = Partial<Record<CommercePlan, Partial<CommercePlanLimitConfig>>>;
@@ -31,18 +36,21 @@ export const DEFAULT_COMMERCE_PLAN_LIMITS: Record<CommercePlan, CommercePlanLimi
     aiMetricsInsightsPerMonth: null,
     aiCustomerSummariesPerMonth: null,
     debtRemindersPerMonth: null,
+    audioTranscriptionsPerMonth: null,
   },
   standard: {
     ordersPerMonth: 550,
     aiMetricsInsightsPerMonth: null,
     aiCustomerSummariesPerMonth: null,
     debtRemindersPerMonth: null,
+    audioTranscriptionsPerMonth: null,
   },
   pro: {
     ordersPerMonth: 1700,
     aiMetricsInsightsPerMonth: null,
     aiCustomerSummariesPerMonth: null,
     debtRemindersPerMonth: null,
+    audioTranscriptionsPerMonth: null,
   },
 };
 
@@ -50,5 +58,5 @@ export const COMMERCE_USAGE_METRICS = {
   aiMetricsInsights: 'ai.metrics_insights',
   aiCustomerSummary: 'ai.customer_summary',
   debtRemindersSent: 'debt.reminders.sent',
+  audioTranscriptions: 'audio.transcriptions',
 } as const;
-

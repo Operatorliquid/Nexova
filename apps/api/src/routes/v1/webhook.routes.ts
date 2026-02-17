@@ -5,16 +5,25 @@
 import { FastifyInstance, FastifyRequest } from 'fastify';
 import { Queue } from 'bullmq';
 import { Prisma } from '@prisma/client';
-import { QUEUES, AgentProcessPayload } from '@nexova/shared';
-import { InfobipClient } from '@nexova/integrations';
+import {
+  QUEUES,
+  AgentProcessPayload,
+  AudioTranscriptionPayload,
+  COMMERCE_USAGE_METRICS,
+} from '@nexova/shared';
+import { EvolutionClient, InfobipClient } from '@nexova/integrations';
 import { decrypt } from '@nexova/core';
 import * as crypto from 'crypto';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { getWorkspacePlanContext } from '../../utils/commerce-plan.js';
+import { getEffectiveCommercePlanLimits } from '../../utils/commerce-plan-limits.js';
+import { getMonthlyUsage } from '../../utils/monthly-usage.js';
 
 // BullMQ queue - initialized when routes are registered
 let agentQueue: Queue;
+let audioTranscriptionQueue: Queue | undefined;
 
 function getWebhookSignature(request: FastifyRequest): string | undefined {
   const header = request.headers['x-hub-signature-256']
@@ -119,6 +128,81 @@ function buildPhoneCandidates(raw: string | null | undefined): string[] {
   }
 
   return Array.from(candidates).filter(Boolean);
+}
+
+function toPositiveIntOrNull(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return Math.trunc(value);
+  }
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value.trim(), 10);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return null;
+}
+
+function extractInfobipAudioMeta(payload: any): {
+  isAudio: boolean;
+  mediaUrl?: string;
+  mimeType?: string;
+  fileName?: string;
+  durationMs?: number;
+} {
+  const result = payload?.results?.[0];
+  const content = result?.content?.[0];
+  const contentType = typeof content?.type === 'string' ? content.type.toLowerCase().trim() : '';
+  const messageType = typeof result?.message?.type === 'string' ? result.message.type.toLowerCase().trim() : '';
+
+  const mediaUrl =
+    (typeof content?.mediaUrl === 'string' && content.mediaUrl.trim())
+      ? content.mediaUrl.trim()
+      : (typeof content?.url === 'string' && content.url.trim())
+        ? content.url.trim()
+        : (typeof result?.message?.audioUrl === 'string' && result.message.audioUrl.trim())
+          ? result.message.audioUrl.trim()
+          : undefined;
+
+  const mimeType =
+    (typeof content?.mimeType === 'string' && content.mimeType.trim())
+      ? content.mimeType.trim()
+      : (typeof content?.mimetype === 'string' && content.mimetype.trim())
+        ? content.mimetype.trim()
+        : (typeof result?.message?.mimeType === 'string' && result.message.mimeType.trim())
+          ? result.message.mimeType.trim()
+          : (typeof result?.message?.mimetype === 'string' && result.message.mimetype.trim())
+            ? result.message.mimetype.trim()
+            : undefined;
+
+  const fileName =
+    (typeof content?.fileName === 'string' && content.fileName.trim())
+      ? content.fileName.trim()
+      : (typeof content?.filename === 'string' && content.filename.trim())
+        ? content.filename.trim()
+        : (typeof result?.message?.fileName === 'string' && result.message.fileName.trim())
+          ? result.message.fileName.trim()
+          : (typeof result?.message?.filename === 'string' && result.message.filename.trim())
+            ? result.message.filename.trim()
+            : undefined;
+
+  const durationMs =
+    toPositiveIntOrNull(content?.durationMs)
+    ?? toPositiveIntOrNull(content?.duration)
+    ?? toPositiveIntOrNull(result?.message?.durationMs)
+    ?? toPositiveIntOrNull(result?.message?.duration)
+    ?? toPositiveIntOrNull(result?.message?.audioDuration)
+    ?? undefined;
+
+  const isAudioType = ['audio', 'voice', 'voice_message'].includes(contentType)
+    || ['audio', 'voice', 'voice_message'].includes(messageType);
+  const isAudioMime = typeof mimeType === 'string' && mimeType.toLowerCase().startsWith('audio/');
+
+  return {
+    isAudio: isAudioType || isAudioMime || !!mediaUrl,
+    ...(mediaUrl ? { mediaUrl } : {}),
+    ...(mimeType ? { mimeType } : {}),
+    ...(fileName ? { fileName } : {}),
+    ...(typeof durationMs === 'number' ? { durationMs } : {}),
+  };
 }
 
 function extractEvolutionMessages(payload: any): any[] {
@@ -337,7 +421,7 @@ function extractEvolutionReplyContext(msg: any): { isReply: boolean; referredMes
 
 export async function webhookRoutes(
   app: FastifyInstance,
-  opts: { queue?: Queue }
+  opts: { queue?: Queue; audioQueue?: Queue }
 ): Promise<void> {
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = path.dirname(__filename);
@@ -371,65 +455,186 @@ export async function webhookRoutes(
     return typeof value === 'string' ? value.trim() : '';
   };
 
+  const AUDIO_NOT_AVAILABLE_MESSAGE =
+    'Los mensajes de audio no están disponibles en tu plan actual. Podés continuar escribiendo en texto.';
+  const AUDIO_QUOTA_EXCEEDED_MESSAGE =
+    'Alcanzaste el límite mensual de transcripciones de audio. Podés continuar escribiendo en texto.';
+
+  const checkAudioTranscriptionPolicy = async (
+    workspaceId: string
+  ): Promise<
+    | { allowed: true }
+    | { allowed: false; reason: 'plan_not_allowed' | 'monthly_quota_exceeded'; message: string }
+  > => {
+    try {
+      const planContext = await getWorkspacePlanContext(app.prisma, workspaceId);
+      if (!planContext.capabilities.showWhatsappAudioTranscription) {
+        return {
+          allowed: false,
+          reason: 'plan_not_allowed',
+          message: AUDIO_NOT_AVAILABLE_MESSAGE,
+        };
+      }
+
+      const limits = await getEffectiveCommercePlanLimits(app.prisma, planContext.plan);
+      const monthlyLimit = limits.audioTranscriptionsPerMonth;
+      if (monthlyLimit === null) return { allowed: true };
+
+      const used = await getMonthlyUsage(app.prisma, {
+        workspaceId,
+        metric: COMMERCE_USAGE_METRICS.audioTranscriptions,
+      });
+      if (used >= BigInt(monthlyLimit)) {
+        return {
+          allowed: false,
+          reason: 'monthly_quota_exceeded',
+          message: AUDIO_QUOTA_EXCEEDED_MESSAGE,
+        };
+      }
+    } catch (error) {
+      app.log.warn(
+        { err: error, workspaceId },
+        'Audio policy check failed; allowing transcription to avoid message loss'
+      );
+    }
+
+    return { allowed: true };
+  };
+
+  const sendProviderTextReply = async (params: {
+    number: {
+      provider: string | null;
+      phoneNumber: string;
+      apiUrl?: string | null;
+      apiKeyEnc?: string | null;
+      apiKeyIv?: string | null;
+      providerConfig?: Prisma.JsonValue;
+    };
+    to: string;
+    text: string;
+  }): Promise<void> => {
+    const provider = (params.number.provider || 'infobip').toLowerCase();
+    if (provider === 'evolution') {
+      const baseUrl = resolveEvolutionBaseUrl(params.number.apiUrl);
+      const apiKey = resolveEvolutionApiKey(params.number);
+      const instanceName = extractEvolutionInstanceName(params.number.providerConfig);
+      if (!baseUrl || !apiKey || !instanceName) {
+        throw new Error('Evolution sender not configured');
+      }
+      const evolutionClient = new EvolutionClient({
+        baseUrl,
+        apiKey,
+        instanceName,
+      });
+      await evolutionClient.sendText(params.to, params.text);
+      return;
+    }
+
+    const infobipClient = new InfobipClient({
+      apiKey: resolveWhatsAppApiKey(params.number),
+      baseUrl: resolveInfobipBaseUrl(params.number.apiUrl),
+      senderNumber: params.number.phoneNumber,
+    });
+    await infobipClient.sendText(params.to, params.text);
+  };
+
   const fetchEvolutionMediaBase64 = async (params: {
     baseUrl: string;
     apiKey: string;
     instanceName: string;
     messageId: string;
+    message?: any;
   }): Promise<{ base64: string; mimetype?: string; filename?: string } | null> => {
     const endpoint = `${params.baseUrl.replace(/\/$/, '')}/chat/getBase64FromMediaMessage/${encodeURIComponent(params.instanceName)}`;
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        apikey: params.apiKey,
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-      body: JSON.stringify({
-        message: { key: { id: params.messageId } },
+    const candidates: Array<Record<string, unknown>> = [];
+
+    // Preferred shape: full webhook message object (some Evolution versions need remoteJid/fromMe).
+    if (params.message && typeof params.message === 'object') {
+      candidates.push({
+        message: params.message,
         convertToMp4: false,
-      }),
+      });
+    }
+
+    // Fallback: normalized key object.
+    const keyFromMessage =
+      params.message && typeof params.message === 'object' && params.message.key && typeof params.message.key === 'object'
+        ? params.message.key
+        : null;
+    const normalizedKey = {
+      id: params.messageId,
+      ...(typeof (keyFromMessage as any)?.remoteJid === 'string' ? { remoteJid: (keyFromMessage as any).remoteJid } : {}),
+      ...(typeof (keyFromMessage as any)?.participant === 'string' ? { participant: (keyFromMessage as any).participant } : {}),
+      ...(typeof (keyFromMessage as any)?.fromMe === 'boolean' ? { fromMe: (keyFromMessage as any).fromMe } : { fromMe: false }),
+    };
+    candidates.push({
+      message: { key: normalizedKey },
+      convertToMp4: false,
+    });
+    candidates.push({
+      key: normalizedKey,
+      convertToMp4: false,
     });
 
-    const text = await response.text();
-    if (!response.ok) {
-      app.log.warn({ status: response.status, body: text }, 'Evolution media fetch failed');
-      return null;
+    let lastStatus = 0;
+    let lastBody = '';
+
+    for (const bodyCandidate of candidates) {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          apikey: params.apiKey,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify(bodyCandidate),
+      });
+
+      const text = await response.text();
+      if (!response.ok) {
+        lastStatus = response.status;
+        lastBody = text;
+        continue;
+      }
+
+      const json = text ? (() => { try { return JSON.parse(text); } catch { return null; } })() : null;
+      const raw = json ?? text;
+
+      if (typeof raw === 'string') {
+        return { base64: raw };
+      }
+
+      if (raw && typeof raw === 'object') {
+        const obj = raw as Record<string, unknown>;
+        const base64 =
+          typeof obj.base64 === 'string'
+            ? obj.base64
+            : typeof obj.data === 'string'
+              ? obj.data
+              : typeof obj.media === 'string'
+                ? obj.media
+                : '';
+        if (!base64) continue;
+        const mimetype =
+          typeof obj.mimetype === 'string'
+            ? obj.mimetype
+            : typeof obj.mimeType === 'string'
+              ? obj.mimeType
+              : undefined;
+        const filename =
+          typeof obj.fileName === 'string'
+            ? obj.fileName
+            : typeof obj.filename === 'string'
+              ? obj.filename
+              : undefined;
+        return { base64, mimetype, filename };
+      }
     }
 
-    const json = text ? (() => { try { return JSON.parse(text); } catch { return null; } })() : null;
-    const raw = json ?? text;
-
-    if (typeof raw === 'string') {
-      return { base64: raw };
-    }
-
-    if (raw && typeof raw === 'object') {
-      const obj = raw as Record<string, unknown>;
-      const base64 =
-        typeof obj.base64 === 'string'
-          ? obj.base64
-          : typeof obj.data === 'string'
-            ? obj.data
-            : typeof obj.media === 'string'
-              ? obj.media
-              : '';
-      if (!base64) return null;
-      const mimetype =
-        typeof obj.mimetype === 'string'
-          ? obj.mimetype
-          : typeof obj.mimeType === 'string'
-            ? obj.mimeType
-            : undefined;
-      const filename =
-        typeof obj.fileName === 'string'
-          ? obj.fileName
-          : typeof obj.filename === 'string'
-            ? obj.filename
-            : undefined;
-      return { base64, mimetype, filename };
-    }
-
+    app.log.warn(
+      { status: lastStatus, body: lastBody, messageId: params.messageId },
+      'Evolution media fetch failed'
+    );
     return null;
   };
 
@@ -490,6 +695,102 @@ export async function webhookRoutes(
   if (opts.queue) {
     agentQueue = opts.queue;
   }
+  if (opts.audioQueue) {
+    audioTranscriptionQueue = opts.audioQueue;
+  }
+
+  const createAudioTranscription = async (params: {
+    workspaceId: string;
+    provider: 'infobip' | 'evolution';
+    messageId: string;
+    channelId?: string | null;
+    correlationId?: string | null;
+    webhookInboxId: string;
+    mimeType?: string | null;
+    fileName?: string | null;
+    durationMs?: number | null;
+    sizeBytes?: number | null;
+    mediaUrl?: string | null;
+  }): Promise<void> => {
+    try {
+      const created = await app.prisma.audioTranscription.create({
+        data: {
+          workspaceId: params.workspaceId,
+          provider: params.provider,
+          messageId: params.messageId,
+          channelId: params.channelId || null,
+          webhookInboxId: params.webhookInboxId,
+          status: 'pending',
+          mimeType: params.mimeType || null,
+          durationMs: params.durationMs || null,
+          sizeBytes: params.sizeBytes ? BigInt(params.sizeBytes) : null,
+          metadata: {
+            ...(params.fileName ? { fileName: params.fileName } : {}),
+            ...(params.mediaUrl ? { mediaUrl: params.mediaUrl } : {}),
+            ...(params.correlationId ? { correlationId: params.correlationId } : {}),
+          } as Prisma.InputJsonValue,
+        },
+      });
+
+      if (!audioTranscriptionQueue) {
+        app.log.warn(
+          {
+            messageId: params.messageId,
+            workspaceId: params.workspaceId,
+            provider: params.provider,
+            audioTranscriptionId: created.id,
+          },
+          'Audio transcription queue not initialized; transcription left pending'
+        );
+        return;
+      }
+
+      const payload: AudioTranscriptionPayload = {
+        workspaceId: params.workspaceId,
+        audioTranscriptionId: created.id,
+        webhookInboxId: params.webhookInboxId,
+        messageId: params.messageId,
+        provider: params.provider,
+        ...(params.channelId ? { channelId: params.channelId } : {}),
+        ...(params.correlationId ? { correlationId: params.correlationId } : {}),
+        metadata: {
+          ...(params.mimeType ? { mimeType: params.mimeType } : {}),
+          ...(params.fileName ? { fileName: params.fileName } : {}),
+          ...(typeof params.sizeBytes === 'number' ? { sizeBytes: params.sizeBytes } : {}),
+          ...(typeof params.durationMs === 'number' ? { durationMs: params.durationMs } : {}),
+          ...(params.mediaUrl ? { fileRef: params.mediaUrl } : {}),
+        },
+      };
+
+      await audioTranscriptionQueue.add(`audio-${params.provider}-${params.messageId}`, payload, {
+        attempts: QUEUES.AUDIO_TRANSCRIPTION.attempts,
+        backoff: QUEUES.AUDIO_TRANSCRIPTION.backoff,
+      });
+
+      app.log.info(
+        {
+          workspaceId: params.workspaceId,
+          provider: params.provider,
+          messageId: params.messageId,
+          audioTranscriptionId: created.id,
+          webhookInboxId: params.webhookInboxId,
+          hasMediaRef: Boolean(params.mediaUrl),
+        },
+        'Audio transcription enqueued'
+      );
+    } catch (error) {
+      app.log.error(
+        {
+          err: error,
+          messageId: params.messageId,
+          workspaceId: params.workspaceId,
+          provider: params.provider,
+          webhookInboxId: params.webhookInboxId,
+        },
+        'Failed to create/enqueue audio transcription'
+      );
+    }
+  };
 
   // ═══════════════════════════════════════════════════════════════════════════════
   // INFOBIP WHATSAPP WEBHOOK
@@ -596,25 +897,127 @@ export async function webhookRoutes(
           return reply.send({ status: 'duplicate' });
         }
 
+        const workspaceId = whatsappNumber.workspaceId!;
+        const infobipAudioMeta = extractInfobipAudioMeta(payload);
+        const hasTextContent = typeof parsed.content?.text === 'string' && parsed.content.text.trim().length > 0;
+        const isAudioMessage = parsed.content?.type === 'audio' || infobipAudioMeta.isAudio;
+        const audioPolicy = isAudioMessage
+          ? await checkAudioTranscriptionPolicy(workspaceId)
+          : null;
+        const storedPayload = isAudioMessage
+          ? {
+              ...payload,
+              __nexova: {
+                audio: {
+                  provider: 'infobip',
+                  messageId: parsed.messageId,
+                  ...(infobipAudioMeta.mediaUrl ? { mediaUrl: infobipAudioMeta.mediaUrl } : {}),
+                  ...(infobipAudioMeta.mimeType ? { mimeType: infobipAudioMeta.mimeType } : {}),
+                  ...(infobipAudioMeta.fileName ? { fileName: infobipAudioMeta.fileName } : {}),
+                  ...(typeof infobipAudioMeta.durationMs === 'number' ? { durationMs: infobipAudioMeta.durationMs } : {}),
+                  ...(audioPolicy && !audioPolicy.allowed
+                    ? {
+                        blockedReason: audioPolicy.reason,
+                        blockedMessage: audioPolicy.message,
+                      }
+                    : {}),
+                },
+              },
+            }
+          : payload;
+
         // Store in webhook inbox for processing
         const correlationId = crypto.randomUUID();
-        await app.prisma.webhookInbox.create({
+        const webhookInbox = await app.prisma.webhookInbox.create({
           data: {
-            workspaceId: whatsappNumber.workspaceId!,
+            workspaceId,
             provider: 'infobip',
             externalId: parsed.messageId,
             eventType: 'message.received',
-            payload: payload as Prisma.InputJsonValue,
+            payload: storedPayload as Prisma.InputJsonValue,
             signature: getWebhookSignature(request) || null,
             status: 'pending',
             correlationId,
           },
         });
 
+        if (isAudioMessage && audioPolicy?.allowed) {
+          request.log.info(
+            {
+              workspaceId,
+              messageId: parsed.messageId,
+              from: parsed.from,
+              provider: 'infobip',
+              policy: 'allowed',
+              hasTextContent,
+            },
+            'Inbound audio accepted for transcription'
+          );
+          await createAudioTranscription({
+            workspaceId,
+            provider: 'infobip',
+            messageId: parsed.messageId,
+            channelId: parsed.from,
+            correlationId,
+            webhookInboxId: webhookInbox.id,
+            mimeType: infobipAudioMeta.mimeType || null,
+            fileName: infobipAudioMeta.fileName || null,
+            durationMs: infobipAudioMeta.durationMs || null,
+            mediaUrl: infobipAudioMeta.mediaUrl || null,
+          });
+        } else if (isAudioMessage && audioPolicy && !audioPolicy.allowed && !hasTextContent) {
+          request.log.info(
+            {
+              workspaceId,
+              messageId: parsed.messageId,
+              from: parsed.from,
+              provider: 'infobip',
+              policy: audioPolicy.reason,
+            },
+            'Inbound audio blocked by policy'
+          );
+          await app.prisma.webhookInbox.updateMany({
+            where: { id: webhookInbox.id, workspaceId },
+            data: {
+              status: 'completed',
+              processedAt: new Date(),
+              result: {
+                status: 'completed',
+                reason: 'audio_blocked_by_policy',
+                policyReason: audioPolicy.reason,
+              } as Prisma.InputJsonValue,
+            },
+          });
+
+          try {
+            await sendProviderTextReply({
+              number: whatsappNumber,
+              to: parsed.from,
+              text: audioPolicy.message,
+            });
+          } catch (sendError) {
+            request.log.warn(
+              { err: sendError, messageId: parsed.messageId, workspaceId },
+              'Failed to send audio policy reply'
+            );
+          }
+        } else if (isAudioMessage && hasTextContent) {
+          request.log.info(
+            {
+              workspaceId,
+              messageId: parsed.messageId,
+              from: parsed.from,
+              provider: 'infobip',
+              policy: audioPolicy?.allowed ? 'allowed' : audioPolicy?.reason || 'unknown',
+            },
+            'Inbound audio with text content will continue via text pipeline'
+          );
+        }
+
         // Queue for agent processing
-        if (agentQueue) {
+        if (agentQueue && (!isAudioMessage || hasTextContent)) {
           const jobPayload: AgentProcessPayload = {
-            workspaceId: whatsappNumber.workspaceId!,
+            workspaceId,
             messageId: parsed.messageId,
             channelId: parsed.from,
             channelType: 'whatsapp',
@@ -635,7 +1038,10 @@ export async function webhookRoutes(
             'Message queued for processing'
           );
         } else {
-          request.log.warn('Agent queue not initialized, message stored but not queued');
+          request.log.info(
+            { messageId: parsed.messageId, isAudioMessage },
+            'Message stored but not enqueued to agent'
+          );
         }
 
         return reply.send({
@@ -788,36 +1194,37 @@ export async function webhookRoutes(
         });
       }
 
-        let queued = 0;
-        for (const msg of messages) {
-          if (!isEvolutionInboundMessage(msg)) continue;
+      const workspaceId = whatsappNumber.workspaceId;
+      let queued = 0;
+      for (const msg of messages) {
+        if (!isEvolutionInboundMessage(msg)) continue;
 
-          const messageId = extractEvolutionMessageId(msg) || crypto.randomUUID();
-          const remoteJid =
-            msg?.key?.remoteJid
-            || msg?.key?.remoteJidAlt
-            || msg?.remoteJid
-            || payload?.data?.key?.remoteJid
-            || payload?.data?.key?.remoteJidAlt;
-          if (typeof remoteJid === 'string' && remoteJid.includes('@g.us')) {
-            // Ignore group messages by default
-            continue;
-          }
+        const messageId = extractEvolutionMessageId(msg) || crypto.randomUUID();
+        const remoteJid =
+          msg?.key?.remoteJid
+          || msg?.key?.remoteJidAlt
+          || msg?.remoteJid
+          || payload?.data?.key?.remoteJid
+          || payload?.data?.key?.remoteJidAlt;
+        if (typeof remoteJid === 'string' && remoteJid.includes('@g.us')) {
+          // Ignore group messages by default
+          continue;
+        }
 
-          const senderPhone = extractEvolutionSenderPhone(msg, payload);
-          if (!senderPhone) {
-            request.log.warn(
-              { messageId, event, remoteJid, key: msg?.key },
-              'Evolution message ignored: sender phone not resolved'
-            );
-            continue;
-          }
+        const senderPhone = extractEvolutionSenderPhone(msg, payload);
+        if (!senderPhone) {
+          request.log.warn(
+            { messageId, event, remoteJid, key: msg?.key },
+            'Evolution message ignored: sender phone not resolved'
+          );
+          continue;
+        }
 
         // Dedupe
         const existing = await app.prisma.webhookInbox.findFirst({
           where: {
             externalId: messageId,
-            workspaceId: whatsappNumber.workspaceId,
+            workspaceId,
             provider: 'evolution',
           },
         });
@@ -825,15 +1232,42 @@ export async function webhookRoutes(
 
         const correlationId = crypto.randomUUID();
         let attachment:
-          | { fileRef: string; fileType: 'image' | 'pdf'; caption?: string }
+          | { fileRef: string; fileType: 'image' | 'pdf' | 'audio'; caption?: string }
           | null = null;
 
-        const msgBody = msg?.message || {};
+        const rawMsgBody = msg?.message || {};
+        const msgBody =
+          rawMsgBody?.ephemeralMessage?.message
+          || rawMsgBody?.viewOnceMessage?.message
+          || rawMsgBody?.viewOnceMessageV2?.message
+          || rawMsgBody?.viewOnceMessageV2Extension?.message
+          || rawMsgBody;
         const imageMsg = msgBody?.imageMessage;
         const docMsg = msgBody?.documentMessage;
+        const stickerMsg = msgBody?.stickerMessage;
+        const audioMsg = msgBody?.audioMessage || msgBody?.pttMessage;
+        const audioMime = typeof audioMsg?.mimetype === 'string' ? audioMsg.mimetype.trim() : '';
+        const audioDurationSeconds = toPositiveIntOrNull(audioMsg?.seconds);
+        const audioDurationMs =
+          toPositiveIntOrNull(audioMsg?.durationMs)
+          ?? (typeof audioDurationSeconds === 'number' ? audioDurationSeconds * 1000 : null);
+        const audioSizeBytes = toPositiveIntOrNull(audioMsg?.fileLength || audioMsg?.fileSize);
+        const imageMime = typeof imageMsg?.mimetype === 'string' ? imageMsg.mimetype.toLowerCase().trim() : '';
+        const imageCaption = typeof imageMsg?.caption === 'string' ? imageMsg.caption.trim() : '';
+        const looksLikeStickerFromImage = !!imageMsg && imageMime.includes('webp') && !imageCaption;
+        const isSticker = !!stickerMsg || looksLikeStickerFromImage;
+        const isAudio = !!audioMsg;
         const hasMedia = !!imageMsg || !!docMsg;
+        const hasTextContent =
+          (typeof msgBody?.conversation === 'string' && msgBody.conversation.trim().length > 0)
+          || (typeof msgBody?.extendedTextMessage?.text === 'string' && msgBody.extendedTextMessage.text.trim().length > 0)
+          || (typeof imageMsg?.caption === 'string' && imageMsg.caption.trim().length > 0)
+          || (typeof docMsg?.caption === 'string' && docMsg.caption.trim().length > 0);
+        const audioPolicy = isAudio
+          ? await checkAudioTranscriptionPolicy(workspaceId)
+          : null;
 
-        if (hasMedia) {
+        if (hasMedia && !isSticker) {
           try {
             const instanceName = extractEvolutionInstanceName(whatsappNumber.providerConfig);
             const baseUrl = resolveEvolutionBaseUrl(whatsappNumber.apiUrl);
@@ -845,6 +1279,7 @@ export async function webhookRoutes(
                 apiKey,
                 instanceName,
                 messageId,
+                message: msg,
               });
 
               const caption =
@@ -889,15 +1324,38 @@ export async function webhookRoutes(
           }
         }
 
+        const nexovaMeta: Record<string, unknown> = {};
+        if (attachment) {
+          nexovaMeta.attachment = attachment;
+        }
+        if (!attachment && isSticker) {
+          nexovaMeta.sticker = true;
+        }
+        if (isAudio) {
+          nexovaMeta.audio = {
+            provider: 'evolution',
+            messageId,
+            ...(audioMime ? { mimeType: audioMime } : {}),
+            ...(typeof audioDurationMs === 'number' ? { durationMs: audioDurationMs } : {}),
+            ...(typeof audioSizeBytes === 'number' ? { sizeBytes: audioSizeBytes } : {}),
+            ...(audioPolicy && !audioPolicy.allowed
+              ? {
+                  blockedReason: audioPolicy.reason,
+                  blockedMessage: audioPolicy.message,
+                }
+              : {}),
+          };
+        }
+
         const storedPayload = {
           event: payload?.event,
           instance: payload?.instance,
           data: msg,
-          ...(attachment ? { __nexova: { attachment } } : {}),
+          ...(Object.keys(nexovaMeta).length > 0 ? { __nexova: nexovaMeta } : {}),
         };
-        await app.prisma.webhookInbox.create({
+        const webhookInbox = await app.prisma.webhookInbox.create({
           data: {
-            workspaceId: whatsappNumber.workspaceId,
+            workspaceId,
             provider: 'evolution',
             externalId: messageId,
             eventType: 'message.received',
@@ -908,10 +1366,82 @@ export async function webhookRoutes(
           },
         });
 
-        if (agentQueue) {
+        if (isAudio && audioPolicy?.allowed) {
+          request.log.info(
+            {
+              workspaceId,
+              messageId,
+              from: senderPhone,
+              provider: 'evolution',
+              policy: 'allowed',
+              hasTextContent,
+            },
+            'Inbound audio accepted for transcription'
+          );
+          await createAudioTranscription({
+            workspaceId,
+            provider: 'evolution',
+            messageId,
+            channelId: senderPhone,
+            correlationId,
+            webhookInboxId: webhookInbox.id,
+            mimeType: audioMime || null,
+            durationMs: audioDurationMs || null,
+            sizeBytes: audioSizeBytes || null,
+          });
+        } else if (isAudio && audioPolicy && !audioPolicy.allowed && !hasTextContent) {
+          request.log.info(
+            {
+              workspaceId,
+              messageId,
+              from: senderPhone,
+              provider: 'evolution',
+              policy: audioPolicy.reason,
+            },
+            'Inbound audio blocked by policy'
+          );
+          await app.prisma.webhookInbox.updateMany({
+            where: { id: webhookInbox.id, workspaceId },
+            data: {
+              status: 'completed',
+              processedAt: new Date(),
+              result: {
+                status: 'completed',
+                reason: 'audio_blocked_by_policy',
+                policyReason: audioPolicy.reason,
+              } as Prisma.InputJsonValue,
+            },
+          });
+
+          try {
+            await sendProviderTextReply({
+              number: whatsappNumber,
+              to: senderPhone,
+              text: audioPolicy.message,
+            });
+          } catch (sendError) {
+            request.log.warn(
+              { err: sendError, messageId, workspaceId },
+              'Failed to send audio policy reply'
+            );
+          }
+        } else if (isAudio && hasTextContent) {
+          request.log.info(
+            {
+              workspaceId,
+              messageId,
+              from: senderPhone,
+              provider: 'evolution',
+              policy: audioPolicy?.allowed ? 'allowed' : audioPolicy?.reason || 'unknown',
+            },
+            'Inbound audio with text content will continue via text pipeline'
+          );
+        }
+
+        if (agentQueue && (!isAudio || hasTextContent)) {
           const ctx = extractEvolutionReplyContext(msg);
           const jobPayload: AgentProcessPayload = {
-            workspaceId: whatsappNumber.workspaceId,
+            workspaceId,
             messageId,
             channelId: senderPhone,
             channelType: 'whatsapp',
@@ -1233,13 +1763,34 @@ export async function webhookRoutes(
 
         // Store in webhook inbox for processing (DO NOT process here)
         const correlationId = crypto.randomUUID();
-        await app.prisma.webhookInbox.create({
+        const infobipAudioMeta = extractInfobipAudioMeta(payload);
+        const hasTextContent =
+          (typeof result?.message?.text === 'string' && result.message.text.trim().length > 0)
+          || (typeof result?.content?.[0]?.text === 'string' && result.content[0].text.trim().length > 0);
+        const isAudioMessage = infobipAudioMeta.isAudio;
+        const storedPayload = isAudioMessage
+          ? {
+              ...payload,
+              __nexova: {
+                audio: {
+                  provider: 'infobip',
+                  messageId,
+                  ...(infobipAudioMeta.mediaUrl ? { mediaUrl: infobipAudioMeta.mediaUrl } : {}),
+                  ...(infobipAudioMeta.mimeType ? { mimeType: infobipAudioMeta.mimeType } : {}),
+                  ...(infobipAudioMeta.fileName ? { fileName: infobipAudioMeta.fileName } : {}),
+                  ...(typeof infobipAudioMeta.durationMs === 'number' ? { durationMs: infobipAudioMeta.durationMs } : {}),
+                },
+              },
+            }
+          : payload;
+
+        const webhookInbox = await app.prisma.webhookInbox.create({
           data: {
             workspaceId: whatsappNumber.workspaceId,
             provider: 'infobip',
             externalId: messageId,
             eventType: 'message.received',
-            payload: payload as Prisma.InputJsonValue,
+            payload: storedPayload as Prisma.InputJsonValue,
             signature: getWebhookSignature(request) || null,
             status: 'pending',
             correlationId,
@@ -1249,8 +1800,23 @@ export async function webhookRoutes(
         // Extract sender for job payload (prefer the inferred one in case payload swaps fields)
         const senderNumber = assumedSender || 'unknown';
 
+        if (isAudioMessage) {
+          await createAudioTranscription({
+            workspaceId: whatsappNumber.workspaceId,
+            provider: 'infobip',
+            messageId,
+            channelId: senderNumber,
+            correlationId,
+            webhookInboxId: webhookInbox.id,
+            mimeType: infobipAudioMeta.mimeType || null,
+            fileName: infobipAudioMeta.fileName || null,
+            durationMs: infobipAudioMeta.durationMs || null,
+            mediaUrl: infobipAudioMeta.mediaUrl || null,
+          });
+        }
+
         // Queue for agent processing (DO NOT call LLM here)
-        if (agentQueue) {
+        if (agentQueue && (!isAudioMessage || hasTextContent)) {
           const jobPayload: AgentProcessPayload = {
             workspaceId: whatsappNumber.workspaceId,
             messageId,
@@ -1273,7 +1839,10 @@ export async function webhookRoutes(
             'Message queued for processing'
           );
         } else {
-          request.log.warn('Agent queue not initialized, message stored but not queued');
+          request.log.info(
+            { messageId, isAudioMessage },
+            'Message stored but not enqueued to agent'
+          );
         }
 
         // Return 200 immediately - processing happens async
@@ -1304,6 +1873,7 @@ export async function webhookRoutes(
       status: 'ok',
       timestamp: new Date().toISOString(),
       queueConnected: !!agentQueue,
+      audioQueueConnected: !!audioTranscriptionQueue,
     });
   });
 

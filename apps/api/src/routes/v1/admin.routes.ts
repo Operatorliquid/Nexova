@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { decrypt, encrypt } from '@nexova/core';
 import { Redis } from 'ioredis';
 import { EvolutionAdminClient, EvolutionClient, EvolutionError } from '@nexova/integrations';
+import { COMMERCE_USAGE_METRICS } from '@nexova/shared';
 
 function hasGlobalInfobipApiKey(): boolean {
   return (process.env.INFOBIP_API_KEY || '').trim().length > 0;
@@ -92,6 +93,7 @@ const updateSystemSettingsSchema = z.object({
           aiMetricsInsightsPerMonth: z.coerce.number().int().min(1).nullable().optional(),
           aiCustomerSummariesPerMonth: z.coerce.number().int().min(1).nullable().optional(),
           debtRemindersPerMonth: z.coerce.number().int().min(1).nullable().optional(),
+          audioTranscriptionsPerMonth: z.coerce.number().int().min(1).nullable().optional(),
         })
         .partial()
         .optional(),
@@ -101,6 +103,7 @@ const updateSystemSettingsSchema = z.object({
           aiMetricsInsightsPerMonth: z.coerce.number().int().min(1).nullable().optional(),
           aiCustomerSummariesPerMonth: z.coerce.number().int().min(1).nullable().optional(),
           debtRemindersPerMonth: z.coerce.number().int().min(1).nullable().optional(),
+          audioTranscriptionsPerMonth: z.coerce.number().int().min(1).nullable().optional(),
         })
         .partial()
         .optional(),
@@ -110,6 +113,7 @@ const updateSystemSettingsSchema = z.object({
           aiMetricsInsightsPerMonth: z.coerce.number().int().min(1).nullable().optional(),
           aiCustomerSummariesPerMonth: z.coerce.number().int().min(1).nullable().optional(),
           debtRemindersPerMonth: z.coerce.number().int().min(1).nullable().optional(),
+          audioTranscriptionsPerMonth: z.coerce.number().int().min(1).nullable().optional(),
         })
         .partial()
         .optional(),
@@ -948,6 +952,94 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
   // ═══════════════════════════════════════════════════════════════════════════
   // DASHBOARD STATS
   // ═══════════════════════════════════════════════════════════════════════════
+
+  fastify.get('/usage/monthly', async (request, reply) => {
+    const query = request.query as { month?: string };
+    const monthToken = typeof query.month === 'string' ? query.month.trim() : '';
+    const now = new Date();
+    const defaultMonth = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
+    const safeMonth = /^\d{4}-(0[1-9]|1[0-2])$/.test(monthToken) ? monthToken : defaultMonth;
+    const [year, month] = safeMonth.split('-').map((v) => Number.parseInt(v, 10));
+
+    const start = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0, 0));
+    const end = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
+
+    const metrics = [
+      COMMERCE_USAGE_METRICS.aiMetricsInsights,
+      COMMERCE_USAGE_METRICS.aiCustomerSummary,
+      COMMERCE_USAGE_METRICS.debtRemindersSent,
+      COMMERCE_USAGE_METRICS.audioTranscriptions,
+    ];
+
+    const grouped = await fastify.prisma.usageRecord.groupBy({
+      by: ['metric'],
+      where: {
+        metric: { in: metrics },
+        periodStart: { gte: start },
+        periodEnd: { lte: end },
+      },
+      _sum: { quantity: true },
+    });
+
+    const toInt = (value: bigint | number | null | undefined): number => {
+      if (typeof value === 'bigint') return Number(value);
+      if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+      return 0;
+    };
+
+    const metricTotals = new Map<string, number>();
+    for (const row of grouped) {
+      metricTotals.set(row.metric, toInt(row._sum.quantity));
+    }
+
+    const topAudio = await fastify.prisma.usageRecord.groupBy({
+      by: ['workspaceId'],
+      where: {
+        metric: COMMERCE_USAGE_METRICS.audioTranscriptions,
+        periodStart: { gte: start },
+        periodEnd: { lte: end },
+      },
+      _sum: { quantity: true },
+      orderBy: { _sum: { quantity: 'desc' } },
+      take: 5,
+    });
+
+    const workspaceIds = topAudio.map((row) => row.workspaceId);
+    const workspaces = workspaceIds.length > 0
+      ? await fastify.prisma.workspace.findMany({
+          where: { id: { in: workspaceIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const workspaceById = new Map(workspaces.map((w) => [w.id, w.name]));
+
+    const ordersCreated = await fastify.prisma.order.count({
+      where: {
+        createdAt: { gte: start, lte: end },
+        deletedAt: null,
+      },
+    });
+
+    return reply.send({
+      period: {
+        month: safeMonth,
+        start,
+        end,
+      },
+      totals: {
+        ordersCreated,
+        aiMetricsInsights: metricTotals.get(COMMERCE_USAGE_METRICS.aiMetricsInsights) || 0,
+        aiCustomerSummaries: metricTotals.get(COMMERCE_USAGE_METRICS.aiCustomerSummary) || 0,
+        debtReminders: metricTotals.get(COMMERCE_USAGE_METRICS.debtRemindersSent) || 0,
+        audioTranscriptions: metricTotals.get(COMMERCE_USAGE_METRICS.audioTranscriptions) || 0,
+      },
+      topAudioWorkspaces: topAudio.map((row) => ({
+        workspaceId: row.workspaceId,
+        workspaceName: workspaceById.get(row.workspaceId) || row.workspaceId,
+        quantity: toInt(row._sum.quantity),
+      })),
+    });
+  });
 
   // Get admin dashboard stats
   fastify.get('/stats', async (request, reply) => {

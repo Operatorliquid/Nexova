@@ -3,20 +3,38 @@ import path from 'path';
 import { randomUUID } from 'crypto';
 import type { FileUploader } from '../tools/retail/catalog.tools.js';
 
+type UploadOptions = {
+  category?: string;
+};
+
 export class LocalFileUploader implements FileUploader {
   async upload(
     buffer: Buffer,
     filename: string,
-    _mimeType: string,
-    workspaceId: string
+    mimeType: string,
+    workspaceId: string,
+    options?: UploadOptions
   ): Promise<string> {
-    const uploadDir = this.getUploadDir();
-    const catalogsDir = path.join(uploadDir, 'catalogs');
-    await fs.mkdir(catalogsDir, { recursive: true });
+    const safeName = this.sanitizeFilename(filename || 'archivo.pdf');
+    const category = this.sanitizeCategory(options?.category || 'catalogs');
 
-    const safeName = this.sanitizeFilename(filename || 'catalogo.pdf');
+    const uploadedViaApi = await this.tryUploadThroughApi(
+      buffer,
+      safeName,
+      mimeType,
+      workspaceId,
+      category
+    );
+    if (uploadedViaApi) {
+      return uploadedViaApi;
+    }
+
+    const uploadDir = this.getUploadDir();
+    const targetDir = path.join(uploadDir, category);
+    await fs.mkdir(targetDir, { recursive: true });
+
     const uniqueName = `${workspaceId}-${Date.now()}-${randomUUID().slice(0, 8)}-${safeName}`;
-    const filePath = path.join(catalogsDir, uniqueName);
+    const filePath = path.join(targetDir, uniqueName);
 
     await fs.writeFile(filePath, buffer);
 
@@ -25,7 +43,97 @@ export class LocalFileUploader implements FileUploader {
       throw new Error('No hay una URL pública configurada para enviar el PDF.');
     }
 
-    return `${publicBase}/uploads/catalogs/${uniqueName}`;
+    return `${publicBase}/uploads/${category}/${uniqueName}`;
+  }
+
+  private sanitizeCategory(category: string): string {
+    const normalized = (category || '').trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
+    if (!normalized) return 'catalogs';
+    return normalized;
+  }
+
+  private async tryUploadThroughApi(
+    buffer: Buffer,
+    filename: string,
+    mimeType: string,
+    workspaceId: string,
+    category: string
+  ): Promise<string | null> {
+    const token = (process.env.INTERNAL_UPLOAD_TOKEN || '').trim();
+    if (!token) {
+      return null;
+    }
+
+    const uploadUrl = await this.resolveInternalUploadUrl();
+    if (!uploadUrl) {
+      return null;
+    }
+
+    try {
+      const form = new FormData();
+      form.append('workspaceId', workspaceId);
+      form.append('category', category);
+      form.append(
+        'file',
+        new Blob([buffer], { type: mimeType || 'application/octet-stream' }),
+        filename
+      );
+
+      const response = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: {
+          'x-internal-upload-token': token,
+        },
+        body: form,
+        signal: AbortSignal.timeout(20000),
+      });
+
+      const bodyText = await response.text();
+      const payload = bodyText ? (this.safeJsonParse(bodyText) as Record<string, unknown> | null) : null;
+
+      if (!response.ok) {
+        throw new Error(
+          `Internal upload failed (${response.status}): ${payload?.error || bodyText || 'unknown_error'}`
+        );
+      }
+
+      const rawUrl = payload?.url;
+      if (typeof rawUrl === 'string' && rawUrl.trim()) {
+        return rawUrl;
+      }
+
+      const relativeUrl = payload?.relativeUrl;
+      if (typeof relativeUrl === 'string' && relativeUrl.trim()) {
+        const publicBase = await this.resolvePublicBaseUrl();
+        if (publicBase) {
+          return `${publicBase}${relativeUrl.startsWith('/') ? '' : '/'}${relativeUrl}`;
+        }
+      }
+
+      return null;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      console.warn(`[LocalFileUploader] Internal upload failed, using local fallback: ${msg}`);
+      return null;
+    }
+  }
+
+  private async resolveInternalUploadUrl(): Promise<string | null> {
+    const explicit = (process.env.INTERNAL_UPLOAD_URL || '').trim();
+    if (explicit) {
+      return explicit;
+    }
+
+    const apiInternalBase = (process.env.API_INTERNAL_URL || '').trim();
+    if (apiInternalBase) {
+      return `${apiInternalBase.replace(/\/$/, '')}/api/v1/uploads/internal-file`;
+    }
+
+    const publicBase = await this.resolvePublicBaseUrl();
+    if (!publicBase) {
+      return null;
+    }
+    return `${publicBase}/api/v1/uploads/internal-file`;
   }
 
   private sanitizeFilename(name: string): string {
@@ -89,5 +197,13 @@ export class LocalFileUploader implements FileUploader {
       current = parent;
     }
     return null;
+  }
+
+  private safeJsonParse(text: string): unknown | null {
+    try {
+      return JSON.parse(text);
+    } catch {
+      return null;
+    }
   }
 }
