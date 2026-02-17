@@ -92,6 +92,51 @@ function inferAudioExtension(mimeType?: string): string {
   return 'bin';
 }
 
+const OPENAI_SUPPORTED_AUDIO_EXTENSIONS = new Set([
+  'mp3',
+  'mp4',
+  'mpeg',
+  'mpga',
+  'm4a',
+  'wav',
+  'webm',
+  'ogg',
+]);
+
+function normalizeAudioExtensionForOpenAi(extension: string): string {
+  const ext = extension.trim().toLowerCase().replace(/^\./, '');
+  if (!ext) return '';
+  if (ext === 'oga' || ext === 'opus') return 'ogg';
+  return ext;
+}
+
+function normalizeMimeTypeForUpload(mimeType?: string): string {
+  const raw = (mimeType || '').trim();
+  if (!raw) return 'application/octet-stream';
+  const normalized = raw.split(';')[0]?.trim();
+  return normalized || 'application/octet-stream';
+}
+
+function buildOpenAiUploadFilename(fileName: string | undefined, mimeType?: string): string {
+  const sanitized = sanitizeFileName(fileName, 'audio');
+  const dotIndex = sanitized.lastIndexOf('.');
+  const base = dotIndex > 0 ? sanitized.slice(0, dotIndex) : sanitized;
+  const currentExt = dotIndex > 0 ? sanitized.slice(dotIndex + 1) : '';
+
+  const normalizedCurrent = normalizeAudioExtensionForOpenAi(currentExt);
+  if (normalizedCurrent && OPENAI_SUPPORTED_AUDIO_EXTENSIONS.has(normalizedCurrent)) {
+    return `${base}.${normalizedCurrent}`;
+  }
+
+  const inferred = normalizeAudioExtensionForOpenAi(inferAudioExtension(mimeType));
+  if (inferred && OPENAI_SUPPORTED_AUDIO_EXTENSIONS.has(inferred)) {
+    return `${base}.${inferred}`;
+  }
+
+  // Fallback to a widely accepted extension for STT upload.
+  return `${base}.webm`;
+}
+
 function resolveInfobipApiKey(number: {
   apiKeyEnc?: string | null;
   apiKeyIv?: string | null;
@@ -410,10 +455,8 @@ async function transcribeAudio(params: {
     throw new Error('OPENAI_API_KEY is not configured');
   }
 
-  const fileName =
-    sanitizeFileName(params.fileName, `audio.${inferAudioExtension(params.mimeType) || 'bin'}`)
-      || `audio.${inferAudioExtension(params.mimeType)}`;
-  const mimeType = params.mimeType || 'application/octet-stream';
+  const fileName = buildOpenAiUploadFilename(params.fileName, params.mimeType);
+  const mimeType = normalizeMimeTypeForUpload(params.mimeType);
 
   const form = new FormData();
   form.append('model', OPENAI_TRANSCRIPTION_MODEL);
