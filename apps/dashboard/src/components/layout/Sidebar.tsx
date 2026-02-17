@@ -39,7 +39,7 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
     : user?.email || 'Usuario';
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full w-full">
       {/* Logo */}
       <div className="flex items-center h-16 px-6 border-b border-border">
         <div className="flex items-center gap-3">

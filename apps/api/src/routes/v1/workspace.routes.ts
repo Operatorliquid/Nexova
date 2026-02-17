@@ -76,6 +76,25 @@ function randomNumericString(length: number): string {
   return out.slice(0, length);
 }
 
+const EVOLUTION_CONNECT_LOCK_TTL_MS = Number.parseInt(
+  process.env.EVOLUTION_CONNECT_LOCK_TTL_MS || '90000',
+  10
+);
+const evolutionConnectLocks = new Map<string, number>();
+
+function tryAcquireEvolutionConnectLock(workspaceId: string): boolean {
+  const key = `ws:evolution:connect:${workspaceId}`;
+  const now = Date.now();
+  const lockedUntil = evolutionConnectLocks.get(key) || 0;
+  if (lockedUntil > now) return false;
+  evolutionConnectLocks.set(key, now + EVOLUTION_CONNECT_LOCK_TTL_MS);
+  return true;
+}
+
+function releaseEvolutionConnectLock(workspaceId: string): void {
+  evolutionConnectLocks.delete(`ws:evolution:connect:${workspaceId}`);
+}
+
 function resolvePublicBaseUrlFromEnv(): string | null {
   const candidates = [
     process.env.API_BASE_URL,
@@ -766,6 +785,15 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
       const { id } = request.params as { id: string };
       if (!assertWorkspaceAccess(request, reply, id)) return;
 
+      if (!tryAcquireEvolutionConnectLock(id)) {
+        return reply.code(409).send({
+          error: 'EVOLUTION_CONNECT_IN_PROGRESS',
+          message: 'Ya hay una conexión de WhatsApp en proceso. Esperá unos segundos e intentá nuevamente.',
+        });
+      }
+
+      try {
+
       const evolutionCfg = resolveEvolutionConfigFromEnv();
       if (!evolutionCfg) {
         return reply.code(400).send({
@@ -1018,6 +1046,9 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
         qrDataUrl,
         count: typeof connect?.count === 'number' ? connect.count : null,
       });
+      } finally {
+        releaseEvolutionConnectLock(id);
+      }
     }
   );
 

@@ -1394,16 +1394,18 @@ function ApplicationsSettings() {
         }
 
         const qrDataUrlFromStatus = (status?.qrDataUrl || '').toString().trim();
-        if (qrDataUrlFromStatus && !evolutionQrRef.current) {
+        if (qrDataUrlFromStatus && qrDataUrlFromStatus !== evolutionQrRef.current) {
           setEvolutionQrDataUrl(qrDataUrlFromStatus);
         }
 
         const qrCodeFromStatus = (status?.qrCode || '').toString().trim();
-        if (qrCodeFromStatus && !evolutionQrRef.current) {
+        if (qrCodeFromStatus && !qrDataUrlFromStatus) {
           try {
             const QRCode = await import('qrcode');
             const dataUrl = await QRCode.toDataURL(qrCodeFromStatus, { margin: 1, width: 280 });
-            setEvolutionQrDataUrl(dataUrl);
+            if (dataUrl !== evolutionQrRef.current) {
+              setEvolutionQrDataUrl(dataUrl);
+            }
           } catch {
             // ignore
           }
