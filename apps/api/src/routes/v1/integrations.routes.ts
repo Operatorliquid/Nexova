@@ -37,7 +37,7 @@ const getMercadoPagoConfig = (): MercadoPagoConfig => ({
   sandbox: process.env.MP_SANDBOX === 'true',
 });
 
-export function integrationsRoutes(app: FastifyInstance): void {
+export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
   // Initialize services
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = path.dirname(__filename);

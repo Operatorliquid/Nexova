@@ -7,7 +7,7 @@ import { type FastifyInstance } from 'fastify';
 import { QuickActionService, COMMAND_SUGGESTIONS } from '../../services/quick-action/index.js';
 import { getWorkspacePlanContext } from '../../utils/commerce-plan.js';
 
-export function quickActionsRoutes(app: FastifyInstance): void {
+export async function quickActionsRoutes(app: FastifyInstance): Promise<void> {
   const quickActionService = new QuickActionService(app.prisma);
 
   /**

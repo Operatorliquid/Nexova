@@ -102,7 +102,7 @@ function readHeaderValue(value: unknown): string {
   return '';
 }
 
-export function uploadsRoutes(app: FastifyInstance): void {
+export async function uploadsRoutes(app: FastifyInstance): Promise<void> {
   // Ensure upload directories exist
   const productsDir = path.join(UPLOAD_DIR, 'products');
   if (!existsSync(productsDir)) {

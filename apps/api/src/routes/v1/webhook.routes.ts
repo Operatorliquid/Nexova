@@ -466,10 +466,10 @@ function extractEvolutionReplyContext(msg: unknown): { isReply: boolean; referre
   return { isReply: !!referred, ...(referred ? { referredMessageId: referred } : {}) };
 }
 
-export function webhookRoutes(
+export async function webhookRoutes(
   app: FastifyInstance,
   opts: { queue?: Queue; audioQueue?: Queue }
-): void {
+): Promise<void> {
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = path.dirname(__filename);
   const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, '..', '..', '..', 'uploads');
