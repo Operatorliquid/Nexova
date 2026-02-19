@@ -79,7 +79,14 @@ const resolveTrashReason = (
 const buildNotTrashedWhere = (): Prisma.OrderWhereInput => ({
   AND: [
     { status: { not: ORDER_TRASH_STATUS } },
-    { NOT: { metadata: { path: ['trash', 'isTrashed'], equals: true } } },
+    {
+      OR: [
+        { metadata: { equals: Prisma.AnyNull } },
+        { metadata: { path: ['trash', 'isTrashed'], equals: Prisma.AnyNull } },
+        { metadata: { path: ['trash', 'isTrashed'], equals: false } },
+        { metadata: { path: ['trash', 'isTrashed'], equals: 'false' } },
+      ],
+    },
   ],
 });
 
@@ -87,6 +94,7 @@ const buildOnlyTrashedWhere = (): Prisma.OrderWhereInput => ({
   OR: [
     { status: ORDER_TRASH_STATUS },
     { metadata: { path: ['trash', 'isTrashed'], equals: true } },
+    { metadata: { path: ['trash', 'isTrashed'], equals: 'true' } },
   ],
 });
 

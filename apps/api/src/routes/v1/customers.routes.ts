@@ -2,7 +2,7 @@
  * Customers Routes
  * CRUD operations for customer management
  */
-import { type Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { type FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 
@@ -1246,13 +1246,21 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
           OR: [
             { status: 'trashed' },
             { metadata: { path: ['trash', 'isTrashed'], equals: true } },
+            { metadata: { path: ['trash', 'isTrashed'], equals: 'true' } },
           ],
         });
       } else {
         andConditions.push({
           AND: [
             { status: { not: 'trashed' } },
-            { NOT: { metadata: { path: ['trash', 'isTrashed'], equals: true } } },
+            {
+              OR: [
+                { metadata: { equals: Prisma.AnyNull } },
+                { metadata: { path: ['trash', 'isTrashed'], equals: Prisma.AnyNull } },
+                { metadata: { path: ['trash', 'isTrashed'], equals: false } },
+                { metadata: { path: ['trash', 'isTrashed'], equals: 'false' } },
+              ],
+            },
           ],
         });
       }

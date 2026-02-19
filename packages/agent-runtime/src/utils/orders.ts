@@ -1,10 +1,17 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma, type Prisma as PrismaNamespace } from '@prisma/client';
 
-export const withVisibleOrders = (where: Prisma.OrderWhereInput): Prisma.OrderWhereInput => ({
+export const withVisibleOrders = (where: PrismaNamespace.OrderWhereInput): PrismaNamespace.OrderWhereInput => ({
   AND: [
     where,
     { deletedAt: null },
     { status: { not: 'trashed' } },
-    { NOT: { metadata: { path: ['trash', 'isTrashed'], equals: true } } },
+    {
+      OR: [
+        { metadata: { equals: Prisma.AnyNull } },
+        { metadata: { path: ['trash', 'isTrashed'], equals: Prisma.AnyNull } },
+        { metadata: { path: ['trash', 'isTrashed'], equals: false } },
+        { metadata: { path: ['trash', 'isTrashed'], equals: 'false' } },
+      ],
+    },
   ],
 });
