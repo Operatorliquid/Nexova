@@ -1,4 +1,5 @@
 import type { LucideIcon } from 'lucide-react';
+
 import { AnimatedCard } from './motion';
 
 export type StatCardColor = 'emerald' | 'blue' | 'cyan' | 'amber' | 'red' | 'primary';
@@ -63,7 +64,14 @@ const COLOR_MAP: Record<StatCardColor, {
   },
 };
 
-export function StatCard({ label, value, icon: Icon, color, sub, isLoading }: StatCardProps) {
+export function StatCard({
+  label,
+  value,
+  icon: Icon,
+  color,
+  sub,
+  isLoading,
+}: StatCardProps): JSX.Element {
   const c = COLOR_MAP[color];
 
   if (isLoading) {

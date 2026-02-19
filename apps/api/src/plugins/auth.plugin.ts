@@ -2,13 +2,14 @@
  * Auth Plugin for Fastify
  * Handles JWT verification and tenant context
  */
-import { FastifyPluginAsync, FastifyRequest, FastifyReply } from 'fastify';
+import { type FastifyPluginAsync, type FastifyRequest, type FastifyReply } from 'fastify';
 import fp from 'fastify-plugin';
+
 import {
   verifyAccessToken,
-  AccessTokenPayload,
+  type AccessTokenPayload,
   PermissionService,
-  TenantContext,
+  type TenantContext,
   runWithContext,
 } from '@nexova/core';
 
@@ -29,7 +30,16 @@ declare module 'fastify' {
   }
 }
 
-const authPluginCallback: FastifyPluginAsync = async (fastify) => {
+const readCookie = (request: FastifyRequest, cookieName: string): string | undefined => {
+  const cookies = (request as FastifyRequest & { cookies?: unknown }).cookies;
+  if (!cookies || typeof cookies !== 'object') {
+    return undefined;
+  }
+  const value = (cookies as Record<string, unknown>)[cookieName];
+  return typeof value === 'string' ? value : undefined;
+};
+
+const authPluginCallback: FastifyPluginAsync = (fastify) => {
   const permissionService = new PermissionService(fastify.prisma);
 
   // Authentication decorator
@@ -37,10 +47,7 @@ const authPluginCallback: FastifyPluginAsync = async (fastify) => {
     'authenticate',
     async function (request: FastifyRequest, reply: FastifyReply) {
       const authHeader = request.headers.authorization;
-      const cookieToken =
-        typeof (request as any).cookies?.accessToken === 'string'
-          ? (request as any).cookies.accessToken
-          : undefined;
+      const cookieToken = readCookie(request, 'accessToken');
 
       if (!authHeader?.startsWith('Bearer ') && !cookieToken) {
         return reply.code(401).send({
@@ -51,7 +58,13 @@ const authPluginCallback: FastifyPluginAsync = async (fastify) => {
 
       const token = authHeader?.startsWith('Bearer ')
         ? authHeader.substring(7)
-        : cookieToken!;
+        : cookieToken;
+      if (!token) {
+        return reply.code(401).send({
+          error: 'UNAUTHORIZED',
+          message: 'Falta el encabezado de autorización o es inválido',
+        });
+      }
 
       try {
         const payload = verifyAccessToken(token);

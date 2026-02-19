@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 /**
  * Glass-style tooltip wrapper for Nivo charts.
  */
-export function ChartTooltip({ children }: { children: ReactNode }) {
+export function ChartTooltip({ children }: { children: ReactNode }): JSX.Element {
   return (
     <div className="rounded-xl border border-border bg-popover px-3 py-2 shadow-lg">
       {children}
@@ -21,7 +21,7 @@ export function TooltipLine({
   label: string;
   value: string;
   sub?: string;
-}) {
+}): JSX.Element {
   return (
     <div className="flex items-center gap-2">
       {color && (

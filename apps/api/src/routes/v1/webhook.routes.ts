@@ -2,24 +2,28 @@
  * Webhook Routes
  * Handles incoming webhooks from external providers (Infobip, etc.)
  */
-import { FastifyInstance, FastifyRequest } from 'fastify';
-import { Queue } from 'bullmq';
-import { Prisma } from '@prisma/client';
-import {
-  QUEUES,
-  AgentProcessPayload,
-  AudioTranscriptionPayload,
-  COMMERCE_USAGE_METRICS,
-} from '@nexova/shared';
-import { EvolutionClient, InfobipClient } from '@nexova/integrations';
-import { decrypt } from '@nexova/core';
 import * as crypto from 'crypto';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getWorkspacePlanContext } from '../../utils/commerce-plan.js';
+
+import { type Prisma } from '@prisma/client';
+import { type Queue } from 'bullmq';
+import { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
+
+import { decrypt } from '@nexova/core';
+import { EvolutionClient, InfobipClient } from '@nexova/integrations';
+import {
+  QUEUES,
+  type AgentProcessPayload,
+  type AudioTranscriptionPayload,
+  COMMERCE_USAGE_METRICS,
+} from '@nexova/shared';
+
 import { getEffectiveCommercePlanLimits } from '../../utils/commerce-plan-limits.js';
+import { getWorkspacePlanContext } from '../../utils/commerce-plan.js';
 import { getMonthlyUsage } from '../../utils/monthly-usage.js';
+import { buildSignedUploadUrl, resolveSignedUploadTtlSeconds } from '../../utils/upload-access.js';
 
 // BullMQ queue - initialized when routes are registered
 let agentQueue: Queue;
@@ -130,6 +134,39 @@ function buildPhoneCandidates(raw: string | null | undefined): string[] {
   return Array.from(candidates).filter(Boolean);
 }
 
+type UnknownRecord = Record<string, unknown>;
+
+function asRecord(value: unknown): UnknownRecord | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  return value as UnknownRecord;
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function firstRecord(value: unknown): UnknownRecord | null {
+  return asRecord(asArray(value)[0]);
+}
+
+function asString(value: unknown): string | null {
+  return typeof value === 'string' ? value : null;
+}
+
+function asTrimmedString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function asLowerTrimmedString(value: unknown): string {
+  return typeof value === 'string' ? value.toLowerCase().trim() : '';
+}
+
+function asUpperTrimmedString(value: unknown): string {
+  return typeof value === 'string' ? value.toUpperCase().trim() : '';
+}
+
 function toPositiveIntOrNull(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
     return Math.trunc(value);
@@ -141,55 +178,46 @@ function toPositiveIntOrNull(value: unknown): number | null {
   return null;
 }
 
-function extractInfobipAudioMeta(payload: any): {
+function extractInfobipAudioMeta(payload: unknown): {
   isAudio: boolean;
   mediaUrl?: string;
   mimeType?: string;
   fileName?: string;
   durationMs?: number;
 } {
-  const result = payload?.results?.[0];
-  const content = result?.content?.[0];
-  const contentType = typeof content?.type === 'string' ? content.type.toLowerCase().trim() : '';
-  const messageType = typeof result?.message?.type === 'string' ? result.message.type.toLowerCase().trim() : '';
+  const root = asRecord(payload);
+  const result = firstRecord(root?.results);
+  const content = firstRecord(result?.content);
+  const message = asRecord(result?.message);
+  const contentType = asLowerTrimmedString(content?.type);
+  const messageType = asLowerTrimmedString(message?.type);
 
   const mediaUrl =
-    (typeof content?.mediaUrl === 'string' && content.mediaUrl.trim())
-      ? content.mediaUrl.trim()
-      : (typeof content?.url === 'string' && content.url.trim())
-        ? content.url.trim()
-        : (typeof result?.message?.audioUrl === 'string' && result.message.audioUrl.trim())
-          ? result.message.audioUrl.trim()
-          : undefined;
+    asTrimmedString(content?.mediaUrl)
+    || asTrimmedString(content?.url)
+    || asTrimmedString(message?.audioUrl)
+    || undefined;
 
   const mimeType =
-    (typeof content?.mimeType === 'string' && content.mimeType.trim())
-      ? content.mimeType.trim()
-      : (typeof content?.mimetype === 'string' && content.mimetype.trim())
-        ? content.mimetype.trim()
-        : (typeof result?.message?.mimeType === 'string' && result.message.mimeType.trim())
-          ? result.message.mimeType.trim()
-          : (typeof result?.message?.mimetype === 'string' && result.message.mimetype.trim())
-            ? result.message.mimetype.trim()
-            : undefined;
+    asTrimmedString(content?.mimeType)
+    || asTrimmedString(content?.mimetype)
+    || asTrimmedString(message?.mimeType)
+    || asTrimmedString(message?.mimetype)
+    || undefined;
 
   const fileName =
-    (typeof content?.fileName === 'string' && content.fileName.trim())
-      ? content.fileName.trim()
-      : (typeof content?.filename === 'string' && content.filename.trim())
-        ? content.filename.trim()
-        : (typeof result?.message?.fileName === 'string' && result.message.fileName.trim())
-          ? result.message.fileName.trim()
-          : (typeof result?.message?.filename === 'string' && result.message.filename.trim())
-            ? result.message.filename.trim()
-            : undefined;
+    asTrimmedString(content?.fileName)
+    || asTrimmedString(content?.filename)
+    || asTrimmedString(message?.fileName)
+    || asTrimmedString(message?.filename)
+    || undefined;
 
   const durationMs =
     toPositiveIntOrNull(content?.durationMs)
     ?? toPositiveIntOrNull(content?.duration)
-    ?? toPositiveIntOrNull(result?.message?.durationMs)
-    ?? toPositiveIntOrNull(result?.message?.duration)
-    ?? toPositiveIntOrNull(result?.message?.audioDuration)
+    ?? toPositiveIntOrNull(message?.durationMs)
+    ?? toPositiveIntOrNull(message?.duration)
+    ?? toPositiveIntOrNull(message?.audioDuration)
     ?? undefined;
 
   const isAudioType = ['audio', 'voice', 'voice_message'].includes(contentType)
@@ -205,37 +233,40 @@ function extractInfobipAudioMeta(payload: any): {
   };
 }
 
-function extractEvolutionMessages(payload: any): any[] {
+function extractEvolutionMessages(payload: unknown): UnknownRecord[] {
+  const root = asRecord(payload);
+  const payloadData = asRecord(root?.data);
   const candidates: unknown[] = [
-    payload?.data?.messages,
-    payload?.messages,
-    payload?.data,
-    payload?.message,
-    payload?.data?.message,
+    payloadData?.messages,
+    root?.messages,
+    root?.data,
+    root?.message,
+    payloadData?.message,
   ];
 
-  const out: any[] = [];
+  const out: UnknownRecord[] = [];
   const fallbackKey =
-    payload?.data && typeof payload.data === 'object' ? (payload.data as any)?.key
-      : payload?.key && typeof payload.key === 'object' ? payload.key
-        : null;
+    asRecord(payloadData?.key)
+    || asRecord(root?.key)
+    || null;
 
-  const wrapMessageIfNeeded = (value: any): any => {
-    if (!value || typeof value !== 'object') return null;
-    if (value.key && typeof value.key === 'object') return value;
+  const wrapMessageIfNeeded = (value: unknown): UnknownRecord | null => {
+    const message = asRecord(value);
+    if (!message) return null;
+    if (asRecord(message.key)) return message;
 
     const hasRawMessageShape =
-      typeof value.conversation === 'string'
-      || !!value.extendedTextMessage
-      || !!value.imageMessage
-      || !!value.documentMessage
-      || !!value.listResponseMessage
-      || !!value.buttonsResponseMessage;
+      asString(message.conversation)
+      || asRecord(message.extendedTextMessage)
+      || asRecord(message.imageMessage)
+      || asRecord(message.documentMessage)
+      || asRecord(message.listResponseMessage)
+      || asRecord(message.buttonsResponseMessage);
 
     if (hasRawMessageShape && fallbackKey) {
       return {
         key: fallbackKey,
-        message: value,
+        message,
       };
     }
 
@@ -258,11 +289,12 @@ function extractEvolutionMessages(payload: any): any[] {
   return out;
 }
 
-function extractEvolutionQrInfo(payload: any): { qrCode?: string; qrDataUrl?: string; pairingCode?: string } {
+function extractEvolutionQrInfo(payload: unknown): { qrCode?: string; qrDataUrl?: string; pairingCode?: string } {
   const getString = (value: unknown): string | undefined =>
     typeof value === 'string' && value.trim() ? value.trim() : undefined;
 
-  const pickQr = (obj: any): string | undefined => {
+  const pickQr = (value: unknown): string | undefined => {
+    const obj = asRecord(value);
     if (!obj) return undefined;
 
     // Common top-level string fields
@@ -275,8 +307,8 @@ function extractEvolutionQrInfo(payload: any): { qrCode?: string; qrDataUrl?: st
     if (direct) return direct;
 
     // Some Evolution payloads nest the QR under qrcode/base64
-    const qrobj = obj?.qrcode;
-    if (qrobj && typeof qrobj === 'object') {
+    const qrobj = asRecord(obj.qrcode);
+    if (qrobj) {
       const nested =
         getString(qrobj?.base64)
         || getString(qrobj?.qrcode)
@@ -287,8 +319,8 @@ function extractEvolutionQrInfo(payload: any): { qrCode?: string; qrDataUrl?: st
     }
 
     // Some payloads use `qr` as an object
-    const qrObj = obj?.qr;
-    if (qrObj && typeof qrObj === 'object') {
+    const qrObj = asRecord(obj.qr);
+    if (qrObj) {
       const nested =
         getString(qrObj?.base64)
         || getString(qrObj?.qrcode)
@@ -301,15 +333,17 @@ function extractEvolutionQrInfo(payload: any): { qrCode?: string; qrDataUrl?: st
     return undefined;
   };
 
-  const qrCandidate = pickQr(payload?.data) || pickQr(payload);
+  const root = asRecord(payload);
+  const payloadData = asRecord(root?.data);
+  const qrCandidate = pickQr(payloadData) || pickQr(root);
 
   const isDataUrl = !!qrCandidate && /^data:image\//i.test(qrCandidate);
 
   const pairingCandidate =
-    getString(payload?.data?.pairingCode)
-    || getString(payload?.data?.pairing_code)
-    || getString(payload?.pairingCode)
-    || getString(payload?.pairing_code);
+    getString(payloadData?.pairingCode)
+    || getString(payloadData?.pairing_code)
+    || getString(root?.pairingCode)
+    || getString(root?.pairing_code);
 
   const looksLikeBase64Image =
     !!qrCandidate
@@ -356,23 +390,25 @@ const EVOLUTION_MESSAGE_EVENTS = new Set([
   'MESSAGES_RECEIVED',
 ]);
 
-function evolutionRemoteJidToE164(remoteJid: string | null | undefined): string | null {
-  return normalizeEvolutionSender(remoteJid);
-}
+function extractEvolutionSenderPhone(msg: unknown, payload: unknown): string | null {
+  const msgRecord = asRecord(msg);
+  const msgKey = asRecord(msgRecord?.key);
+  const payloadRecord = asRecord(payload);
+  const payloadData = asRecord(payloadRecord?.data);
+  const payloadDataKey = asRecord(payloadData?.key);
 
-function extractEvolutionSenderPhone(msg: any, payload: any): string | null {
   const candidates: Array<string | null | undefined> = [
-    msg?.key?.remoteJid,
-    msg?.key?.remoteJidAlt,
-    msg?.key?.senderPn,
-    msg?.key?.cleanedSenderPn,
-    msg?.key?.participant,
-    msg?.remoteJid,
-    payload?.data?.key?.remoteJid,
-    payload?.data?.key?.remoteJidAlt,
-    payload?.data?.key?.senderPn,
-    payload?.data?.key?.cleanedSenderPn,
-    payload?.data?.key?.participant,
+    asString(msgKey?.remoteJid),
+    asString(msgKey?.remoteJidAlt),
+    asString(msgKey?.senderPn),
+    asString(msgKey?.cleanedSenderPn),
+    asString(msgKey?.participant),
+    asString(msgRecord?.remoteJid),
+    asString(payloadDataKey?.remoteJid),
+    asString(payloadDataKey?.remoteJidAlt),
+    asString(payloadDataKey?.senderPn),
+    asString(payloadDataKey?.cleanedSenderPn),
+    asString(payloadDataKey?.participant),
   ];
 
   for (const candidate of candidates) {
@@ -382,33 +418,44 @@ function extractEvolutionSenderPhone(msg: any, payload: any): string | null {
   return null;
 }
 
-function extractEvolutionMessageId(msg: any): string | null {
+function extractEvolutionMessageId(msg: unknown): string | null {
+  const msgRecord = asRecord(msg);
+  const msgKey = asRecord(msgRecord?.key);
   const id =
-    msg?.key?.id ||
-    msg?.messageId ||
-    msg?.id ||
-    msg?.msgId ||
+    asString(msgKey?.id) ||
+    asString(msgRecord?.messageId) ||
+    asString(msgRecord?.id) ||
+    asString(msgRecord?.msgId) ||
     null;
   return typeof id === 'string' && id.trim() ? id.trim() : null;
 }
 
-function isEvolutionInboundMessage(msg: any): boolean {
+function isEvolutionInboundMessage(msg: unknown): boolean {
+  const msgRecord = asRecord(msg);
+  const msgKey = asRecord(msgRecord?.key);
   // Baileys-style events include msg.key.fromMe
-  const fromMe = msg?.key?.fromMe ?? msg?.fromMe;
+  const fromMe = msgKey?.fromMe ?? msgRecord?.fromMe;
   if (typeof fromMe === 'boolean') return !fromMe;
-  const status = typeof msg?.status === 'string' ? msg.status.toUpperCase() : '';
-  if (status.endsWith('_ACK') && !msg?.message) return false;
+  const status = asUpperTrimmedString(msgRecord?.status);
+  if (status.endsWith('_ACK') && !asRecord(msgRecord?.message)) return false;
   // If not present, assume inbound
   return true;
 }
 
-function extractEvolutionReplyContext(msg: any): { isReply: boolean; referredMessageId?: string } {
+function extractEvolutionReplyContext(msg: unknown): { isReply: boolean; referredMessageId?: string } {
+  const msgRecord = asRecord(msg);
+  const message = asRecord(msgRecord?.message);
+  const extendedTextMessage = asRecord(message?.extendedTextMessage);
+  const buttonsResponseMessage = asRecord(message?.buttonsResponseMessage);
+  const listResponseMessage = asRecord(message?.listResponseMessage);
+  const imageMessage = asRecord(message?.imageMessage);
+  const documentMessage = asRecord(message?.documentMessage);
   const ctx =
-    msg?.message?.extendedTextMessage?.contextInfo
-    || msg?.message?.buttonsResponseMessage?.contextInfo
-    || msg?.message?.listResponseMessage?.contextInfo
-    || msg?.message?.imageMessage?.contextInfo
-    || msg?.message?.documentMessage?.contextInfo
+    asRecord(extendedTextMessage?.contextInfo)
+    || asRecord(buttonsResponseMessage?.contextInfo)
+    || asRecord(listResponseMessage?.contextInfo)
+    || asRecord(imageMessage?.contextInfo)
+    || asRecord(documentMessage?.contextInfo)
     || null;
 
   const referred =
@@ -419,10 +466,10 @@ function extractEvolutionReplyContext(msg: any): { isReply: boolean; referredMes
   return { isReply: !!referred, ...(referred ? { referredMessageId: referred } : {}) };
 }
 
-export async function webhookRoutes(
+export function webhookRoutes(
   app: FastifyInstance,
   opts: { queue?: Queue; audioQueue?: Queue }
-): Promise<void> {
+): void {
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = path.dirname(__filename);
   const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, '..', '..', '..', 'uploads');
@@ -543,29 +590,27 @@ export async function webhookRoutes(
     apiKey: string;
     instanceName: string;
     messageId: string;
-    message?: any;
+    message?: unknown;
   }): Promise<{ base64: string; mimetype?: string; filename?: string } | null> => {
     const endpoint = `${params.baseUrl.replace(/\/$/, '')}/chat/getBase64FromMediaMessage/${encodeURIComponent(params.instanceName)}`;
     const candidates: Array<Record<string, unknown>> = [];
+    const messageRecord = asRecord(params.message);
 
     // Preferred shape: full webhook message object (some Evolution versions need remoteJid/fromMe).
-    if (params.message && typeof params.message === 'object') {
+    if (messageRecord) {
       candidates.push({
-        message: params.message,
+        message: messageRecord,
         convertToMp4: false,
       });
     }
 
     // Fallback: normalized key object.
-    const keyFromMessage =
-      params.message && typeof params.message === 'object' && params.message.key && typeof params.message.key === 'object'
-        ? params.message.key
-        : null;
+    const keyFromMessage = asRecord(messageRecord?.key);
     const normalizedKey = {
       id: params.messageId,
-      ...(typeof (keyFromMessage as any)?.remoteJid === 'string' ? { remoteJid: (keyFromMessage as any).remoteJid } : {}),
-      ...(typeof (keyFromMessage as any)?.participant === 'string' ? { participant: (keyFromMessage as any).participant } : {}),
-      ...(typeof (keyFromMessage as any)?.fromMe === 'boolean' ? { fromMe: (keyFromMessage as any).fromMe } : { fromMe: false }),
+      ...(typeof keyFromMessage?.remoteJid === 'string' ? { remoteJid: keyFromMessage.remoteJid } : {}),
+      ...(typeof keyFromMessage?.participant === 'string' ? { participant: keyFromMessage.participant } : {}),
+      ...(typeof keyFromMessage?.fromMe === 'boolean' ? { fromMe: keyFromMessage.fromMe } : { fromMe: false }),
     };
     candidates.push({
       message: { key: normalizedKey },
@@ -597,15 +642,22 @@ export async function webhookRoutes(
         continue;
       }
 
-      const json = text ? (() => { try { return JSON.parse(text); } catch { return null; } })() : null;
-      const raw = json ?? text;
+      let json: unknown = null;
+      if (text) {
+        try {
+          json = JSON.parse(text) as unknown;
+        } catch {
+          json = null;
+        }
+      }
+      const raw: unknown = json ?? text;
 
       if (typeof raw === 'string') {
         return { base64: raw };
       }
 
-      if (raw && typeof raw === 'object') {
-        const obj = raw as Record<string, unknown>;
+      const obj = asRecord(raw);
+      if (obj) {
         const base64 =
           typeof obj.base64 === 'string'
             ? obj.base64
@@ -672,7 +724,12 @@ export async function webhookRoutes(
     const fullPath = path.join(WHATSAPP_MEDIA_DIR, unique);
     await fs.writeFile(fullPath, buffer);
 
-    const fileRef = `${publicBase}/uploads/whatsapp-media/${unique}`;
+    const fileRef = buildSignedUploadUrl({
+      baseUrl: publicBase,
+      category: 'whatsapp-media',
+      filename: unique,
+      ttlSeconds: resolveSignedUploadTtlSeconds(),
+    });
     return { fileRef, fileType };
   };
 
@@ -683,7 +740,7 @@ export async function webhookRoutes(
     (request, body, done) => {
       request.rawBody = body as Buffer;
       try {
-        const json = JSON.parse((body as Buffer).toString('utf8'));
+        const json: unknown = JSON.parse((body as Buffer).toString('utf8'));
         done(null, json);
       } catch (err) {
         done(err as Error, undefined);
@@ -803,7 +860,7 @@ export async function webhookRoutes(
    */
   app.post<{
     Params: { numberId: string };
-    Body: any;
+    Body: unknown;
   }>('/infobip/:numberId', {
     schema: {
       params: {
@@ -816,12 +873,13 @@ export async function webhookRoutes(
     },
     handler: async (request, reply) => {
       const { numberId } = request.params;
-      const payload = request.body as any;
+      const payload = asRecord(request.body);
+      const result = firstRecord(payload?.results);
+      const eventType = asString(result?.event);
 
-      request.log.info({ numberId, payload }, 'Received Infobip webhook');
+      request.log.info({ numberId, eventType }, 'Received Infobip webhook');
 
       try {
-        const eventType = payload?.results?.[0]?.event;
         if (typeof eventType === 'string' && eventType.toUpperCase() !== 'MO') {
           request.log.info({ numberId, eventType }, 'Ignoring non-MO webhook event');
           return reply.send({ status: 'ignored', reason: 'non_mo_event', eventType });
@@ -878,7 +936,7 @@ export async function webhookRoutes(
         const parsed = tempClient.parseIncomingMessage(payload);
 
         if (!parsed) {
-          request.log.warn({ payload }, 'Could not parse incoming message');
+          request.log.warn({ numberId, eventType }, 'Could not parse incoming message');
           // Return 200 to prevent Infobip from retrying
           return reply.send({ status: 'ignored', reason: 'unparseable' });
         }
@@ -1072,12 +1130,12 @@ export async function webhookRoutes(
   const handleEvolutionWebhook = async (
     request: FastifyRequest<{
       Params: { secret: string; eventPath?: string };
-      Body: any;
+      Body: unknown;
     }>,
-    reply: any
-  ) => {
+    reply: FastifyReply
+  ): Promise<unknown> => {
     const { secret, eventPath } = request.params;
-    const payload = request.body as any;
+    const payload = asRecord(request.body);
 
     request.log.info(
       { provider: 'evolution', event: payload?.event ?? payload?.eventType ?? eventPath, eventPath, instance: payload?.instance },
@@ -1124,10 +1182,12 @@ export async function webhookRoutes(
       }
 
       if (event === 'CONNECTION_UPDATE') {
+        const payloadData = asRecord(payload?.data);
+        const payloadInstance = asRecord(payload?.instance);
         const rawState =
-          payload?.data?.state
-          || payload?.state
-          || payload?.instance?.state
+          asString(payloadData?.state)
+          || asString(payload?.state)
+          || asString(payloadInstance?.state)
           || '';
         const state = typeof rawState === 'string' ? rawState.trim().toLowerCase() : '';
 
@@ -1200,12 +1260,15 @@ export async function webhookRoutes(
         if (!isEvolutionInboundMessage(msg)) continue;
 
         const messageId = extractEvolutionMessageId(msg) || crypto.randomUUID();
+        const msgKey = asRecord(msg.key);
+        const payloadData = asRecord(payload?.data);
+        const payloadDataKey = asRecord(payloadData?.key);
         const remoteJid =
-          msg?.key?.remoteJid
-          || msg?.key?.remoteJidAlt
-          || msg?.remoteJid
-          || payload?.data?.key?.remoteJid
-          || payload?.data?.key?.remoteJidAlt;
+          asString(msgKey?.remoteJid)
+          || asString(msgKey?.remoteJidAlt)
+          || asString(msg.remoteJid)
+          || asString(payloadDataKey?.remoteJid)
+          || asString(payloadDataKey?.remoteJidAlt);
         if (typeof remoteJid === 'string' && remoteJid.includes('@g.us')) {
           // Ignore group messages by default
           continue;
@@ -1214,7 +1277,7 @@ export async function webhookRoutes(
         const senderPhone = extractEvolutionSenderPhone(msg, payload);
         if (!senderPhone) {
           request.log.warn(
-            { messageId, event, remoteJid, key: msg?.key },
+            { messageId, event, remoteJid, key: msgKey ?? null },
             'Evolution message ignored: sender phone not resolved'
           );
           continue;
@@ -1235,34 +1298,34 @@ export async function webhookRoutes(
           | { fileRef: string; fileType: 'image' | 'pdf' | 'audio'; caption?: string }
           | null = null;
 
-        const rawMsgBody = msg?.message || {};
+        const rawMsgBody = asRecord(msg.message) || {};
         const msgBody =
-          rawMsgBody?.ephemeralMessage?.message
-          || rawMsgBody?.viewOnceMessage?.message
-          || rawMsgBody?.viewOnceMessageV2?.message
-          || rawMsgBody?.viewOnceMessageV2Extension?.message
+          asRecord(asRecord(rawMsgBody.ephemeralMessage)?.message)
+          || asRecord(asRecord(rawMsgBody.viewOnceMessage)?.message)
+          || asRecord(asRecord(rawMsgBody.viewOnceMessageV2)?.message)
+          || asRecord(asRecord(rawMsgBody.viewOnceMessageV2Extension)?.message)
           || rawMsgBody;
-        const imageMsg = msgBody?.imageMessage;
-        const docMsg = msgBody?.documentMessage;
-        const stickerMsg = msgBody?.stickerMessage;
-        const audioMsg = msgBody?.audioMessage || msgBody?.pttMessage;
-        const audioMime = typeof audioMsg?.mimetype === 'string' ? audioMsg.mimetype.trim() : '';
+        const imageMsg = asRecord(msgBody.imageMessage);
+        const docMsg = asRecord(msgBody.documentMessage);
+        const stickerMsg = asRecord(msgBody.stickerMessage);
+        const audioMsg = asRecord(msgBody.audioMessage) || asRecord(msgBody.pttMessage);
+        const audioMime = asTrimmedString(audioMsg?.mimetype);
         const audioDurationSeconds = toPositiveIntOrNull(audioMsg?.seconds);
         const audioDurationMs =
           toPositiveIntOrNull(audioMsg?.durationMs)
           ?? (typeof audioDurationSeconds === 'number' ? audioDurationSeconds * 1000 : null);
         const audioSizeBytes = toPositiveIntOrNull(audioMsg?.fileLength || audioMsg?.fileSize);
-        const imageMime = typeof imageMsg?.mimetype === 'string' ? imageMsg.mimetype.toLowerCase().trim() : '';
-        const imageCaption = typeof imageMsg?.caption === 'string' ? imageMsg.caption.trim() : '';
-        const looksLikeStickerFromImage = !!imageMsg && imageMime.includes('webp') && !imageCaption;
-        const isSticker = !!stickerMsg || looksLikeStickerFromImage;
-        const isAudio = !!audioMsg;
-        const hasMedia = !!imageMsg || !!docMsg;
+        const imageMime = asLowerTrimmedString(imageMsg?.mimetype);
+        const imageCaption = asTrimmedString(imageMsg?.caption);
+        const looksLikeStickerFromImage = Boolean(imageMsg && imageMime.includes('webp') && !imageCaption);
+        const isSticker = Boolean(stickerMsg) || looksLikeStickerFromImage;
+        const isAudio = Boolean(audioMsg);
+        const hasMedia = Boolean(imageMsg) || Boolean(docMsg);
         const hasTextContent =
-          (typeof msgBody?.conversation === 'string' && msgBody.conversation.trim().length > 0)
-          || (typeof msgBody?.extendedTextMessage?.text === 'string' && msgBody.extendedTextMessage.text.trim().length > 0)
-          || (typeof imageMsg?.caption === 'string' && imageMsg.caption.trim().length > 0)
-          || (typeof docMsg?.caption === 'string' && docMsg.caption.trim().length > 0);
+          asTrimmedString(msgBody.conversation).length > 0
+          || asTrimmedString(asRecord(msgBody.extendedTextMessage)?.text).length > 0
+          || asTrimmedString(imageMsg?.caption).length > 0
+          || asTrimmedString(docMsg?.caption).length > 0;
         const audioPolicy = isAudio
           ? await checkAudioTranscriptionPolicy(workspaceId)
           : null;
@@ -1283,23 +1346,18 @@ export async function webhookRoutes(
               });
 
               const caption =
-                (typeof imageMsg?.caption === 'string' && imageMsg.caption.trim())
-                  ? imageMsg.caption.trim()
-                  : (typeof docMsg?.caption === 'string' && docMsg.caption.trim())
-                    ? docMsg.caption.trim()
-                    : undefined;
+                asTrimmedString(imageMsg?.caption)
+                || asTrimmedString(docMsg?.caption)
+                || undefined;
 
               const mimetype =
-                (typeof imageMsg?.mimetype === 'string' && imageMsg.mimetype.trim())
-                  ? imageMsg.mimetype.trim()
-                  : (typeof docMsg?.mimetype === 'string' && docMsg.mimetype.trim())
-                    ? docMsg.mimetype.trim()
-                    : media?.mimetype;
+                asTrimmedString(imageMsg?.mimetype)
+                || asTrimmedString(docMsg?.mimetype)
+                || media?.mimetype;
 
               const filenameHint =
-                (typeof docMsg?.fileName === 'string' && docMsg.fileName.trim())
-                  ? docMsg.fileName.trim()
-                  : media?.filename;
+                asTrimmedString(docMsg?.fileName)
+                || media?.filename;
 
               if (media?.base64) {
                 const persisted = await persistEvolutionMedia({
@@ -1470,7 +1528,7 @@ export async function webhookRoutes(
 
   app.post<{
     Params: { secret: string };
-    Body: any;
+    Body: unknown;
   }>('/evolution/:secret', {
     schema: {
       params: {
@@ -1484,7 +1542,7 @@ export async function webhookRoutes(
 
   app.post<{
     Params: { secret: string; eventPath: string };
-    Body: any;
+    Body: unknown;
   }>('/evolution/:secret/:eventPath', {
     schema: {
       params: {
@@ -1507,15 +1565,35 @@ export async function webhookRoutes(
    * POST /webhooks/infobip/:numberId/delivery
    * Receives delivery reports for outbound messages
    */
-  app.post<{
+		  app.post<{
     Params: { numberId: string };
-    Body: any;
-  }>('/infobip/:numberId/delivery', {
-	    handler: async (request, reply) => {
-	      const { numberId } = request.params;
-	      const payload = request.body as any;
+    Body: unknown;
+	  }>('/infobip/:numberId/delivery', {
+		    handler: async (request, reply) => {
+		      const { numberId } = request.params;
+		      const payload = asRecord(request.body);
+        const deliveryResult =
+          firstRecord(payload?.results)
+          || firstRecord(payload?.messages)
+          || payload;
+        const deliveryResultRecord = asRecord(deliveryResult);
+        const deliveryResultMessage = asRecord(deliveryResultRecord?.message);
+        const deliveryResultStatus = asRecord(deliveryResultRecord?.status);
+        const deliveryMessageId =
+          asString(deliveryResultRecord?.messageId)
+          || asString(deliveryResultMessage?.id)
+          || asString(deliveryResultRecord?.id)
+          || asString(deliveryResultRecord?.externalId)
+          || null;
 
-	      request.log.info({ numberId, payload }, 'Received Infobip delivery report');
+	      request.log.info(
+          {
+            numberId,
+            messageId: deliveryMessageId,
+            status: asString(deliveryResultStatus?.name) || asString(deliveryResultRecord?.status) || 'unknown',
+          },
+          'Received Infobip delivery report'
+        );
 
       try {
         const whatsappNumber = await app.prisma.whatsAppNumber.findUnique({
@@ -1553,36 +1631,50 @@ export async function webhookRoutes(
           }
         }
 
-        const result = payload?.results?.[0] ?? payload?.messages?.[0] ?? payload;
+        const result =
+          firstRecord(payload?.results)
+          || firstRecord(payload?.messages)
+          || payload;
+        const resultRecord = asRecord(result);
+        const resultMessage = asRecord(resultRecord?.message);
+        const resultStatus = asRecord(resultRecord?.status);
+        const resultMessageStatus = asRecord(resultMessage?.status);
         const messageId =
-          result?.messageId ||
-          result?.message?.id ||
-          result?.id ||
-          result?.externalId;
+          asString(resultRecord?.messageId) ||
+          asString(resultMessage?.id) ||
+          asString(resultRecord?.id) ||
+          asString(resultRecord?.externalId);
         if (!messageId) {
-          request.log.warn({ numberId, payload }, 'Delivery report missing messageId');
+          request.log.warn(
+            {
+              numberId,
+              hasResultsArray: Array.isArray(payload?.results),
+              hasMessagesArray: Array.isArray(payload?.messages),
+            },
+            'Delivery report missing messageId'
+          );
           return reply.send({ status: 'ignored', reason: 'missing_message_id' });
         }
 
         const statusName =
-          result?.status?.name ||
-          result?.status ||
-          result?.message?.status?.name ||
+          asString(resultStatus?.name) ||
+          asString(resultRecord?.status) ||
+          asString(resultMessageStatus?.name) ||
           'unknown';
         const statusGroup =
-          result?.status?.groupName ||
-          result?.message?.status?.groupName ||
+          asString(resultStatus?.groupName) ||
+          asString(resultMessageStatus?.groupName) ||
           '';
         const statusDescription =
-          result?.status?.description ||
-          result?.message?.status?.description ||
+          asString(resultStatus?.description) ||
+          asString(resultMessageStatus?.description) ||
           '';
         const reportedAtRaw =
-          result?.doneAt ||
-          result?.timestamp ||
-          result?.sentAt ||
-          result?.receivedAt ||
-          result?.reportTime;
+          asString(resultRecord?.doneAt) ||
+          asString(resultRecord?.timestamp) ||
+          asString(resultRecord?.sentAt) ||
+          asString(resultRecord?.receivedAt) ||
+          asString(resultRecord?.reportTime);
         const reportedAt = reportedAtRaw ? new Date(reportedAtRaw) : new Date();
 
         await app.prisma.eventOutbox.create({
@@ -1598,7 +1690,7 @@ export async function webhookRoutes(
               statusDescription,
               provider: 'infobip',
               reportedAt: reportedAt.toISOString(),
-              raw: result ?? payload,
+              raw: (result ?? payload ?? null) as Prisma.InputJsonValue,
             },
             status: 'pending',
             correlationId: null,
@@ -1628,44 +1720,46 @@ export async function webhookRoutes(
    */
   app.post('/webhook', {
     handler: async (request, reply) => {
-      const payload = request.body as any;
+      const payload = asRecord(request.body);
+      const payloadRecord = payload ?? {};
+      const result = firstRecord(payload?.results);
+      const eventType = asUpperTrimmedString(result?.event) || undefined;
 
-      request.log.info({ payload }, 'Received WhatsApp webhook');
+      request.log.info({ eventType }, 'Received WhatsApp webhook');
 
       try {
         // Extract the receiver number from Infobip payload
         // Infobip MO_MESSAGES_API_JSON format uses: destination (not to)
-        const result = payload?.results?.[0];
-        const eventType = typeof result?.event === 'string' ? result.event.toUpperCase() : undefined;
         if (eventType && eventType !== 'MO') {
           request.log.info({ eventType }, 'Ignoring non-MO webhook event');
           return reply.send({ status: 'ignored', reason: 'non_mo_event', eventType });
         }
         let receiverNumber: string | null = null;
 
-        if (result?.destination) {
-          receiverNumber = result.destination;
-        } else if (result?.to) {
-          receiverNumber = result.to;
-        } else if (payload?.to) {
-          receiverNumber = payload.to;
+        const receiverFromResult = asString(result?.destination) || asString(result?.to);
+        const receiverFromPayload = asString(payload?.to);
+        if (receiverFromResult) {
+          receiverNumber = receiverFromResult;
+        } else if (receiverFromPayload) {
+          receiverNumber = receiverFromPayload;
         }
 
         if (!receiverNumber) {
-          request.log.warn({ payload }, 'Could not extract receiver number from payload');
+          request.log.warn({ eventType }, 'Could not extract receiver number from payload');
           // Return 200 to prevent Infobip retries
           return reply.send({ status: 'ignored', reason: 'missing_receiver' });
         }
 
         // Extract message ID for deduplication
-        const messageId = result?.messageId || crypto.randomUUID();
+        const messageId = asTrimmedString(result?.messageId) || crypto.randomUUID();
 
         // Normalize the number (remove spaces, ensure + prefix)
         const receiverCandidates = buildPhoneCandidates(receiverNumber);
-        const senderRaw = result?.sender || result?.from || null;
+        const senderRaw = asString(result?.sender) || asString(result?.from) || null;
         const senderCandidates = buildPhoneCandidates(senderRaw);
 
-        const findNumberByCandidates = async (candidates: string[]) => {
+        type WhatsAppNumberLookup = Awaited<ReturnType<typeof app.prisma.whatsAppNumber.findFirst>>;
+        const findNumberByCandidates = async (candidates: string[]): Promise<WhatsAppNumberLookup> => {
           if (candidates.length === 0) return null;
           const exact = await app.prisma.whatsAppNumber.findFirst({
             where: {
@@ -1764,13 +1858,15 @@ export async function webhookRoutes(
         // Store in webhook inbox for processing (DO NOT process here)
         const correlationId = crypto.randomUUID();
         const infobipAudioMeta = extractInfobipAudioMeta(payload);
+        const resultMessage = asRecord(result?.message);
+        const resultContent = firstRecord(result?.content);
         const hasTextContent =
-          (typeof result?.message?.text === 'string' && result.message.text.trim().length > 0)
-          || (typeof result?.content?.[0]?.text === 'string' && result.content[0].text.trim().length > 0);
+          asTrimmedString(resultMessage?.text).length > 0
+          || asTrimmedString(resultContent?.text).length > 0;
         const isAudioMessage = infobipAudioMeta.isAudio;
         const storedPayload = isAudioMessage
           ? {
-              ...payload,
+              ...payloadRecord,
               __nexova: {
                 audio: {
                   provider: 'infobip',
@@ -1824,8 +1920,8 @@ export async function webhookRoutes(
             channelType: 'whatsapp',
             correlationId,
             metadata: {
-              isReply: !!result?.context?.messageId,
-              referredMessageId: result?.context?.messageId,
+              isReply: Boolean(asString(asRecord(result?.context)?.messageId)),
+              referredMessageId: asString(asRecord(result?.context)?.messageId) || undefined,
             },
           };
 
@@ -1887,10 +1983,15 @@ export async function webhookRoutes(
 
   if (enableWebhookDebug) {
     app.post('/debug', async (request, reply) => {
-      console.log('=== DEBUG WEBHOOK RECEIVED ===');
-      console.log('Headers:', JSON.stringify(request.headers, null, 2));
-      console.log('Body:', JSON.stringify(request.body, null, 2));
-      console.log('==============================');
+      const serialized = JSON.stringify(request.body ?? {});
+      app.log.info(
+        {
+          route: '/debug',
+          bodyBytes: Buffer.byteLength(serialized),
+          headerKeys: Object.keys(request.headers),
+        },
+        'Webhook debug request received'
+      );
       return reply.send({ status: 'received', timestamp: new Date().toISOString() });
     });
 
@@ -1898,10 +1999,15 @@ export async function webhookRoutes(
      * Catch-all for any unmatched POST requests
      */
     app.post('/*', async (request, reply) => {
-      console.log('=== CATCH-ALL WEBHOOK ===');
-      console.log('URL:', request.url);
-      console.log('Body:', JSON.stringify(request.body, null, 2));
-      console.log('=========================');
+      const serialized = JSON.stringify(request.body ?? {});
+      app.log.info(
+        {
+          route: request.url,
+          bodyBytes: Buffer.byteLength(serialized),
+          headerKeys: Object.keys(request.headers),
+        },
+        'Webhook catch-all request received'
+      );
       return reply.send({ status: 'caught', url: request.url });
     });
   }

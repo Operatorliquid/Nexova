@@ -2,9 +2,10 @@
  * Products Routes
  * CRUD operations for product management
  */
-import { FastifyPluginAsync } from 'fastify';
+import type { Prisma, PrismaClient } from '@prisma/client';
+import { type FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import type { PrismaClient } from '@prisma/client';
+
 import { createNotificationIfEnabled } from '../../utils/notifications.js';
 
 const productQuerySchema = z.object({
@@ -106,7 +107,7 @@ const normalizeSecondaryUnitValue = (unit?: string | null, value?: string | numb
   return normalizeUnitValue(value);
 };
 
-const buildSecondarySuffix = (unit?: string | null, value?: string | null) => {
+const buildSecondarySuffix = (unit?: string | null, value?: string | null): string => {
   if (!unit) return '';
   const label = SECONDARY_UNIT_LABELS[unit] || unit;
   if (value) {
@@ -121,7 +122,7 @@ const buildProductDisplayName = (product: {
   unitValue?: string | null;
   secondaryUnit?: string | null;
   secondaryUnitValue?: string | null;
-}) => {
+}): string => {
   const unit = product.unit || 'unit';
   const unitValue = product.unitValue?.toString().trim();
   const primarySuffix = unit !== 'unit' && unitValue ? `${unitValue} ${UNIT_SHORT_LABELS[unit] || unit}` : '';
@@ -161,11 +162,11 @@ const getWorkspaceLowStockThreshold = async (
   return threshold ?? DEFAULT_LOW_STOCK_THRESHOLD;
 };
 
-export const productsRoutes: FastifyPluginAsync = async (fastify) => {
+export const productsRoutes: FastifyPluginAsync = (fastify) => {
   // Get products list
   fastify.get(
     '/',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('products:read')] },
     async (request, reply) => {
       const workspaceId = request.headers['x-workspace-id'] as string;
       if (!workspaceId) {
@@ -176,8 +177,8 @@ export const productsRoutes: FastifyPluginAsync = async (fastify) => {
       const { search, category, categoryId, status, limit, offset, sortBy, sortOrder } = query;
 
       // Build where clause
-      const where: any = { workspaceId };
-      const andClauses: any[] = [];
+      const where: Prisma.ProductWhereInput = { workspaceId };
+      const andClauses: Prisma.ProductWhereInput[] = [];
 
       if (status === 'archived') {
         andClauses.push({
@@ -284,7 +285,7 @@ export const productsRoutes: FastifyPluginAsync = async (fastify) => {
         };
       });
 
-      reply.send({
+      return reply.send({
         products: formattedProducts,
         pagination: {
           total,
@@ -299,7 +300,7 @@ export const productsRoutes: FastifyPluginAsync = async (fastify) => {
   // Get trashed products (paperera)
   fastify.get(
     '/trash',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('products:read')] },
     async (request, reply) => {
       const workspaceId = request.headers['x-workspace-id'] as string;
       if (!workspaceId) {
@@ -307,20 +308,19 @@ export const productsRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const query = productTrashQuerySchema.parse(request.query);
-      const { search, scope, limit, offset } = query;
+      const { search, limit, offset } = query;
 
-      const scopeClause =
-        scope === 'archived'
-          ? { OR: [{ status: 'archived' as const }, { deletedAt: { not: null } }] }
-          : { OR: [{ status: 'archived' as const }, { deletedAt: { not: null } }] };
-
-      const where: any = {
+      const scopeClause: Prisma.ProductWhereInput = {
+        OR: [{ status: 'archived' }, { deletedAt: { not: null } }],
+      };
+      const andClauses: Prisma.ProductWhereInput[] = [scopeClause];
+      const where: Prisma.ProductWhereInput = {
         workspaceId,
-        AND: [scopeClause],
+        AND: andClauses,
       };
 
       if (search) {
-        where.AND.push({
+        andClauses.push({
           OR: [
             { name: { contains: search, mode: 'insensitive' } },
             { sku: { contains: search, mode: 'insensitive' } },
@@ -404,7 +404,7 @@ export const productsRoutes: FastifyPluginAsync = async (fastify) => {
   // Get product stats
   fastify.get(
     '/stats',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('products:read')] },
     async (request, reply) => {
       const workspaceId = request.headers['x-workspace-id'] as string;
       if (!workspaceId) {
@@ -459,7 +459,7 @@ export const productsRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
-      reply.send({
+      return reply.send({
         totalProducts,
         activeProducts,
         lowStockCount,
@@ -475,7 +475,7 @@ export const productsRoutes: FastifyPluginAsync = async (fastify) => {
   // Restore archived product
   fastify.post(
     '/:id/restore',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('products:update')] },
     async (request, reply) => {
       const workspaceId = request.headers['x-workspace-id'] as string;
       if (!workspaceId) {
@@ -511,7 +511,7 @@ export const productsRoutes: FastifyPluginAsync = async (fastify) => {
   // Permanent delete from trash (restricted if product has order history)
   fastify.delete(
     '/:id/permanent',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('products:delete')] },
     async (request, reply) => {
       const workspaceId = request.headers['x-workspace-id'] as string;
       if (!workspaceId) {
@@ -561,7 +561,7 @@ export const productsRoutes: FastifyPluginAsync = async (fastify) => {
   // Get single product
   fastify.get(
     '/:id',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('products:read')] },
     async (request, reply) => {
       const workspaceId = request.headers['x-workspace-id'] as string;
       if (!workspaceId) {
@@ -589,7 +589,7 @@ export const productsRoutes: FastifyPluginAsync = async (fastify) => {
 
       const totalStock = product.stockItems.reduce((sum, s) => sum + s.quantity - s.reserved, 0);
 
-      reply.send({
+      return reply.send({
         product: {
           ...product,
           stock: totalStock,
@@ -601,7 +601,7 @@ export const productsRoutes: FastifyPluginAsync = async (fastify) => {
   // Create product
   fastify.post(
     '/',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('products:create')] },
     async (request, reply) => {
       const workspaceId = request.headers['x-workspace-id'] as string;
       if (!workspaceId) {
@@ -647,7 +647,7 @@ export const productsRoutes: FastifyPluginAsync = async (fastify) => {
           price: body.price,
           comparePrice: body.comparePrice,
           images: body.images || [],
-          attributes: (body.attributes || {}) as any,
+          attributes: (body.attributes || {}) as Prisma.InputJsonValue,
           keywords: body.keywords || [],
           status: body.status,
           stockItems: body.initialStock !== undefined ? {
@@ -684,14 +684,14 @@ export const productsRoutes: FastifyPluginAsync = async (fastify) => {
           })),
       };
 
-      reply.code(201).send({ product: responseProduct });
+      return reply.code(201).send({ product: responseProduct });
     }
   );
 
   // Update product
   fastify.patch(
     '/:id',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('products:update')] },
     async (request, reply) => {
       const workspaceId = request.headers['x-workspace-id'] as string;
       if (!workspaceId) {
@@ -722,9 +722,9 @@ export const productsRoutes: FastifyPluginAsync = async (fastify) => {
 
       // Build update data with proper typing
       const { categoryIds, ...restBody } = body;
-      const updateData: any = { ...restBody };
+      const updateData: Prisma.ProductUpdateManyMutationInput = { ...restBody };
       if (body.attributes) {
-        updateData.attributes = body.attributes as any;
+        updateData.attributes = body.attributes as Prisma.InputJsonValue;
       }
       if (body.unit !== undefined) {
         updateData.unit = body.unit ?? 'unit';
@@ -830,14 +830,14 @@ export const productsRoutes: FastifyPluginAsync = async (fastify) => {
           })),
       };
 
-      reply.send({ product: responseProduct });
+      return reply.send({ product: responseProduct });
     }
   );
 
   // Update stock
   fastify.patch(
     '/:id/stock',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('stock:adjust')] },
     async (request, reply) => {
       const workspaceId = request.headers['x-workspace-id'] as string;
       if (!workspaceId) {
@@ -929,7 +929,7 @@ export const productsRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      reply.send({
+      return reply.send({
         stock: {
           productId: id,
           previousQuantity: previousQty,
@@ -943,7 +943,7 @@ export const productsRoutes: FastifyPluginAsync = async (fastify) => {
   // Delete product (hard delete when safe, otherwise soft delete)
   fastify.delete(
     '/:id',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('products:delete')] },
     async (request, reply) => {
       const workspaceId = request.headers['x-workspace-id'] as string;
       if (!workspaceId) {
@@ -977,7 +977,7 @@ export const productsRoutes: FastifyPluginAsync = async (fastify) => {
   // Bulk delete products (always soft delete to keep history and avoid FK conflicts)
   fastify.delete(
     '/bulk',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('products:delete')] },
     async (request, reply) => {
       const workspaceId = request.headers['x-workspace-id'] as string;
       if (!workspaceId) {
@@ -997,7 +997,7 @@ export const productsRoutes: FastifyPluginAsync = async (fastify) => {
         data: { deletedAt, status: 'archived' },
       });
 
-      reply.send({
+      return reply.send({
         success: true,
         deletedCount: result.count,
         hardDeletedCount: 0,
@@ -1009,7 +1009,7 @@ export const productsRoutes: FastifyPluginAsync = async (fastify) => {
   // Get categories
   fastify.get(
     '/categories/list',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('products:read')] },
     async (request, reply) => {
       const workspaceId = request.headers['x-workspace-id'] as string;
       if (!workspaceId) {
@@ -1023,7 +1023,7 @@ export const productsRoutes: FastifyPluginAsync = async (fastify) => {
         orderBy: { category: 'asc' },
       });
 
-      reply.send({
+      return reply.send({
         categories: categories
           .filter((c) => c.category)
           .map((c) => ({

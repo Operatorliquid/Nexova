@@ -2,19 +2,25 @@
  * Quick Actions Page
  * Allows staff to execute commands via natural language
  */
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+
+import { QuickActionToolResult } from '../../components/quick-actions/QuickActionToolResult';
 import { Button, Input, AnimatedPage } from '../../components/ui';
 import { useAuth } from '../../contexts/AuthContext';
 import { cn } from '../../lib/utils';
-import { QuickActionToolResult } from '../../components/quick-actions/QuickActionToolResult';
 
-const API_URL = import.meta.env.VITE_API_URL || '';
+type JsonRecord = Record<string, unknown>;
 
-const fetchWithCredentials = (input: RequestInfo | URL, init?: RequestInit) => fetch(input, {
-  ...init,
-  credentials: 'include',
-});
+const envValues = import.meta.env as unknown as Record<string, unknown>;
+const apiUrlFromEnv = envValues['VITE_API_URL'];
+const API_URL = typeof apiUrlFromEnv === 'string' ? apiUrlFromEnv : '';
+
+const fetchWithCredentials = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>
+  fetch(input, {
+    ...init,
+    credentials: 'include',
+  });
 
 interface CommandSuggestion {
   command: string;
@@ -79,7 +85,250 @@ interface HistoryItem {
   canRerun: boolean;
 }
 
-export default function QuickActionsPage() {
+function asRecord(value: unknown): JsonRecord | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as JsonRecord)
+    : null;
+}
+
+function readString(record: JsonRecord | null, key: string): string | undefined {
+  if (!record) {
+    return undefined;
+  }
+  const value = record[key];
+  return typeof value === 'string' ? value : undefined;
+}
+
+function readNumber(record: JsonRecord | null, key: string): number | undefined {
+  if (!record) {
+    return undefined;
+  }
+  const value = record[key];
+  return typeof value === 'number' ? value : undefined;
+}
+
+function readBoolean(record: JsonRecord | null, key: string): boolean | undefined {
+  if (!record) {
+    return undefined;
+  }
+  const value = record[key];
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+function readArray(record: JsonRecord | null, key: string): unknown[] {
+  if (!record) {
+    return [];
+  }
+  const value = record[key];
+  return Array.isArray(value) ? value : [];
+}
+
+function readStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item): item is string => typeof item === 'string');
+}
+
+async function readJsonRecord(response: Response): Promise<JsonRecord | null> {
+  try {
+    const payload: unknown = await response.json();
+    return asRecord(payload);
+  } catch {
+    return null;
+  }
+}
+
+function parseCommandSuggestion(value: unknown): CommandSuggestion | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  const command = readString(record, 'command');
+  const example = readString(record, 'example');
+  const description = readString(record, 'description');
+  if (!command || !example || !description) {
+    return null;
+  }
+  return { command, example, description };
+}
+
+function parseToolExecutionResult(value: unknown): ToolExecutionResult | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  const toolName = readString(record, 'toolName');
+  const success = readBoolean(record, 'success');
+  const durationMs = readNumber(record, 'durationMs');
+  if (!toolName || typeof success !== 'boolean' || typeof durationMs !== 'number') {
+    return null;
+  }
+  return {
+    toolName,
+    success,
+    data: record.data,
+    error: readString(record, 'error'),
+    durationMs,
+  };
+}
+
+function parseConfirmationTool(
+  value: unknown
+): ConfirmationRequest['tools'][number] | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  const name = readString(record, 'name');
+  const riskLevel = readString(record, 'riskLevel');
+  const description = readString(record, 'description');
+  if (!name || !riskLevel || !description) {
+    return null;
+  }
+  return {
+    name,
+    input: asRecord(record.input) ?? {},
+    riskLevel,
+    description,
+  };
+}
+
+function parseConfirmationRequest(value: unknown): ConfirmationRequest | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  const token = readString(record, 'token');
+  const expiresAt = readString(record, 'expiresAt');
+  const warningMessage = readString(record, 'warningMessage');
+  if (!token || !expiresAt || !warningMessage) {
+    return null;
+  }
+  const tools = readArray(record, 'tools')
+    .map(tool => parseConfirmationTool(tool))
+    .filter((tool): tool is ConfirmationRequest['tools'][number] => tool !== null);
+  return {
+    token,
+    expiresAt,
+    tools,
+    warningMessage,
+  };
+}
+
+function parseUIAction(value: unknown): QuickActionUIAction | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  const type = readString(record, 'type');
+  const label = readString(record, 'label');
+  if (
+    !label ||
+    (type !== 'navigate' && type !== 'open_url' && type !== 'execute_command')
+  ) {
+    return null;
+  }
+
+  const queryRecord = asRecord(record.query);
+  const query: Record<string, string> | undefined = queryRecord
+    ? Object.fromEntries(
+        Object.entries(queryRecord).filter(
+          (entry): entry is [string, string] => typeof entry[1] === 'string'
+        )
+      )
+    : undefined;
+
+  return {
+    type,
+    label,
+    path: readString(record, 'path'),
+    query,
+    url: readString(record, 'url'),
+    command: readString(record, 'command'),
+    requiresConfirmation: readBoolean(record, 'requiresConfirmation'),
+    confirmationMessage: readString(record, 'confirmationMessage'),
+    auto: readBoolean(record, 'auto'),
+  };
+}
+
+function parseParsedTool(
+  value: unknown
+): { toolName: string; input: Record<string, unknown> } | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  const toolName = readString(record, 'toolName');
+  if (!toolName) {
+    return null;
+  }
+  return {
+    toolName,
+    input: asRecord(record.input) ?? {},
+  };
+}
+
+function parseHistoryItem(value: unknown): HistoryItem | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  const id = readString(record, 'id');
+  const command = readString(record, 'command');
+  const status = readString(record, 'status');
+  const executedAt = readString(record, 'executedAt');
+  const executedBy = readString(record, 'executedBy');
+  if (!id || !command || !status || !executedAt || !executedBy) {
+    return null;
+  }
+  return {
+    id,
+    command,
+    status,
+    toolsCalled: readStringArray(record.toolsCalled),
+    resultSummary: readString(record, 'resultSummary') ?? '',
+    executedAt,
+    executedBy,
+    canRerun: readBoolean(record, 'canRerun') ?? false,
+  };
+}
+
+function parseQuickActionResult(
+  payload: JsonRecord | null,
+  fallbackCommand: string
+): QuickActionResult {
+  const statusRaw = readString(payload, 'status');
+  const status: QuickActionResult['status'] =
+    statusRaw === 'success' ||
+    statusRaw === 'pending_confirmation' ||
+    statusRaw === 'error' ||
+    statusRaw === 'denied'
+      ? statusRaw
+      : 'error';
+
+  return {
+    id: readString(payload, 'id') ?? '',
+    status,
+    command: readString(payload, 'command') ?? fallbackCommand,
+    parsedTools: readArray(payload, 'parsedTools')
+      .map(item => parseParsedTool(item))
+      .filter((item): item is { toolName: string; input: Record<string, unknown> } => item !== null),
+    results: readArray(payload, 'results')
+      .map(item => parseToolExecutionResult(item))
+      .filter((item): item is ToolExecutionResult => item !== null),
+    confirmationRequired: parseConfirmationRequest(payload?.confirmationRequired),
+    error: readString(payload, 'error'),
+    summary: readString(payload, 'summary'),
+    explanation: readString(payload, 'explanation'),
+    uiActions: readArray(payload, 'uiActions')
+      .map(action => parseUIAction(action))
+      .filter((action): action is QuickActionUIAction => action !== null),
+    executedAt: readString(payload, 'executedAt'),
+  };
+}
+
+export default function QuickActionsPage(): JSX.Element {
   const { workspace } = useAuth();
   const navigate = useNavigate();
   const [command, setCommand] = useState('');
@@ -93,31 +342,7 @@ export default function QuickActionsPage() {
   const inputRef = useRef<HTMLInputElement>(null);
   const autoActionRef = useRef<string | null>(null);
 
-  // Fetch suggestions on mount
-  useEffect(() => {
-    const fetchSuggestions = async () => {
-      try {
-        const res = await fetchWithCredentials(`${API_URL}/api/v1/quick-actions/suggestions`, {
-          headers: {
-            'X-Workspace-Id': workspace?.id || '',
-          },
-        });
-        if (res.ok) {
-          const data = await res.json();
-          setSuggestions(data.suggestions || []);
-        }
-      } catch (err) {
-        console.error('Failed to fetch suggestions:', err);
-      }
-    };
-
-    if (workspace?.id) {
-      fetchSuggestions();
-      fetchHistory();
-    }
-  }, [workspace?.id]);
-
-  const fetchHistory = async () => {
+  const fetchHistory = useCallback(async (): Promise<void> => {
     try {
       const res = await fetchWithCredentials(`${API_URL}/api/v1/quick-actions/history?limit=20`, {
         headers: {
@@ -125,84 +350,124 @@ export default function QuickActionsPage() {
         },
       });
       if (res.ok) {
-        const data = await res.json();
-        setHistory(data.history || []);
+        const data = await readJsonRecord(res);
+        setHistory(
+          readArray(data, 'history')
+            .map(item => parseHistoryItem(item))
+            .filter((item): item is HistoryItem => item !== null)
+        );
       }
     } catch (err) {
       console.error('Failed to fetch history:', err);
     }
-  };
+  }, [workspace?.id]);
 
-  const executeCommand = async (
-    cmd: string,
-    confirmationToken?: string,
-    skipConfirmation?: boolean
-  ) => {
-    if (!cmd.trim() && !confirmationToken) return;
-
-    setIsExecuting(true);
-    setResult(null);
-    setPendingAction(null);
-
+  const fetchSuggestions = useCallback(async (): Promise<void> => {
     try {
-      const res = await fetchWithCredentials(`${API_URL}/api/v1/quick-actions/execute`, {
-        method: 'POST',
+      const res = await fetchWithCredentials(`${API_URL}/api/v1/quick-actions/suggestions`, {
         headers: {
-          'Content-Type': 'application/json',
           'X-Workspace-Id': workspace?.id || '',
         },
-        body: JSON.stringify({
-          command: cmd,
-          confirmationToken,
-          skipConfirmation,
-        }),
       });
-
-      const data = await res.json();
-
-      if (data.status === 'pending_confirmation') {
-        setPendingConfirmation(data.confirmationRequired);
-      } else {
-        setResult(data);
-        setPendingConfirmation(null);
-        fetchHistory();
-      }
-
-      if (data.status === 'success') {
-        setCommand('');
+      if (res.ok) {
+        const data = await readJsonRecord(res);
+        setSuggestions(
+          readArray(data, 'suggestions')
+            .map(item => parseCommandSuggestion(item))
+            .filter((item): item is CommandSuggestion => item !== null)
+        );
       }
     } catch (err) {
-      setResult({
-        id: '',
-        status: 'error',
-        command: cmd,
-        parsedTools: [],
-        error: err instanceof Error ? err.message : 'Error de conexion',
-      });
-    } finally {
-      setIsExecuting(false);
+      console.error('Failed to fetch suggestions:', err);
     }
-  };
+  }, [workspace?.id]);
 
-  const handleAction = (action: QuickActionUIAction) => {
-    if (action.type === 'navigate' && action.path) {
-      const query = action.query ? `?${new URLSearchParams(action.query).toString()}` : '';
-      navigate(`${action.path}${query}`);
-      return;
+  // Fetch suggestions on mount
+  useEffect(() => {
+    if (workspace?.id) {
+      void fetchSuggestions();
+      void fetchHistory();
     }
-    if (action.type === 'open_url' && action.url) {
-      window.open(action.url, '_blank');
-      return;
-    }
-    if (action.type === 'execute_command' && action.command) {
-      setCommand(action.command);
-      if (action.requiresConfirmation) {
-        setPendingAction(action);
+  }, [workspace?.id, fetchSuggestions, fetchHistory]);
+
+  const executeCommand = useCallback(
+    async (
+      cmd: string,
+      confirmationToken?: string,
+      skipConfirmation?: boolean
+    ): Promise<void> => {
+      if (!cmd.trim() && !confirmationToken) {
         return;
       }
-      executeCommand(action.command);
-    }
-  };
+
+      setIsExecuting(true);
+      setResult(null);
+      setPendingAction(null);
+
+      try {
+        const res = await fetchWithCredentials(`${API_URL}/api/v1/quick-actions/execute`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Workspace-Id': workspace?.id || '',
+          },
+          body: JSON.stringify({
+            command: cmd,
+            confirmationToken,
+            skipConfirmation,
+          }),
+        });
+
+        const data = parseQuickActionResult(await readJsonRecord(res), cmd);
+
+        if (data.status === 'pending_confirmation' && data.confirmationRequired) {
+          setPendingConfirmation(data.confirmationRequired);
+        } else {
+          setResult(data);
+          setPendingConfirmation(null);
+          void fetchHistory();
+        }
+
+        if (data.status === 'success') {
+          setCommand('');
+        }
+      } catch (err) {
+        setResult({
+          id: '',
+          status: 'error',
+          command: cmd,
+          parsedTools: [],
+          error: err instanceof Error ? err.message : 'Error de conexion',
+        });
+      } finally {
+        setIsExecuting(false);
+      }
+    },
+    [workspace?.id, fetchHistory]
+  );
+
+  const handleAction = useCallback(
+    (action: QuickActionUIAction): void => {
+      if (action.type === 'navigate' && action.path) {
+        const query = action.query ? `?${new URLSearchParams(action.query).toString()}` : '';
+        navigate(`${action.path}${query}`);
+        return;
+      }
+      if (action.type === 'open_url' && action.url) {
+        window.open(action.url, '_blank');
+        return;
+      }
+      if (action.type === 'execute_command' && action.command) {
+        setCommand(action.command);
+        if (action.requiresConfirmation) {
+          setPendingAction(action);
+          return;
+        }
+        void executeCommand(action.command);
+      }
+    },
+    [navigate, executeCommand]
+  );
 
   useEffect(() => {
     if (!result?.uiActions?.length || result.status !== 'success') return;
@@ -211,22 +476,24 @@ export default function QuickActionsPage() {
     if (autoActionRef.current === result.id) return;
     autoActionRef.current = result.id;
     handleAction(autoAction);
-  }, [result]);
+  }, [result, handleAction]);
 
-  const handleConfirm = () => {
+  const handleConfirm = (): void => {
     if (pendingConfirmation) {
-      executeCommand(command, pendingConfirmation.token);
+      void executeCommand(command, pendingConfirmation.token);
     }
   };
 
-  const handleInlineConfirm = () => {
-    if (!pendingAction?.command) return;
+  const handleInlineConfirm = (): void => {
+    if (!pendingAction?.command) {
+      return;
+    }
     const nextCommand = pendingAction.command;
     setPendingAction(null);
-    executeCommand(nextCommand, undefined, true);
+    void executeCommand(nextCommand, undefined, true);
   };
 
-  const handleCancel = () => {
+  const handleCancel = (): void => {
     setPendingConfirmation(null);
     setResult({
       id: '',
@@ -237,7 +504,7 @@ export default function QuickActionsPage() {
     });
   };
 
-  const handleRerun = async (actionId: string) => {
+  const handleRerun = async (actionId: string): Promise<void> => {
     setIsExecuting(true);
     try {
       const res = await fetchWithCredentials(`${API_URL}/api/v1/quick-actions/${actionId}/rerun`, {
@@ -246,9 +513,9 @@ export default function QuickActionsPage() {
           'X-Workspace-Id': workspace?.id || '',
         },
       });
-      const data = await res.json();
+      const data = parseQuickActionResult(await readJsonRecord(res), command);
       setResult(data);
-      fetchHistory();
+      void fetchHistory();
     } catch (err) {
       console.error('Rerun failed:', err);
     } finally {
@@ -256,17 +523,17 @@ export default function QuickActionsPage() {
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent): void => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      executeCommand(command);
+      void executeCommand(command);
     }
     if (e.key === 'Escape') {
       setShowSuggestions(false);
     }
   };
 
-  const handleSuggestionClick = (suggestion: CommandSuggestion) => {
+  const handleSuggestionClick = (suggestion: CommandSuggestion): void => {
     setCommand(suggestion.example);
     setShowSuggestions(false);
     inputRef.current?.focus();
@@ -317,7 +584,9 @@ export default function QuickActionsPage() {
                   )}
                 </div>
                 <Button
-                  onClick={() => executeCommand(command)}
+                  onClick={() => {
+                    void executeCommand(command);
+                  }}
                   disabled={!command.trim() || isExecuting}
                 >
                   Ejecutar
@@ -578,7 +847,9 @@ export default function QuickActionsPage() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => handleRerun(item.id)}
+                        onClick={() => {
+                          void handleRerun(item.id);
+                        }}
                         disabled={isExecuting}
                       >
                         Re-run

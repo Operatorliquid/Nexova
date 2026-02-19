@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { type PrismaClient } from '@prisma/client';
 
 export type MetricsRange = 'today' | 'week' | 'month' | '30d' | '90d' | '12m' | 'all';
 export type MetricsRangeInput = MetricsRange | { from: Date; to?: Date; label: string };
@@ -377,7 +377,10 @@ export async function buildMetrics(
     };
   });
 
-  const normalizePaymentMethod = (method: string | null, provider: string | null) => {
+  const normalizePaymentMethod = (
+    method: string | null,
+    provider: string | null
+  ): 'cash' | 'transfer' | 'link' | 'other' => {
     const value = (method || '').toLowerCase();
     if (['cash', 'efectivo'].includes(value)) return 'cash';
     if (['transfer', 'transferencia', 'bank_transfer'].includes(value)) return 'transfer';

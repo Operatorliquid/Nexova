@@ -2,9 +2,10 @@
  * Auth Context
  * Manages authentication state and user session
  */
-import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
-import { authEvents } from '../lib/auth-events';
+import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
+
 import { clearTokens, API_URL } from '../lib/api';
+import { authEvents } from '../lib/auth-events';
 
 export interface User {
   id: string;
@@ -53,57 +54,208 @@ export interface RegisterData {
   lastName?: string;
 }
 
+type JsonRecord = Record<string, unknown>;
+
+interface ParsedAuthPayload {
+  user: User | null;
+  workspace: Workspace | null;
+  workspaces: Workspace[];
+}
+
+const EMPTY_AUTH_STATE: AuthState = {
+  user: null,
+  workspace: null,
+  workspaces: [],
+  isAuthenticated: false,
+  isLoading: false,
+};
+
+function isRecord(value: unknown): value is JsonRecord {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function readString(record: JsonRecord | null, key: string): string | undefined {
+  if (!record) {
+    return undefined;
+  }
+  const value = record[key];
+  return typeof value === 'string' ? value : undefined;
+}
+
+function readBoolean(record: JsonRecord | null, key: string): boolean | undefined {
+  if (!record) {
+    return undefined;
+  }
+  const value = record[key];
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+function readStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item): item is string => typeof item === 'string');
+}
+
+async function safeJsonRecord(response: Response): Promise<JsonRecord | null> {
+  try {
+    const payload: unknown = await response.json();
+    return isRecord(payload) ? payload : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseUser(value: unknown): User | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const id = readString(value, 'id');
+  const email = readString(value, 'email');
+  if (!id || !email) {
+    return null;
+  }
+
+  return {
+    id,
+    email,
+    firstName: readString(value, 'firstName'),
+    lastName: readString(value, 'lastName'),
+    avatarUrl: readString(value, 'avatarUrl'),
+    isSuperAdmin: readBoolean(value, 'isSuperAdmin') ?? false,
+  };
+}
+
+function parseWorkspaceRole(value: unknown): Workspace['role'] {
+  if (!isRecord(value)) {
+    return {
+      id: '',
+      name: '',
+      permissions: [],
+    };
+  }
+
+  return {
+    id: readString(value, 'id') ?? '',
+    name: readString(value, 'name') ?? '',
+    permissions: readStringArray(value.permissions),
+  };
+}
+
+function parseWorkspace(value: unknown): Workspace | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const id = readString(value, 'id');
+  if (!id) {
+    return null;
+  }
+
+  return {
+    id,
+    name: readString(value, 'name') ?? 'Workspace',
+    slug: readString(value, 'slug') ?? id,
+    plan: readString(value, 'plan'),
+    status: readString(value, 'status'),
+    role: parseWorkspaceRole(value.role),
+    onboardingCompleted: readBoolean(value, 'onboardingCompleted'),
+    businessType: readString(value, 'businessType'),
+  };
+}
+
+function parseWorkspaces(value: unknown): Workspace[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map(item => parseWorkspace(item))
+    .filter((workspace): workspace is Workspace => workspace !== null);
+}
+
+function parseAuthPayload(payload: JsonRecord | null): ParsedAuthPayload {
+  if (!payload) {
+    return {
+      user: null,
+      workspace: null,
+      workspaces: [],
+    };
+  }
+
+  const workspace = parseWorkspace(payload.workspace);
+  return {
+    user: parseUser(payload.user),
+    workspace,
+    workspaces: parseWorkspaces(payload.workspaces),
+  };
+}
+
+function readErrorMessage(payload: JsonRecord | null, fallback: string): string {
+  return readString(payload, 'message') ?? readString(payload, 'error') ?? fallback;
+}
+
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-export function AuthProvider({ children }: { children: ReactNode }) {
+export function AuthProvider({ children }: { children: ReactNode }): ReactNode {
   const [state, setState] = useState<AuthState>({
-    user: null,
-    workspace: null,
-    workspaces: [],
-    isAuthenticated: false,
+    ...EMPTY_AUTH_STATE,
     isLoading: true,
   });
 
-  async function safeJson<T = any>(response: Response): Promise<T | null> {
-    try {
-      return (await response.json()) as T;
-    } catch {
-      return null;
-    }
-  }
+  const clearAuthState = useCallback((isLoading: boolean): void => {
+    setState({
+      ...EMPTY_AUTH_STATE,
+      isLoading,
+    });
+  }, []);
 
-  const checkAuth = useCallback(async () => {
+  const applyAuthenticatedState = useCallback(
+    (payload: ParsedAuthPayload): void => {
+      if (!payload.user) {
+        clearAuthState(false);
+        return;
+      }
+
+      setState({
+        user: payload.user,
+        workspace: payload.workspace,
+        workspaces: payload.workspaces,
+        isAuthenticated: true,
+        isLoading: false,
+      });
+
+      if (payload.workspace?.id) {
+        localStorage.setItem('currentWorkspace', payload.workspace.id);
+      }
+    },
+    [clearAuthState]
+  );
+
+  const checkAuth = useCallback(async (): Promise<void> => {
     try {
-      const currentWorkspaceId = localStorage.getItem('currentWorkspace') || undefined;
+      const currentWorkspaceId = localStorage.getItem('currentWorkspace') ?? undefined;
       const headers: Record<string, string> = {};
       if (currentWorkspaceId) {
         headers['X-Workspace-Id'] = currentWorkspaceId;
       }
 
-      const response = await fetch(`${API_URL}/api/v1/auth/me`, {
-        credentials: 'include',
-        headers,
-      });
-
-      if (response.ok) {
-        const data = await safeJson<any>(response);
-        if (!data?.user) {
-          // Avoid crashing the app if the server/proxy returns an empty body.
-          setState(prev => ({ ...prev, isLoading: false, isAuthenticated: false }));
-          return;
-        }
-        setState({
-          user: data.user,
-          workspace: data.workspace,
-          workspaces: data.workspaces || [],
-          isAuthenticated: true,
-          isLoading: false,
+      const fetchMe = async (): Promise<{ response: Response; payload: JsonRecord | null }> => {
+        const response = await fetch(`${API_URL}/api/v1/auth/me`, {
+          credentials: 'include',
+          headers,
         });
 
-        if (data.workspace?.id) {
-          localStorage.setItem('currentWorkspace', data.workspace.id);
-        }
-      } else if (response.status === 401) {
+        return {
+          response,
+          payload: await safeJsonRecord(response),
+        };
+      };
+
+      let { response, payload } = await fetchMe();
+
+      if (response.status === 401) {
         const refreshResponse = await fetch(`${API_URL}/api/v1/auth/refresh`, {
           method: 'POST',
           headers: {
@@ -113,51 +265,59 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           credentials: 'include',
         });
 
+        await safeJsonRecord(refreshResponse);
         if (refreshResponse.ok) {
-          await refreshResponse.json().catch(() => ({}));
-          await checkAuth();
-        } else {
-          setState(prev => ({ ...prev, isLoading: false, isAuthenticated: false }));
+          ({ response, payload } = await fetchMe());
         }
-      } else {
-        setState(prev => ({ ...prev, isLoading: false }));
       }
+
+      if (response.ok) {
+        applyAuthenticatedState(parseAuthPayload(payload));
+        return;
+      }
+
+      if (response.status === 401) {
+        clearAuthState(false);
+        return;
+      }
+
+      setState(prev => ({ ...prev, isLoading: false }));
     } catch (error) {
       console.error('Auth check failed:', error);
       setState(prev => ({ ...prev, isLoading: false }));
     }
-  }, []);
+  }, [applyAuthenticatedState, clearAuthState]);
 
   // Check for existing session on mount
   useEffect(() => {
-    checkAuth();
+    const timeoutId = window.setTimeout(() => {
+      void checkAuth();
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
   }, [checkAuth]);
 
   // Subscribe to auth events from api.ts
   useEffect(() => {
-    const handleSessionExpired = () => {
+    const handleSessionExpired = (): void => {
       clearTokens();
-      setState({
-        user: null,
-        workspace: null,
-        workspaces: [],
-        isAuthenticated: false,
-        isLoading: false,
-      });
+      clearAuthState(false);
       // Redirect to login if not already there
       if (window.location.pathname !== '/login' && window.location.pathname !== '/register') {
         window.location.href = '/login';
       }
     };
 
-    const handleTokensUpdated = () => {
+    const handleTokensUpdated = (): void => {
       // Re-verify user when tokens are refreshed
-      checkAuth();
+      void checkAuth();
     };
 
-    const handleWorkspaceSuspended = () => {
+    const handleWorkspaceSuspended = (): void => {
       // Fetch latest workspace status so the UI can show the paywall.
-      checkAuth();
+      void checkAuth();
     };
 
     const unsubscribeSessionExpired = authEvents.on('session-expired', handleSessionExpired);
@@ -172,9 +332,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       unsubscribeTokensUpdated();
       unsubscribeWorkspaceSuspended();
     };
-  }, [checkAuth]);
+  }, [checkAuth, clearAuthState]);
 
-  async function login(email: string, password: string, rememberMe: boolean = true) {
+  async function login(email: string, password: string, rememberMe: boolean = true): Promise<void> {
     const response = await fetch(`${API_URL}/api/v1/auth/login`, {
       method: 'POST',
       headers: {
@@ -185,29 +345,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     if (!response.ok) {
-      const error = await safeJson<any>(response);
-      throw new Error(error?.message || 'Error al iniciar sesión');
+      const errorPayload = await safeJsonRecord(response);
+      throw new Error(readErrorMessage(errorPayload, 'Error al iniciar sesion'));
     }
 
-    const data = await safeJson<any>(response);
-    if (!data?.user) {
+    const payload = parseAuthPayload(await safeJsonRecord(response));
+    if (!payload.user) {
       // Some proxies can return 200 with an empty body; fall back to `/me`.
       await checkAuth();
       return;
     }
-    if (data.workspace?.id) {
-      localStorage.setItem('currentWorkspace', data.workspace.id);
-    }
-    setState({
-      user: data.user,
-      workspace: data.workspace,
-      workspaces: data.workspaces || [],
-      isAuthenticated: true,
-      isLoading: false,
-    });
+
+    applyAuthenticatedState(payload);
   }
 
-  async function register(registerData: RegisterData) {
+  async function register(registerData: RegisterData): Promise<void> {
     const response = await fetch(`${API_URL}/api/v1/auth/register`, {
       method: 'POST',
       headers: {
@@ -218,28 +370,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     if (!response.ok) {
-      const error = await safeJson<any>(response);
-      throw new Error(error?.message || 'Error al registrarse');
+      const errorPayload = await safeJsonRecord(response);
+      throw new Error(readErrorMessage(errorPayload, 'Error al registrarse'));
     }
 
-    const data = await safeJson<any>(response);
-    if (!data?.user) {
+    const payload = parseAuthPayload(await safeJsonRecord(response));
+    if (!payload.user) {
       await checkAuth();
       return;
     }
-    if (data.workspace?.id) {
-      localStorage.setItem('currentWorkspace', data.workspace.id);
-    }
-    setState({
-      user: data.user,
-      workspace: data.workspace,
-      workspaces: data.workspaces || [],
-      isAuthenticated: true,
-      isLoading: false,
-    });
+
+    applyAuthenticatedState(payload);
   }
 
-  async function logout() {
+  async function logout(): Promise<void> {
     try {
       await fetch(`${API_URL}/api/v1/auth/logout`, {
         method: 'POST',
@@ -254,17 +398,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     clearTokens();
-
-    setState({
-      user: null,
-      workspace: null,
-      workspaces: [],
-      isAuthenticated: false,
-      isLoading: false,
-    });
+    clearAuthState(false);
   }
 
-  function switchWorkspace(workspaceId: string) {
+  function switchWorkspace(workspaceId: string): void {
     const workspace = state.workspaces.find(w => w.id === workspaceId);
     if (workspace) {
       setState(prev => ({ ...prev, workspace }));
@@ -272,7 +409,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  async function refreshUser() {
+  async function refreshUser(): Promise<void> {
     await checkAuth();
   }
 
@@ -292,7 +429,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 }
 
-export function useAuth() {
+export function useAuth(): AuthContextValue {
   const context = useContext(AuthContext);
   if (!context) {
     throw new Error('useAuth must be used within an AuthProvider');
@@ -300,17 +437,17 @@ export function useAuth() {
   return context;
 }
 
-export function useUser() {
+export function useUser(): User | null {
   const { user } = useAuth();
   return user;
 }
 
-export function useWorkspace() {
+export function useWorkspace(): Workspace | null {
   const { workspace } = useAuth();
   return workspace;
 }
 
-export function usePermissions() {
+export function usePermissions(): string[] {
   const { workspace } = useAuth();
   return workspace?.role.permissions || [];
 }

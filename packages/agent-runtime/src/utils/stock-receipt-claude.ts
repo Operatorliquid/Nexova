@@ -55,6 +55,11 @@ type ProductMatchCandidate = {
   reason: string;
 };
 
+function readRecordField(value: unknown, key: string): unknown {
+  if (!value || typeof value !== 'object') return undefined;
+  return (value as Record<string, unknown>)[key];
+}
+
 const PRODUCT_STOPWORDS = new Set([
   'de',
   'del',
@@ -561,9 +566,9 @@ export async function extractStockReceiptWithClaude(params: {
     const normalizedItems = (Array.isArray(parsed.items) ? parsed.items : [])
       .map((item) => {
         const description = typeof item.description === 'string' ? item.description.trim() : '';
-        const bultos = normalizeQuantity((item as any).bultos ?? (item as any).bulk_qty ?? null);
-        const units = normalizeQuantity((item as any).units ?? (item as any).unidad ?? null);
-        const uxb = normalizeQuantity((item as any).uxb ?? (item as any).units_per_bulk ?? null);
+        const bultos = normalizeQuantity(item.bultos ?? readRecordField(item, 'bulk_qty') ?? null);
+        const units = normalizeQuantity(item.units ?? readRecordField(item, 'unidad') ?? null);
+        const uxb = normalizeQuantity(item.uxb ?? readRecordField(item, 'units_per_bulk') ?? null);
 
         let quantity = normalizeQuantity(item.quantity) ?? 0;
         let isPack = item.is_pack === true;
@@ -650,11 +655,13 @@ export async function extractStockReceiptWithClaude(params: {
             : (unitsPerPack && unitsPerPack > 0 ? String(unitsPerPack) : null))
           : null;
 
-        const newProduct = {
+        const normalizedPrimaryUnit: NonNullable<StockReceiptExtractedItem['new_product']>['unit'] = primaryUnit ?? 'unit';
+        const normalizedSecondaryUnit: NonNullable<StockReceiptExtractedItem['new_product']>['secondary_unit'] = secondaryUnit ?? null;
+        const newProduct: NonNullable<StockReceiptExtractedItem['new_product']> = {
           name: normalizeProductName(llmRawName, description),
-          unit: (primaryUnit || 'unit') as any,
+          unit: normalizedPrimaryUnit,
           unit_value: primaryUnit === 'unit' ? null : (primaryUnitValue || null),
-          secondary_unit: secondaryUnit as any,
+          secondary_unit: normalizedSecondaryUnit,
           secondary_unit_value: secondaryUnitValue,
         };
 
@@ -675,7 +682,7 @@ export async function extractStockReceiptWithClaude(params: {
             confidence: confidence ?? null,
             reason,
           },
-          new_product: newProduct && newProduct.name ? (newProduct as any) : null,
+          new_product: newProduct.name ? newProduct : null,
         } as StockReceiptExtractedItem;
       })
       .filter(Boolean) as StockReceiptExtractedItem[];

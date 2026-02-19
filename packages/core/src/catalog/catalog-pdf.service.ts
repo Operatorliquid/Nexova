@@ -5,19 +5,22 @@
  * ═══════════════════════════════════════════════════════════════════════════════
  */
 
-import { PDFDocument, PDFImage, PDFPage, PDFFont, rgb, StandardFonts } from 'pdf-lib';
-import sharp from 'sharp';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { randomUUID } from 'crypto';
 import { promises as fs, existsSync } from 'fs';
 import path from 'path';
+
+import { type PrismaClient, type Prisma } from '@prisma/client';
+import { PDFDocument, type PDFImage, type PDFPage, type PDFFont, rgb, StandardFonts } from 'pdf-lib';
+import sharp from 'sharp';
+
 import {
-  CatalogProductFilter,
-  CatalogProduct,
-  CatalogOptions,
-  CatalogResult,
+  type CatalogProductFilter,
+  type CatalogProduct,
+  type CatalogOptions,
+  type CatalogResult,
   DEFAULT_CATALOG_OPTIONS,
 } from './types.js';
-import { randomUUID } from 'crypto';
+
 
 // Page dimensions in points (1 point = 1/72 inch)
 const PAGE_SIZES = {
@@ -73,7 +76,7 @@ const buildProductDisplayName = (product: {
   unitValue?: string | null;
   secondaryUnit?: string | null;
   secondaryUnitValue?: string | null;
-}) => {
+}): string => {
   const unit = product.unit || 'unit';
   const unitValue = product.unitValue?.toString().trim();
   const primarySuffix = unit !== 'unit' && unitValue ? `${unitValue} ${UNIT_SHORT_LABELS[unit] || unit}` : '';

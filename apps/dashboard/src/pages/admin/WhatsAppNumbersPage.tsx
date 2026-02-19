@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Phone, Plus, Trash2, AlertTriangle, MessageCircle, RefreshCw, Link2, FlaskConical } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+
 import {
   Badge,
   Button,
@@ -26,12 +27,12 @@ interface WhatsAppNumber {
   id: string;
   phoneNumber: string;
   displayName: string;
-  provider: 'infobip' | 'twilio' | string;
+  provider: string;
   businessType: string;
   status: 'available' | 'assigned' | 'suspended' | 'error';
   isActive: boolean;
   hasCredentials?: boolean;
-  healthStatus?: 'healthy' | 'error' | 'unknown' | string | null;
+  healthStatus?: string | null;
   workspace?: {
     id: string;
     name: string;
@@ -58,7 +59,7 @@ interface ApiErrorBody {
   error?: string;
 }
 
-const readApiError = async (response: Response, fallback: string) => {
+const readApiError = async (response: Response, fallback: string): Promise<string> => {
   try {
     const body = (await response.json()) as ApiErrorBody;
     if (typeof body.message === 'string' && body.message.trim()) return body.message;
@@ -69,22 +70,22 @@ const readApiError = async (response: Response, fallback: string) => {
   return fallback;
 };
 
-const getBusinessTypeName = (id: string) => businessTypes[id]?.name || id;
+const getBusinessTypeName = (id: string): string => businessTypes[id]?.name || id;
 
-const getStatusBadge = (number: WhatsAppNumber) => {
+const getStatusBadge = (number: WhatsAppNumber): JSX.Element => {
   if (number.status === 'assigned') return <Badge variant="success">Asignado</Badge>;
   if (number.status === 'suspended') return <Badge variant="warning">Suspendido</Badge>;
   if (number.status === 'error') return <Badge variant="destructive">Error</Badge>;
   return <Badge variant="secondary">Disponible</Badge>;
 };
 
-const getHealthBadge = (healthStatus?: string | null) => {
+const getHealthBadge = (healthStatus?: string | null): JSX.Element => {
   if (!healthStatus || healthStatus === 'unknown') return <Badge variant="secondary">Sin test</Badge>;
   if (healthStatus === 'healthy') return <Badge variant="success">Sano</Badge>;
   return <Badge variant="warning">Revisar</Badge>;
 };
 
-export default function WhatsAppNumbersPage() {
+export default function WhatsAppNumbersPage(): JSX.Element {
   const toastSuccess = useToastStore((state) => state.success);
   const toastError = useToastStore((state) => state.error);
 
@@ -106,7 +107,7 @@ export default function WhatsAppNumbersPage() {
     businessType: 'commerce',
   });
 
-  const resetCreateForm = () => {
+  const resetCreateForm = (): void => {
     setFormData({
       phoneNumber: '',
       businessType: 'commerce',
@@ -151,10 +152,10 @@ export default function WhatsAppNumbersPage() {
   }, [toastError]);
 
   useEffect(() => {
-    loadAdminData();
+    void loadAdminData();
   }, [loadAdminData]);
 
-  const handleAddNumber = async () => {
+  const handleAddNumber = async (): Promise<void> => {
     setError('');
     if (!formData.phoneNumber.trim()) {
       setError('Ingresá el número de teléfono');
@@ -191,7 +192,7 @@ export default function WhatsAppNumbersPage() {
     }
   };
 
-  const handleDeleteNumber = async (id: string) => {
+  const handleDeleteNumber = async (id: string): Promise<void> => {
     if (!window.confirm('¿Seguro que querés eliminar este número?')) return;
     setActionNumberId(id);
     try {
@@ -206,7 +207,7 @@ export default function WhatsAppNumbersPage() {
     }
   };
 
-  const handleTestConnection = async (id: string) => {
+  const handleTestConnection = async (id: string): Promise<void> => {
     setActionNumberId(id);
     try {
       const res = await apiFetch(`/api/v1/admin/whatsapp-numbers/${id}/test`, { method: 'POST' });
@@ -220,13 +221,13 @@ export default function WhatsAppNumbersPage() {
     }
   };
 
-  const handleOpenAssignModal = (number: WhatsAppNumber) => {
+  const handleOpenAssignModal = (number: WhatsAppNumber): void => {
     setAssignTarget(number);
     setAssignWorkspaceId(number.workspace?.id || '');
     setShowAssignModal(true);
   };
 
-  const handleAssign = async () => {
+  const handleAssign = async (): Promise<void> => {
     if (!assignTarget) return;
     if (!assignWorkspaceId) {
       toastError('Seleccioná un negocio');
@@ -255,7 +256,7 @@ export default function WhatsAppNumbersPage() {
     }
   };
 
-  const handleUnassign = async (number: WhatsAppNumber) => {
+  const handleUnassign = async (number: WhatsAppNumber): Promise<void> => {
     if (!number.workspace) return;
     setActionNumberId(number.id);
     try {
@@ -312,7 +313,13 @@ export default function WhatsAppNumbersPage() {
           ) : (
             <Badge variant="secondary">Evolution: sin datos</Badge>
           )}
-          <Button variant="secondary" onClick={() => loadAdminData(true)} isLoading={isRefreshing}>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              void loadAdminData(true);
+            }}
+            isLoading={isRefreshing}
+          >
             <RefreshCw className="w-4 h-4 mr-2" />
             Actualizar
           </Button>
@@ -426,7 +433,9 @@ export default function WhatsAppNumbersPage() {
                     <Button
                       variant="secondary"
                       size="sm"
-                      onClick={() => handleUnassign(number)}
+                      onClick={() => {
+                        void handleUnassign(number);
+                      }}
                       isLoading={actionNumberId === number.id}
                     >
                       Desasignar
@@ -436,7 +445,9 @@ export default function WhatsAppNumbersPage() {
                   <Button
                     variant="secondary"
                     size="sm"
-                    onClick={() => handleTestConnection(number.id)}
+                    onClick={() => {
+                      void handleTestConnection(number.id);
+                    }}
                     isLoading={actionNumberId === number.id}
                   >
                     <FlaskConical className="w-4 h-4 mr-2" />
@@ -446,7 +457,9 @@ export default function WhatsAppNumbersPage() {
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => handleDeleteNumber(number.id)}
+                    onClick={() => {
+                      void handleDeleteNumber(number.id);
+                    }}
                     isLoading={actionNumberId === number.id}
                     className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
                   >
@@ -540,7 +553,13 @@ export default function WhatsAppNumbersPage() {
             <Button variant="secondary" className="flex-1" onClick={() => setShowAddModal(false)}>
               Cancelar
             </Button>
-            <Button className="flex-1" onClick={handleAddNumber} isLoading={isSubmitting}>
+            <Button
+              className="flex-1"
+              onClick={() => {
+                void handleAddNumber();
+              }}
+              isLoading={isSubmitting}
+            >
               Agregar
             </Button>
           </div>
@@ -583,7 +602,13 @@ export default function WhatsAppNumbersPage() {
             <Button variant="secondary" className="flex-1" onClick={() => setShowAssignModal(false)}>
               Cancelar
             </Button>
-            <Button className="flex-1" onClick={handleAssign} isLoading={isAssigning}>
+            <Button
+              className="flex-1"
+              onClick={() => {
+                void handleAssign();
+              }}
+              isLoading={isAssigning}
+            >
               Asignar
             </Button>
           </div>

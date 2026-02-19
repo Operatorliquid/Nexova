@@ -1,8 +1,10 @@
 import { createHash, randomBytes, randomUUID } from 'crypto';
-import { FastifyPluginAsync } from 'fastify';
+
+import type { Prisma } from '@prisma/client';
+import { type FastifyPluginAsync, type FastifyReply } from 'fastify';
 import Stripe from 'stripe';
 import { z } from 'zod';
-import type { Prisma } from '@prisma/client';
+
 import {
   WorkspaceService,
   generateTokenPair,
@@ -12,9 +14,9 @@ import {
 } from '@nexova/core';
 import {
   BILLING_PLAN_CATALOG,
-  normalizeCommercePlan,
   type CommercePlan,
 } from '@nexova/shared';
+
 import {
   addMonths,
   buildBillingCatalog,
@@ -58,6 +60,7 @@ const finalizeCheckoutSchema = z.object({
 });
 
 type AuthTokens = ReturnType<typeof generateTokenPair>;
+type CookieOptions = NonNullable<Parameters<FastifyReply['setCookie']>[2]>;
 type PendingRegistrationDraft = {
   email: string;
   passwordHash: string;
@@ -69,11 +72,11 @@ type PendingRegistrationDraft = {
   createdAt: string;
 };
 
-const normalizeEmail = (value: string) => value.trim().toLowerCase();
+const normalizeEmail = (value: string): string => value.trim().toLowerCase();
 
-const hashPlainToken = (value: string) => createHash('sha256').update(value).digest('hex');
+const hashPlainToken = (value: string): string => createHash('sha256').update(value).digest('hex');
 
-const randomToken = (size = 32) => randomBytes(size).toString('hex');
+const randomToken = (size = 32): string => randomBytes(size).toString('hex');
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -116,7 +119,7 @@ const formatWorkspaceName = (params: {
   companyName?: string | null;
   firstName?: string | null;
   email?: string | null;
-}) => {
+}): string => {
   const company = params.companyName?.trim();
   if (company) return company;
   const first = params.firstName?.trim();
@@ -126,7 +129,7 @@ const formatWorkspaceName = (params: {
   return `workspace-${Date.now()}`;
 };
 
-const formatWorkspaceSlug = (name: string) => {
+const formatWorkspaceSlug = (name: string): string => {
   const base = name
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
@@ -134,7 +137,7 @@ const formatWorkspaceSlug = (name: string) => {
   return base || 'workspace';
 };
 
-const buildStripe = () => {
+const buildStripe = (): Stripe => {
   const secretKey = process.env.STRIPE_SECRET_KEY;
   if (!secretKey) {
     throw new Error('STRIPE_SECRET_KEY is required');
@@ -142,7 +145,7 @@ const buildStripe = () => {
   return new Stripe(secretKey);
 };
 
-const isStripeConfigError = (error: unknown) => {
+const isStripeConfigError = (error: unknown): boolean => {
   return (
     error instanceof Error &&
     (error.message.includes('STRIPE_SECRET_KEY') ||
@@ -150,7 +153,12 @@ const isStripeConfigError = (error: unknown) => {
   );
 };
 
-const readGoogleConfig = () => {
+const readGoogleConfig = (): {
+  enabled: boolean;
+  clientId: string;
+  clientSecret: string;
+  redirectUri: string;
+} => {
   const clientId = process.env.GOOGLE_CLIENT_ID || '';
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET || '';
   const redirectUri =
@@ -173,59 +181,92 @@ const authCookieSameSite: 'lax' | 'strict' | 'none' =
 const authCookieSecure = process.env.NODE_ENV === 'production' || authCookieSameSite === 'none';
 
 const setAuthCookies = (
-  reply: import('fastify').FastifyReply,
+  reply: FastifyReply,
   tokens: AuthTokens
-) => {
-  const base = {
+): void => {
+  const base: CookieOptions = {
     httpOnly: true,
     secure: authCookieSecure,
     sameSite: authCookieSameSite,
     path: '/',
   };
-  reply.setCookie('accessToken', tokens.accessToken, {
+  void reply.setCookie('accessToken', tokens.accessToken, {
     ...base,
     expires: tokens.accessTokenExpiresAt,
   });
-  reply.setCookie('refreshToken', tokens.refreshToken, {
+  void reply.setCookie('refreshToken', tokens.refreshToken, {
     ...base,
     expires: tokens.refreshTokenExpiresAt,
   });
 };
 
-const isIntentExpired = (expiresAt: Date) => expiresAt.getTime() <= Date.now();
+const isIntentExpired = (expiresAt: Date): boolean => expiresAt.getTime() <= Date.now();
 
-export const billingRoutes: FastifyPluginAsync = async (fastify) => {
+const billingMembershipInclude = {
+  workspace: {
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+      plan: true,
+      status: true,
+      settings: true,
+    },
+  },
+  role: {
+    select: {
+      id: true,
+      name: true,
+      permissions: true,
+    },
+  },
+} satisfies Prisma.MembershipInclude;
+
+type BillingMembership = Prisma.MembershipGetPayload<{
+  include: typeof billingMembershipInclude;
+}>;
+
+type BillingWorkspaceSummary = {
+  id: string;
+  name: string;
+  slug: string;
+  plan: BillingMembership['workspace']['plan'];
+  status: BillingMembership['workspace']['status'];
+  role: BillingMembership['role'];
+  onboardingCompleted: boolean;
+  businessType: 'bookings' | 'commerce';
+};
+
+export const billingRoutes: FastifyPluginAsync = (fastify) => {
   const workspaceService = new WorkspaceService(fastify.prisma);
+  const stripeWebhookSecret = (process.env.STRIPE_WEBHOOK_SECRET || '').trim();
 
-  const fetchMemberships = async (userId: string) => {
+  // Capture raw JSON body inside billing scope so Stripe signatures can be verified.
+  fastify.addContentTypeParser(
+    'application/json',
+    { parseAs: 'buffer' },
+    (request, body, done) => {
+      request.rawBody = body as Buffer;
+      try {
+        const json: unknown = JSON.parse((body as Buffer).toString('utf8'));
+        done(null, json);
+      } catch (err) {
+        done(err as Error, undefined);
+      }
+    }
+  );
+
+  const fetchMemberships = (userId: string): Promise<BillingMembership[]> => {
     return fastify.prisma.membership.findMany({
       where: {
         userId,
         status: { in: ['ACTIVE', 'active'] },
       },
-      include: {
-        workspace: {
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-            plan: true,
-            status: true,
-            settings: true,
-          },
-        },
-        role: {
-          select: {
-            id: true,
-            name: true,
-            permissions: true,
-          },
-        },
-      },
+      include: billingMembershipInclude,
     });
   };
 
-  const mapWorkspaces = (memberships: Awaited<ReturnType<typeof fetchMemberships>>) => {
+  const mapWorkspaces = (memberships: BillingMembership[]): BillingWorkspaceSummary[] => {
     return memberships.map((m) => {
       const settings = (m.workspace.settings as Record<string, unknown>) || {};
       const rawBusinessType =
@@ -252,7 +293,7 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
     companyName?: string | null;
     email?: string | null;
     isSuperAdmin?: boolean;
-  }) => {
+  }): Promise<BillingMembership[]> => {
     let memberships = await fetchMemberships(params.id);
     if (memberships.length === 0 && !params.isSuperAdmin) {
       const workspaceName = formatWorkspaceName({
@@ -292,7 +333,7 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
     user: { id: string; email: string; isSuperAdmin: boolean };
     ipAddress?: string;
     userAgent?: string;
-  }) => {
+  }): Promise<AuthTokens> => {
     const tokens = generateTokenPair({
       id: params.user.id,
       email: params.user.email,
@@ -314,7 +355,7 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
   const markIntentAsPaid = async (params: {
     flowToken: string;
     stripeSession: Stripe.Checkout.Session;
-  }) => {
+  }): Promise<void> => {
     const { flowToken, stripeSession } = params;
 
     const intent = await fastify.prisma.billingCheckoutIntent.findUnique({
@@ -426,7 +467,7 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
 
   fastify.get('/catalog', async (_request, reply) => {
     const plans = buildBillingCatalog();
-    reply.send({
+    return reply.send({
       plans,
       monthsOptions: getBillingMonthOptions(),
     });
@@ -1407,7 +1448,7 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
           message,
         });
       }
-      reply.send({
+      return reply.send({
         session: {
           id: session.id,
           status: session.status,
@@ -1418,13 +1459,35 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
   );
 
   fastify.post('/webhook', async (request, reply) => {
-    const event = request.body as Stripe.Event;
-    if (!event || typeof event !== 'object') {
-      return reply.code(400).send({ error: 'INVALID_EVENT' });
+    if (!stripeWebhookSecret) {
+      request.log.error('STRIPE_WEBHOOK_SECRET is not configured');
+      return reply.code(503).send({ error: 'WEBHOOK_NOT_CONFIGURED' });
+    }
+
+    const signature = request.headers['stripe-signature'];
+    if (typeof signature !== 'string' || !signature.trim()) {
+      return reply.code(400).send({ error: 'MISSING_SIGNATURE' });
+    }
+
+    let stripe: Stripe;
+    try {
+      stripe = buildStripe();
+    } catch (error) {
+      request.log.error({ error }, 'Stripe client is not available');
+      return reply.code(503).send({ error: 'WEBHOOK_NOT_CONFIGURED' });
+    }
+
+    let event: Stripe.Event;
+    try {
+      const rawBody = request.rawBody || Buffer.from(JSON.stringify(request.body ?? {}));
+      event = stripe.webhooks.constructEvent(rawBody, signature, stripeWebhookSecret);
+    } catch (error) {
+      request.log.warn({ error }, 'Invalid Stripe webhook signature');
+      return reply.code(400).send({ error: 'INVALID_SIGNATURE' });
     }
 
     if (event.type === 'checkout.session.completed') {
-      const session = event.data.object as Stripe.Checkout.Session;
+      const session = event.data.object;
       const flowToken = session.metadata?.flowToken;
       if (flowToken && session.payment_status === 'paid') {
         try {

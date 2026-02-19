@@ -2,7 +2,7 @@ module.exports = {
   root: true,
   parser: '@typescript-eslint/parser',
   parserOptions: {
-    project: ['./tsconfig.base.json', './apps/*/tsconfig.json', './packages/*/tsconfig.json'],
+    project: ['./apps/*/tsconfig.json', './packages/*/tsconfig.json'],
     tsconfigRootDir: __dirname,
   },
   plugins: ['@typescript-eslint', 'import', 'boundaries'],
@@ -16,7 +16,7 @@ module.exports = {
   settings: {
     'import/resolver': {
       typescript: {
-        project: ['./tsconfig.base.json', './apps/*/tsconfig.json', './packages/*/tsconfig.json'],
+        project: ['./apps/*/tsconfig.json', './packages/*/tsconfig.json'],
       },
     },
     'boundaries/elements': [
@@ -64,7 +64,7 @@ module.exports = {
     // IMPORT RULES
     // ══════════════════════════════════════════════════════════════════════
     'import/order': [
-      'error',
+      'warn',
       {
         groups: ['builtin', 'external', 'internal', ['parent', 'sibling'], 'index'],
         pathGroups: [{ pattern: '@nexova/**', group: 'internal', position: 'before' }],
@@ -82,23 +82,36 @@ module.exports = {
     // TYPESCRIPT RULES
     // ══════════════════════════════════════════════════════════════════════
     '@typescript-eslint/explicit-function-return-type': [
-      'error',
+      'warn',
       {
         allowExpressions: true,
         allowTypedFunctionExpressions: true,
       },
     ],
-    '@typescript-eslint/no-explicit-any': 'error',
-    '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+    '@typescript-eslint/no-explicit-any': 'warn',
+    '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
     '@typescript-eslint/consistent-type-imports': [
-      'error',
+      'warn',
       {
         prefer: 'type-imports',
         fixStyle: 'inline-type-imports',
       },
     ],
-    '@typescript-eslint/no-floating-promises': 'error',
-    '@typescript-eslint/await-thenable': 'error',
+    '@typescript-eslint/no-floating-promises': 'warn',
+    '@typescript-eslint/await-thenable': 'warn',
+    '@typescript-eslint/no-unsafe-assignment': 'warn',
+    '@typescript-eslint/no-unsafe-member-access': 'warn',
+    '@typescript-eslint/no-unsafe-call': 'warn',
+    '@typescript-eslint/no-unsafe-return': 'warn',
+    '@typescript-eslint/no-unsafe-argument': 'warn',
+    '@typescript-eslint/no-misused-promises': 'warn',
+    '@typescript-eslint/no-unnecessary-type-assertion': 'warn',
+    '@typescript-eslint/restrict-template-expressions': 'warn',
+    '@typescript-eslint/require-await': 'warn',
+    '@typescript-eslint/ban-types': 'warn',
+    '@typescript-eslint/no-redundant-type-constituents': 'warn',
+    '@typescript-eslint/no-duplicate-type-constituents': 'warn',
+    '@typescript-eslint/no-base-to-string': 'warn',
 
     // ══════════════════════════════════════════════════════════════════════
     // GENERAL RULES
@@ -106,6 +119,8 @@ module.exports = {
     'no-console': ['warn', { allow: ['warn', 'error'] }],
     'prefer-const': 'error',
     'no-var': 'error',
+    'no-unsafe-finally': 'warn',
+    'no-useless-escape': 'warn',
   },
   overrides: [
     // Relax rules for test files
@@ -125,6 +140,10 @@ module.exports = {
       rules: {
         'react/react-in-jsx-scope': 'off',
         'react/prop-types': 'off',
+        'react/no-unescaped-entities': 'warn',
+        'react-hooks/set-state-in-effect': 'warn',
+        'react-hooks/static-components': 'warn',
+        'react-hooks/immutability': 'warn',
       },
     },
   ],

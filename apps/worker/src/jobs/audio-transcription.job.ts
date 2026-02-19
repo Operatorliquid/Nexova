@@ -2,17 +2,21 @@
  * Audio Transcription Job
  * Downloads inbound WhatsApp audio and generates transcript text.
  */
-import { Job, Queue } from 'bullmq';
-import { Prisma, PrismaClient } from '@prisma/client';
+import { randomUUID } from 'crypto';
+
+import { type Prisma, type PrismaClient } from '@prisma/client';
+import { type Job, type Queue } from 'bullmq';
+
+import { decrypt, logger } from '@nexova/core';
 import {
-  AgentProcessPayload,
-  AudioTranscriptionPayload,
+  type AgentProcessPayload,
+  type AudioTranscriptionPayload,
   COMMERCE_USAGE_METRICS,
-  MessageSendPayload,
+  type MessageSendPayload,
   QUEUES,
 } from '@nexova/shared';
-import { decrypt } from '@nexova/core';
-import { randomUUID } from 'crypto';
+
+import { fetchBinaryWithGuards } from '../utils/remote-fetch-guard.js';
 
 const OPENAI_API_BASE = (process.env.OPENAI_API_BASE || 'https://api.openai.com/v1').replace(/\/+$/, '');
 const OPENAI_TRANSCRIPTION_MODEL = process.env.OPENAI_TRANSCRIPTION_MODEL || 'gpt-4o-transcribe';
@@ -48,6 +52,21 @@ function asObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object') return {};
   if (Array.isArray(value)) return {};
   return value as Record<string, unknown>;
+}
+
+function safeJsonParse(text: string): unknown {
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+function firstObjectFromArray(value: unknown): Record<string, unknown> | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const [first] = value as unknown[];
+  if (!first || typeof first !== 'object' || Array.isArray(first)) return null;
+  return first as Record<string, unknown>;
 }
 
 function toPositiveIntOrNull(value: unknown): number | null {
@@ -181,6 +200,37 @@ function resolveEvolutionBaseUrl(apiUrl?: string | null): string {
   return cleaned || envUrl;
 }
 
+function parseHost(value?: string | null): string | null {
+  const raw = (value || '').trim();
+  if (!raw) return null;
+  const candidate = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+  try {
+    return new URL(candidate).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+function buildAllowedMediaHostMatcher(baseUrl: string, configuredApiUrl?: string | null): (host: string) => boolean {
+  const baseHost = parseHost(baseUrl);
+  const configuredHost = parseHost(configuredApiUrl);
+  const envHosts = (process.env.AUDIO_MEDIA_ALLOWED_HOSTS || process.env.RECEIPT_PROXY_ALLOWED_HOSTS || '')
+    .split(',')
+    .map((entry) => parseHost(entry))
+    .filter(Boolean) as string[];
+  const trustedHosts = new Set<string>([
+    ...envHosts,
+    ...(baseHost ? [baseHost] : []),
+    ...(configuredHost ? [configuredHost] : []),
+  ]);
+
+  return (host: string): boolean => {
+    const normalized = host.toLowerCase();
+    if (normalized === 'infobip.com' || normalized.endsWith('.infobip.com')) return true;
+    return trustedHosts.has(normalized);
+  };
+}
+
 function extractEvolutionInstanceName(providerConfig: unknown): string {
   const cfg = asObject(providerConfig);
   const value = cfg.instanceName ?? cfg.instance ?? cfg.name;
@@ -197,42 +247,37 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
   }
 }
 
-async function downloadFromUrl(url: string, headers?: Record<string, string>): Promise<AudioBlob> {
-  const response = await fetchWithTimeout(
+async function downloadFromUrl(
+  url: string,
+  isAllowedHost: (host: string) => boolean,
+  headers?: Record<string, string>
+): Promise<AudioBlob> {
+  const { buffer, contentType } = await fetchBinaryWithGuards({
     url,
-    {
-      method: 'GET',
-      headers: {
-        Accept: '*/*',
-        ...(headers || {}),
-      },
-    },
-    OPENAI_TIMEOUT_MS
-  );
+    headers,
+    isAllowedHost,
+    allowedContentTypes: ['audio/*', 'application/octet-stream', 'video/mp4'],
+    maxBytes: MAX_DIRECT_DOWNLOAD_BYTES,
+    timeoutMs: OPENAI_TIMEOUT_MS,
+  });
 
-  if (!response.ok) {
-    throw new Error(`Direct media download failed (${response.status})`);
-  }
-
-  const contentLength = Number.parseInt(response.headers.get('content-length') || '0', 10);
-  if (Number.isFinite(contentLength) && contentLength > MAX_DIRECT_DOWNLOAD_BYTES) {
-    throw new Error(`Audio file too large (${contentLength} bytes)`);
-  }
-
-  const arrayBuffer = await response.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
   if (buffer.length === 0) {
     throw new Error('Downloaded media is empty');
   }
-  if (buffer.length > MAX_DIRECT_DOWNLOAD_BYTES) {
-    throw new Error(`Audio file too large (${buffer.length} bytes)`);
-  }
 
-  const mimeType = response.headers.get('content-type') || undefined;
-  const fileName = parseFilenameFromDisposition(response.headers.get('content-disposition'));
+  const fileName = (() => {
+    try {
+      const parsed = new URL(url);
+      const pathName = parsed.pathname.split('/').pop() || '';
+      return sanitizeFileName(pathName || undefined, 'audio');
+    } catch {
+      return undefined;
+    }
+  })();
+
   return {
     buffer,
-    ...(mimeType ? { mimeType } : {}),
+    ...(contentType ? { mimeType: contentType } : {}),
     ...(fileName ? { fileName } : {}),
     sizeBytes: buffer.length,
   };
@@ -243,11 +288,16 @@ async function downloadInfobipAudio(params: {
   baseUrl: string;
   messageId: string;
   mediaUrl?: string;
+  isAllowedHost: (host: string) => boolean;
 }): Promise<AudioBlob> {
   // 1) Try direct media URL if available.
   if (params.mediaUrl) {
     try {
-      return await downloadFromUrl(params.mediaUrl, params.apiKey ? { Authorization: `App ${params.apiKey}` } : undefined);
+      return await downloadFromUrl(
+        params.mediaUrl,
+        params.isAllowedHost,
+        params.apiKey ? { Authorization: `App ${params.apiKey}` } : undefined
+      );
     } catch {
       // Fall through to provider media endpoint.
     }
@@ -295,7 +345,7 @@ async function downloadInfobipAudio(params: {
       };
     }
     if (mediaUrl) {
-      return downloadFromUrl(mediaUrl);
+      return downloadFromUrl(mediaUrl, params.isAllowedHost);
     }
     throw new Error('Infobip media response does not include downloadable content');
   }
@@ -327,24 +377,24 @@ async function fetchEvolutionMediaBase64(params: {
   apiKey: string;
   instanceName: string;
   messageId: string;
-  message?: any;
+  message?: unknown;
 }): Promise<{ base64: string; mimetype?: string; filename?: string } | null> {
   const endpoint = `${params.baseUrl.replace(/\/+$/, '')}/chat/getBase64FromMediaMessage/${encodeURIComponent(params.instanceName)}`;
   const candidates: Array<Record<string, unknown>> = [];
+  const message = params.message && typeof params.message === 'object' && !Array.isArray(params.message)
+    ? (params.message as Record<string, unknown>)
+    : null;
 
-  if (params.message && typeof params.message === 'object') {
-    candidates.push({ message: params.message, convertToMp4: false });
+  if (message) {
+    candidates.push({ message, convertToMp4: false });
   }
 
-  const keyFromMessage =
-    params.message && typeof params.message === 'object' && params.message.key && typeof params.message.key === 'object'
-      ? params.message.key
-      : null;
+  const keyFromMessage = message ? asObject(message['key']) : null;
   const normalizedKey = {
     id: params.messageId,
-    ...(typeof (keyFromMessage as any)?.remoteJid === 'string' ? { remoteJid: (keyFromMessage as any).remoteJid } : {}),
-    ...(typeof (keyFromMessage as any)?.participant === 'string' ? { participant: (keyFromMessage as any).participant } : {}),
-    ...(typeof (keyFromMessage as any)?.fromMe === 'boolean' ? { fromMe: (keyFromMessage as any).fromMe } : { fromMe: false }),
+    ...(typeof keyFromMessage?.['remoteJid'] === 'string' ? { remoteJid: keyFromMessage['remoteJid'] } : {}),
+    ...(typeof keyFromMessage?.['participant'] === 'string' ? { participant: keyFromMessage['participant'] } : {}),
+    ...(typeof keyFromMessage?.['fromMe'] === 'boolean' ? { fromMe: keyFromMessage['fromMe'] } : { fromMe: false }),
   };
   candidates.push({ message: { key: normalizedKey }, convertToMp4: false });
   candidates.push({ key: normalizedKey, convertToMp4: false });
@@ -367,7 +417,7 @@ async function fetchEvolutionMediaBase64(params: {
     const text = await response.text();
     if (!response.ok) continue;
 
-    const parsed = text ? (() => { try { return JSON.parse(text); } catch { return null; } })() : null;
+    const parsed = text ? safeJsonParse(text) : null;
     const raw = parsed ?? text;
 
     if (typeof raw === 'string') {
@@ -409,7 +459,7 @@ async function downloadEvolutionAudio(params: {
   apiKey: string;
   instanceName: string;
   messageId: string;
-  message?: any;
+  message?: unknown;
   mimeType?: string | null;
   durationMs?: number | null;
   sizeBytes?: number | null;
@@ -482,22 +532,18 @@ async function transcribeAudio(params: {
     throw new Error(`OpenAI transcription failed (${response.status}): ${textBody}`);
   }
 
-  let json: any = null;
-  try {
-    json = textBody ? JSON.parse(textBody) : null;
-  } catch {
-    json = null;
-  }
-
-  const transcript = typeof json?.text === 'string' ? json.text.trim() : '';
+  const json = textBody ? safeJsonParse(textBody) : null;
+  const jsonObject = asObject(json);
+  const transcript = typeof jsonObject.text === 'string' ? jsonObject.text.trim() : '';
   if (!transcript) {
     throw new Error('OpenAI transcription returned empty text');
   }
 
-  const language = typeof json?.language === 'string' ? json.language : null;
+  const language = typeof jsonObject.language === 'string' ? jsonObject.language : null;
+  const confidenceValue = jsonObject.confidence;
   const confidence =
-    typeof json?.confidence === 'number' && Number.isFinite(json.confidence)
-      ? json.confidence
+    typeof confidenceValue === 'number' && Number.isFinite(confidenceValue)
+      ? confidenceValue
       : null;
 
   return {
@@ -513,7 +559,7 @@ async function enqueueAgentAfterTranscription(params: {
   messageId: string;
   channelId: string;
   correlationId: string;
-}) {
+}): Promise<void> {
   const jobPayload: AgentProcessPayload = {
     workspaceId: params.workspaceId,
     messageId: params.messageId,
@@ -534,7 +580,7 @@ async function enqueueTranscriptionFailureMessage(params: {
   webhookInboxId?: string | null;
   channelId: string;
   correlationId: string;
-}) {
+}): Promise<void> {
   if (!params.messageQueue) return;
   await params.messageQueue.add(
     `audio-fallback-${randomUUID().slice(0, 8)}`,
@@ -576,7 +622,7 @@ export function createAudioTranscriptionProcessor(
       };
     }
 
-    console.log(
+    logger.info(
       `[AudioTranscription] Start transcription ${transcription.id} (${transcription.provider}/${transcription.messageId}) ` +
       `workspace=${transcription.workspaceId} attempt=${attempt}/${maxAttempts}`
     );
@@ -617,17 +663,18 @@ export function createAudioTranscriptionProcessor(
         throw new Error('Webhook message not found for audio transcription');
       }
 
-      const payload = webhook.payload as any;
-      const nexovaMeta = asObject(payload?.__nexova);
-      const audioMeta = asObject(nexovaMeta.audio);
-      const languageHintRaw = audioMeta.languageHint ?? (job.data.metadata?.languageHint as string | undefined);
+      const payload = asObject(webhook.payload);
+      const nexovaMeta = asObject(payload['__nexova']);
+      const audioMeta = asObject(nexovaMeta['audio']);
+      const firstResult = firstObjectFromArray(payload['results']);
+      const languageHintRaw = audioMeta.languageHint ?? (job.data.metadata?.languageHint);
       const languageHint = typeof languageHintRaw === 'string' && languageHintRaw.trim()
         ? languageHintRaw.trim()
         : null;
       const channelId =
         transcription.channelId
         || (typeof job.data.channelId === 'string' ? job.data.channelId : null)
-        || (typeof payload?.results?.[0]?.from === 'string' ? payload.results[0].from : null)
+        || (typeof firstResult?.['from'] === 'string' ? firstResult['from'] : null)
         || null;
       const correlationId =
         (typeof webhook.correlationId === 'string' && webhook.correlationId.trim())
@@ -649,6 +696,7 @@ export function createAudioTranscriptionProcessor(
       if (transcription.provider === 'infobip') {
         const apiKey = number ? resolveInfobipApiKey(number) : (process.env.INFOBIP_API_KEY || '').trim();
         const baseUrl = resolveInfobipBaseUrl(number?.apiUrl || null);
+        const isAllowedHost = buildAllowedMediaHostMatcher(baseUrl, number?.apiUrl || null);
         const mediaUrl =
           typeof audioMeta.mediaUrl === 'string'
             ? audioMeta.mediaUrl
@@ -661,6 +709,7 @@ export function createAudioTranscriptionProcessor(
           baseUrl,
           messageId: transcription.messageId,
           mediaUrl,
+          isAllowedHost,
         });
       } else if (transcription.provider === 'evolution') {
         const apiKey = number ? resolveEvolutionApiKey(number) : (process.env.EVOLUTION_API_KEY || '').trim();
@@ -675,7 +724,7 @@ export function createAudioTranscriptionProcessor(
           baseUrl,
           instanceName,
           messageId: transcription.messageId,
-          message: payload?.data,
+          message: payload['data'],
           mimeType: typeof audioMeta.mimeType === 'string' ? audioMeta.mimeType : null,
           durationMs: toPositiveIntOrNull(audioMeta.durationMs),
           sizeBytes: toPositiveIntOrNull(audioMeta.sizeBytes),
@@ -770,7 +819,7 @@ export function createAudioTranscriptionProcessor(
         },
       }).catch(() => undefined);
 
-      console.log(
+      logger.info(
         `[AudioTranscription] Completed transcription ${transcription.id} ` +
         `workspace=${transcription.workspaceId} provider=${transcription.provider} ` +
         `durationMs=${Date.now() - startedAtMs} transcriptChars=${stt.text.length}`

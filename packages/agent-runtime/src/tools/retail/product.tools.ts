@@ -2,10 +2,11 @@
  * Product Tools
  * Tools for product search and catalog
  */
+import { type PrismaClient, Prisma } from '@prisma/client';
 import { z } from 'zod';
-import { PrismaClient } from '@prisma/client';
+
+import { ToolCategory, type ToolContext, type ToolResult } from '../../types/index.js';
 import { BaseTool } from '../base.js';
-import { ToolCategory, ToolContext, ToolResult } from '../../types/index.js';
 import { buildProductDisplayName, extractUnitHints, matchesUnitHints, normalizeUnitToken } from './product-utils.js';
 
 const STOPWORDS = new Set([
@@ -113,16 +114,16 @@ function expandTokenVariants(token: string): string[] {
   return Array.from(variants).filter((value) => value.length > 1);
 }
 
-function buildTokenFilter(token: string) {
+function buildTokenFilter(token: string): Prisma.ProductWhereInput {
   const variants = expandTokenVariants(token);
   return {
     OR: [
       ...variants.map((variant) => ({
         OR: [
-          { name: { contains: variant, mode: 'insensitive' } },
-          { sku: { contains: variant, mode: 'insensitive' } },
-          { description: { contains: variant, mode: 'insensitive' } },
-          { shortDesc: { contains: variant, mode: 'insensitive' } },
+          { name: { contains: variant, mode: Prisma.QueryMode.insensitive } },
+          { sku: { contains: variant, mode: Prisma.QueryMode.insensitive } },
+          { description: { contains: variant, mode: Prisma.QueryMode.insensitive } },
+          { shortDesc: { contains: variant, mode: Prisma.QueryMode.insensitive } },
           { keywords: { has: variant.toLowerCase() } },
         ],
       })),
@@ -130,7 +131,7 @@ function buildTokenFilter(token: string) {
   };
 }
 
-function buildTermFilter(term: string) {
+function buildTermFilter(term: string): Prisma.ProductWhereInput {
   const tokens = tokenizeQuery(term).filter((token) => /[a-z]/.test(token) || token.length > 2);
   if (tokens.length <= 1) {
     const single = tokens[0] || term;
@@ -169,13 +170,13 @@ export class SearchProductsTool extends BaseTool<typeof SearchProductsInput> {
   async execute(input: z.infer<typeof SearchProductsInput>, context: ToolContext): Promise<ToolResult> {
     const { query, category, limit, onlyInStock } = input;
 
-    const where: any = {
+    const where: Prisma.ProductWhereInput = {
       workspaceId: context.workspaceId,
       // Owner-mode can work with draft products (e.g., newly imported from receipts).
       status: context.isOwner ? { not: 'archived' } : 'active',
       deletedAt: null,
     };
-    const andClauses: any[] = [];
+    const andClauses: Prisma.ProductWhereInput[] = [];
 
     let multiItemQuery = false;
 
@@ -336,7 +337,7 @@ export class GetProductDetailsTool extends BaseTool<typeof GetProductDetailsInpu
   async execute(input: z.infer<typeof GetProductDetailsInput>, context: ToolContext): Promise<ToolResult> {
     const { productId, sku } = input;
 
-    const where: any = {
+    const where: Prisma.ProductWhereInput = {
       workspaceId: context.workspaceId,
       deletedAt: null,
     };
@@ -473,7 +474,7 @@ export class GetCategoriesTool extends BaseTool<typeof GetCategoriesInput> {
 /**
  * Create all product tools
  */
-export function createProductTools(prisma: PrismaClient): BaseTool<any, any>[] {
+export function createProductTools(prisma: PrismaClient): Array<BaseTool<z.ZodSchema, unknown>> {
   return [
     new SearchProductsTool(prisma),
     new GetProductDetailsTool(prisma),

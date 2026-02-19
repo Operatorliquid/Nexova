@@ -6,7 +6,7 @@
  * We generate a PDF representation with the authorized invoice data we store.
  */
 
-import { PDFDocument, PDFFont, rgb, StandardFonts } from 'pdf-lib';
+import { PDFDocument, type PDFFont, type PDFPage, rgb, StandardFonts } from 'pdf-lib';
 
 const PAGE = { width: 595, height: 842 }; // A4
 const MARGIN = 36;
@@ -85,7 +85,7 @@ export class ArcaInvoicePdfService {
   }
 
   private drawHeader(
-    page: any,
+    page: PDFPage,
     font: PDFFont,
     fontBold: PDFFont,
     y: number,
@@ -164,7 +164,7 @@ export class ArcaInvoicePdfService {
   }
 
   private drawInfoBlock(
-    page: any,
+    page: PDFPage,
     font: PDFFont,
     fontBold: PDFFont,
     y: number,
@@ -191,7 +191,7 @@ export class ArcaInvoicePdfService {
     return currentY;
   }
 
-  private drawTableHeader(page: any, fontBold: PDFFont, y: number): number {
+  private drawTableHeader(page: PDFPage, fontBold: PDFFont, y: number): number {
     page.drawRectangle({
       x: MARGIN,
       y: y - 16,
@@ -237,7 +237,7 @@ export class ArcaInvoicePdfService {
     return y - 30;
   }
 
-  private drawItemRow(page: any, font: PDFFont, y: number, item: ArcaInvoicePdfItem): number {
+  private drawItemRow(page: PDFPage, font: PDFFont, y: number, item: ArcaInvoicePdfItem): number {
     const name = item.name || '-';
     const qty = String(item.quantity || 0);
     const unitPrice = this.formatMoney(item.unitPriceCents || 0);
@@ -303,4 +303,3 @@ export class ArcaInvoicePdfService {
     return (name || 'file').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120);
   }
 }
-

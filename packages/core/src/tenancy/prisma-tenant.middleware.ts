@@ -2,7 +2,8 @@
  * Prisma tenant isolation middleware
  * Enforces workspace scoping based on AsyncLocalStorage context.
  */
-import { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
+
 import { getContext } from './context.js';
 
 const TENANT_MIDDLEWARE_KEY = '__nexovaTenantPrismaMiddleware';
@@ -12,6 +13,11 @@ const workspaceScopedModels = new Set(
     .filter((model) => model.fields.some((field) => field.name === 'workspaceId'))
     .map((model) => model.name)
 );
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
 
 function collectWorkspaceIds(value: unknown, collector: Set<unknown>): void {
   if (!value || typeof value !== 'object') return;
@@ -89,17 +95,18 @@ export function applyTenantPrismaMiddleware(prisma: PrismaClient): void {
     }
 
     const action = params.action;
-    const args = params.args ?? {};
+    const args = asRecord(params.args) ?? {};
+    const where = args['where'];
 
-    const hasFilter = hasWorkspaceFilter(args.where);
+    const hasFilter = hasWorkspaceFilter(where);
 
-    validateWorkspaceFilter(args.where, workspaceId);
+    validateWorkspaceFilter(where, workspaceId);
 
     if (action === 'findUnique' || action === 'findUniqueOrThrow') {
       params.action = action === 'findUniqueOrThrow' ? 'findFirstOrThrow' : 'findFirst';
       params.args = {
         ...args,
-        where: hasFilter ? args.where : { ...(args.where ?? {}), workspaceId },
+        where: hasFilter ? where : { ...(asRecord(where) ?? {}), workspaceId },
       };
       return next(params);
     }
@@ -115,7 +122,7 @@ export function applyTenantPrismaMiddleware(prisma: PrismaClient): void {
       if (!hasFilter) {
         params.args = {
           ...args,
-          where: { ...(args.where ?? {}), workspaceId },
+          where: { ...(asRecord(where) ?? {}), workspaceId },
         };
       }
       return next(params);
@@ -124,7 +131,7 @@ export function applyTenantPrismaMiddleware(prisma: PrismaClient): void {
     if (action === 'create' || action === 'createMany' || action === 'createManyAndReturn') {
       params.args = {
         ...args,
-        data: attachWorkspaceId(args.data, workspaceId),
+        data: attachWorkspaceId(args['data'], workspaceId),
       };
       return next(params);
     }
@@ -140,7 +147,7 @@ export function applyTenantPrismaMiddleware(prisma: PrismaClient): void {
       if (!hasFilter) {
         params.args = {
           ...args,
-          where: { ...(args.where ?? {}), workspaceId },
+          where: { ...(asRecord(where) ?? {}), workspaceId },
         };
       }
       return next(params);

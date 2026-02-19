@@ -2,7 +2,8 @@
  * Workspace Service
  * Handles workspace (tenant) CRUD operations
  */
-import { PrismaClient, Workspace, Membership, Prisma } from '@prisma/client';
+import { type PrismaClient, type Workspace, type Membership, type Prisma } from '@prisma/client';
+
 import { SYSTEM_ROLES, DEFAULT_ROLES } from '@nexova/shared';
 
 export interface CreateWorkspaceInput {
@@ -16,6 +17,27 @@ export interface UpdateWorkspaceInput {
   phone?: string;
   settings?: Prisma.InputJsonValue;
 }
+
+type WorkspaceMember = Prisma.MembershipGetPayload<{
+  include: {
+    user: {
+      select: {
+        id: true;
+        email: true;
+        firstName: true;
+        lastName: true;
+        avatarUrl: true;
+        status: true;
+      };
+    };
+    role: {
+      select: {
+        id: true;
+        name: true;
+      };
+    };
+  };
+}>;
 
 export class WorkspaceService {
   constructor(private prisma: PrismaClient) {}
@@ -70,7 +92,7 @@ export class WorkspaceService {
       });
 
       // Create default roles
-      for (const [_key, role] of Object.entries(DEFAULT_ROLES)) {
+      for (const role of Object.values(DEFAULT_ROLES)) {
         await tx.role.create({
           data: {
             workspaceId: ws.id,
@@ -142,7 +164,7 @@ export class WorkspaceService {
     });
   }
 
-  async getMembers(workspaceId: string) {
+  async getMembers(workspaceId: string): Promise<WorkspaceMember[]> {
     return this.prisma.membership.findMany({
       where: { workspaceId },
       include: {

@@ -3,16 +3,17 @@
  * Handles session state, cart, and context in Redis
  */
 import type { Redis } from 'ioredis';
+
 import {
-  SessionMemory,
-  Cart,
-  CartItem,
-  ShippingAddress,
+  type SessionMemory,
+  type Cart,
+  type CartItem,
+  type ShippingAddress,
   AgentState,
-  AgentStateType,
-  CustomerInfo,
-  CommerceProfile,
-  PendingConfirmation,
+  type AgentStateType,
+  type CustomerInfo,
+  type CommerceProfile,
+  type PendingConfirmation,
 } from '../types/index.js';
 
 const SESSION_TTL = Number(process.env.SESSION_TTL_SECONDS || 60 * 60 * 24 * 7); // default 7 days
@@ -178,7 +179,7 @@ export class MemoryManager {
 
     if (existingIndex >= 0) {
       // Update quantity
-      const existingItem = cart.items[existingIndex]!;
+      const existingItem = cart.items[existingIndex];
       existingItem.quantity += item.quantity;
       existingItem.total = existingItem.quantity * existingItem.unitPrice;
     } else {
@@ -218,7 +219,7 @@ export class MemoryManager {
       cart.items.splice(itemIndex, 1);
     } else {
       // Update quantity
-      const item = cart.items[itemIndex]!;
+      const item = cart.items[itemIndex];
       item.quantity = quantity;
       item.total = item.unitPrice * quantity;
     }

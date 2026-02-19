@@ -1,7 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { z } from 'zod';
-import { buildMetrics, normalizeRange } from './metrics.service.js';
 import type { PrismaClient } from '@prisma/client';
+import { z } from 'zod';
+
+import { buildMetrics, normalizeRange } from './metrics.service.js';
 
 const INSIGHTS_SCHEMA = z.object({
   headline: z.string().min(3).max(160),
@@ -18,7 +19,7 @@ const INSIGHTS_SCHEMA = z.object({
   ).min(3).max(6),
 });
 
-const sumSeries = (series: Array<{ total: number; orders?: number }>) =>
+const sumSeries = (series: Array<{ total: number; orders?: number }>): number =>
   series.reduce((sum, entry) => sum + entry.total, 0);
 
 const extractJson = (text: string): unknown => {

@@ -1,6 +1,7 @@
+import { Eye, EyeOff } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Eye, EyeOff } from 'lucide-react';
+
 import { Button, Label } from '../../components/ui';
 import { apiFetch } from '../../lib/api';
 
@@ -9,7 +10,7 @@ type ApiErrorBody = {
   error?: string;
 };
 
-const readApiError = async (response: Response, fallback: string) => {
+const readApiError = async (response: Response, fallback: string): Promise<string> => {
   try {
     const body = (await response.json()) as ApiErrorBody;
     if (typeof body.message === 'string' && body.message.trim()) return body.message;
@@ -20,7 +21,7 @@ const readApiError = async (response: Response, fallback: string) => {
   return fallback;
 };
 
-export default function ResetPasswordPage() {
+export default function ResetPasswordPage(): JSX.Element {
   const [searchParams] = useSearchParams();
   const token = searchParams.get('token') || '';
 
@@ -32,7 +33,7 @@ export default function ResetPasswordPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [done, setDone] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
     setError('');
 
@@ -111,7 +112,12 @@ export default function ResetPasswordPage() {
               </Link>
             </div>
           ) : (
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <form
+              onSubmit={(event) => {
+                void handleSubmit(event);
+              }}
+              className="space-y-4"
+            >
               {!token && (
                 <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
                   Falta el código de recuperación. Volvé a solicitar el email de recuperación.

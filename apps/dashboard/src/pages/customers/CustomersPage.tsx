@@ -1,5 +1,3 @@
-import { useState, useEffect } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   UserPlus,
   User,
@@ -19,6 +17,9 @@ import {
   Check,
   X,
 } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+
 import {
   Button,
   Input,
@@ -44,15 +45,40 @@ import {
   AnimatedTableRow,
 } from '../../components/ui';
 import { useAuth } from '../../contexts/AuthContext';
-import { useToast } from '../../stores/toast.store';
 import { apiFetch, API_URL } from '../../lib/api';
-import { PENDING_INVOICING_BADGE } from '../../lib/statusStyles';
 import { getWorkspaceCommerceCapabilities } from '../../lib/commerce-plan';
+import { PENDING_INVOICING_BADGE } from '../../lib/statusStyles';
+import { useToast } from '../../stores/toast.store';
 
-const fetchWithCredentials = (input: RequestInfo | URL, init?: RequestInit) => fetch(input, {
+type JsonRecord = Record<string, unknown>;
+
+const fetchWithCredentials = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => fetch(input, {
   ...init,
   credentials: 'include',
 });
+
+function asRecord(value: unknown): JsonRecord | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as JsonRecord;
+}
+
+function readString(record: JsonRecord | null, key: string): string | undefined {
+  const value = record?.[key];
+  return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
+}
+
+function readErrorMessage(data: JsonRecord, fallback: string): string {
+  return readString(data, 'message') ?? readString(data, 'error') ?? fallback;
+}
+
+async function readJsonRecord(response: Response): Promise<JsonRecord> {
+  try {
+    const parsed = (await response.json()) as unknown;
+    return asRecord(parsed) ?? {};
+  } catch {
+    return {};
+  }
+}
 
 interface Customer {
   id: string;
@@ -104,6 +130,33 @@ interface Stats {
   totalDebt: number;
 }
 
+function asCustomer(value: unknown): Customer | null {
+  return asRecord(value) as Customer | null;
+}
+
+function asCustomerList(value: unknown): Customer[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item) => asRecord(item) !== null) as Customer[];
+}
+
+function asStats(value: unknown): Stats | null {
+  return asRecord(value) as Stats | null;
+}
+
+function asCustomerNote(value: unknown): CustomerNote | null {
+  return asRecord(value) as CustomerNote | null;
+}
+
+function asCustomerNoteList(value: unknown): CustomerNote[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item) => asRecord(item) !== null) as CustomerNote[];
+}
+
+function asCustomerOrderList(value: unknown): CustomerOrder[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item) => asRecord(item) !== null) as CustomerOrder[];
+}
+
 type ModalTab = 'info' | 'notes' | 'orders';
 
 const VAT_CONDITION_LABELS: Record<string, string> = {
@@ -125,14 +178,14 @@ const VAT_CONDITIONS = Object.entries(VAT_CONDITION_LABELS).map(([value, label])
   label,
 }));
 
-const formatVatCondition = (value?: string | null) => {
+const formatVatCondition = (value?: string | null): string => {
   if (!value) return 'No registrada';
   const trimmed = value.trim();
   if (!trimmed) return 'No registrada';
   return VAT_CONDITION_LABELS[trimmed] || value;
 };
 
-const normalizeText = (value: string) =>
+const normalizeText = (value: string): string =>
   value
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
@@ -145,7 +198,7 @@ const VAT_CONDITION_LOOKUP = VAT_CONDITIONS.reduce<Record<string, string>>((acc,
   return acc;
 }, {});
 
-const normalizeVatConditionId = (value?: string | null) => {
+const normalizeVatConditionId = (value?: string | null): string => {
   if (!value) return '';
   const trimmed = value.trim();
   if (!trimmed) return '';
@@ -153,7 +206,7 @@ const normalizeVatConditionId = (value?: string | null) => {
   return VAT_CONDITION_LOOKUP[normalizeText(trimmed)] || '';
 };
 
-export default function CustomersPage() {
+export default function CustomersPage(): JSX.Element {
   const { workspace } = useAuth();
   const capabilities = getWorkspaceCommerceCapabilities(workspace);
   const toast = useToast();
@@ -194,7 +247,7 @@ export default function CustomersPage() {
   const customerIdParam = searchParams.get('customerId');
   const customerPhoneParam = searchParams.get('customerPhone');
 
-  const fetchCustomersAndStats = async (searchTerm: string) => {
+  const fetchCustomersAndStats = useCallback(async (searchTerm: string): Promise<void> => {
     if (!workspace?.id) return;
 
     setIsLoading(true);
@@ -205,54 +258,54 @@ export default function CustomersPage() {
       }
 
       const [customersRes, statsRes] = await Promise.all([
-        apiFetch(`/api/v1/customers?${queryParams}`, {}, workspace.id),
+        apiFetch(`/api/v1/customers?${queryParams.toString()}`, {}, workspace.id),
         apiFetch('/api/v1/customers/stats', {}, workspace.id),
       ]);
 
       if (customersRes.ok) {
-        const data = await customersRes.json();
-        setCustomers(data.customers || []);
+        const data = await readJsonRecord(customersRes);
+        setCustomers(asCustomerList(data.customers));
       }
 
       if (statsRes.ok) {
-        const data = await statsRes.json();
-        setStats(data);
+        const data = await readJsonRecord(statsRes);
+        setStats(asStats(data));
       }
     } catch (error) {
       console.error('Failed to fetch customers:', error);
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [workspace?.id]);
 
-  const fetchCustomerById = async (customerId: string): Promise<Customer | null> => {
+  const fetchCustomerById = useCallback(async (customerId: string): Promise<Customer | null> => {
     if (!workspace?.id) return null;
     try {
       const res = await apiFetch(`/api/v1/customers/${customerId}`, {}, workspace.id);
       if (!res.ok) return null;
-      const data = await res.json();
-      return data.customer || null;
+      const data = await readJsonRecord(res);
+      return asCustomer(data.customer);
     } catch (error) {
       console.error('Failed to fetch customer by id:', error);
       return null;
     }
-  };
+  }, [workspace?.id]);
 
-  const fetchCustomerByPhone = async (phone: string): Promise<Customer | null> => {
+  const fetchCustomerByPhone = useCallback(async (phone: string): Promise<Customer | null> => {
     if (!workspace?.id) return null;
     try {
       const params = new URLSearchParams({ search: phone, limit: '1', offset: '0' });
       const res = await apiFetch(`/api/v1/customers?${params.toString()}`, {}, workspace.id);
       if (!res.ok) return null;
-      const data = await res.json();
-      return data.customers?.[0] || null;
+      const data = await readJsonRecord(res);
+      return asCustomerList(data.customers)[0] ?? null;
     } catch (error) {
       console.error('Failed to fetch customer by phone:', error);
       return null;
     }
-  };
+  }, [workspace?.id]);
 
-  const startEditField = (field: string, value?: string | null) => {
+  const startEditField = (field: string, value?: string | null): void => {
     if (!selectedCustomer) return;
     const normalizedValue = field === 'vatCondition'
       ? normalizeVatConditionId(value)
@@ -261,12 +314,12 @@ export default function CustomersPage() {
     setEditingValue(normalizedValue);
   };
 
-  const cancelEditField = () => {
+  const cancelEditField = (): void => {
     setEditingField(null);
     setEditingValue('');
   };
 
-  const saveField = async () => {
+  const saveField = async (): Promise<void> => {
     if (!workspace?.id || !selectedCustomer || !editingField) return;
     setIsSavingField(true);
 
@@ -303,8 +356,8 @@ export default function CustomersPage() {
       }, workspace.id);
 
       if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data.message || 'No se pudo actualizar el cliente');
+        const data = await readJsonRecord(response);
+        throw new Error(readErrorMessage(data, 'No se pudo actualizar el cliente'));
       }
 
       const updated = await fetchCustomerById(selectedCustomer.id);
@@ -325,8 +378,8 @@ export default function CustomersPage() {
   // Fetch customers and stats
   useEffect(() => {
     if (!workspace?.id) return;
-    fetchCustomersAndStats(search);
-  }, [workspace?.id, search]);
+    void fetchCustomersAndStats(search);
+  }, [fetchCustomersAndStats, search, workspace?.id]);
 
   // Auto-open customer from URL param
   useEffect(() => {
@@ -334,72 +387,90 @@ export default function CustomersPage() {
 
     const existing = customers.find((c) => c.id === customerIdParam);
     if (existing) {
-      handleSelectCustomer(existing);
+      setSelectedCustomer(existing);
+      setActiveTab('info');
+      setNotes([]);
+      setOrders([]);
+      setAiSummary(null);
+      setNewNote('');
+      setOrderStatusFilter('all');
       return;
     }
 
-    const load = async () => {
+    const load = async (): Promise<void> => {
       const customer = await fetchCustomerById(customerIdParam);
       if (customer) {
-        handleSelectCustomer(customer);
+        setSelectedCustomer(customer);
+        setActiveTab('info');
+        setNotes([]);
+        setOrders([]);
+        setAiSummary(null);
+        setNewNote('');
+        setOrderStatusFilter('all');
       }
     };
 
-    load();
-  }, [customerIdParam, isLoading, customers]);
+    void load();
+  }, [customerIdParam, customers, fetchCustomerById, isLoading]);
 
   useEffect(() => {
     if (customerIdParam || !customerPhoneParam || isLoading) return;
 
-    const load = async () => {
+    const load = async (): Promise<void> => {
       const customer = await fetchCustomerByPhone(customerPhoneParam);
       if (customer) {
-        handleSelectCustomer(customer);
+        setSelectedCustomer(customer);
+        setActiveTab('info');
+        setNotes([]);
+        setOrders([]);
+        setAiSummary(null);
+        setNewNote('');
+        setOrderStatusFilter('all');
       }
     };
 
-    load();
-  }, [customerIdParam, customerPhoneParam, isLoading]);
+    void load();
+  }, [customerIdParam, customerPhoneParam, fetchCustomerByPhone, isLoading]);
 
   // Fetch notes when customer selected
-  const fetchNotes = async (customerId: string) => {
+  const fetchNotes = useCallback(async (customerId: string): Promise<void> => {
     if (!workspace?.id) return;
     setIsLoadingNotes(true);
     try {
       const res = await apiFetch(`/api/v1/customers/${customerId}/notes`, {}, workspace.id);
       if (res.ok) {
-        const data = await res.json();
-        setNotes(data.notes || []);
+        const data = await readJsonRecord(res);
+        setNotes(asCustomerNoteList(data.notes));
       }
     } catch (error) {
       console.error('Failed to fetch notes:', error);
     } finally {
       setIsLoadingNotes(false);
     }
-  };
+  }, [workspace?.id]);
 
   // Fetch orders when customer selected
-  const fetchOrders = async (customerId: string, status?: string) => {
+  const fetchOrders = useCallback(async (customerId: string, status?: string): Promise<void> => {
     if (!workspace?.id) return;
     setIsLoadingOrders(true);
     try {
       const params = new URLSearchParams({ limit: '50' });
       if (status && status !== 'all') params.set('status', status);
 
-      const res = await apiFetch(`/api/v1/customers/${customerId}/orders?${params}`, {}, workspace.id);
+      const res = await apiFetch(`/api/v1/customers/${customerId}/orders?${params.toString()}`, {}, workspace.id);
       if (res.ok) {
-        const data = await res.json();
-        setOrders(data.orders || []);
+        const data = await readJsonRecord(res);
+        setOrders(asCustomerOrderList(data.orders));
       }
     } catch (error) {
       console.error('Failed to fetch orders:', error);
     } finally {
       setIsLoadingOrders(false);
     }
-  };
+  }, [workspace?.id]);
 
   // Add note
-  const addNote = async () => {
+  const addNote = async (): Promise<void> => {
     if (!workspace?.id || !selectedCustomer || !newNote.trim()) return;
     setIsAddingNote(true);
     try {
@@ -412,8 +483,11 @@ export default function CustomersPage() {
         workspace.id
       );
       if (res.ok) {
-        const data = await res.json();
-        setNotes((prev) => [data.note, ...prev]);
+        const data = await readJsonRecord(res);
+        const note = asCustomerNote(data.note);
+        if (note) {
+          setNotes((prev) => [note, ...prev]);
+        }
         setNewNote('');
         toast.success('Nota agregada');
       } else {
@@ -428,7 +502,7 @@ export default function CustomersPage() {
   };
 
   // Delete note
-  const deleteNote = async (noteId: string) => {
+  const deleteNote = async (noteId: string): Promise<void> => {
     if (!workspace?.id || !selectedCustomer) return;
     try {
       const res = await apiFetch(
@@ -449,7 +523,7 @@ export default function CustomersPage() {
   };
 
   // Generate AI summary
-  const generateSummary = async () => {
+  const generateSummary = async (): Promise<void> => {
     if (!workspace?.id || !selectedCustomer) return;
     setIsLoadingSummary(true);
     setAiSummary(null);
@@ -460,8 +534,8 @@ export default function CustomersPage() {
         workspace.id
       );
       if (res.ok) {
-        const data = await res.json();
-        setAiSummary(data.summary);
+        const data = await readJsonRecord(res);
+        setAiSummary(readString(data, 'summary') ?? null);
         toast.success('Resumen generado');
       } else {
         toast.error('Error al generar resumen');
@@ -475,7 +549,7 @@ export default function CustomersPage() {
   };
 
   // Handle customer selection
-  const handleSelectCustomer = (customer: Customer) => {
+  const handleSelectCustomer = (customer: Customer): void => {
     setSelectedCustomer(customer);
     setActiveTab('info');
     setNotes([]);
@@ -483,21 +557,21 @@ export default function CustomersPage() {
     setAiSummary(null);
     setNewNote('');
     setOrderStatusFilter('all');
-    fetchNotes(customer.id);
-    fetchOrders(customer.id);
+    void fetchNotes(customer.id);
+    void fetchOrders(customer.id);
   };
 
   // Format currency
-  const formatCurrency = (amount: number) => {
+  const formatCurrency = (amount: number): string => {
     return `$${(amount / 100).toLocaleString('es-AR')}`;
   };
 
-  const formatPhone = (phone: string) => {
+  const formatPhone = (phone: string): string => {
     return phone.startsWith('manual-') ? 'Sin telefono' : phone;
   };
 
   // Format date
-  const formatDate = (dateString: string) => {
+  const formatDate = (dateString: string): string => {
     return new Date(dateString).toLocaleDateString('es-AR', {
       day: '2-digit',
       month: 'short',
@@ -506,7 +580,7 @@ export default function CustomersPage() {
   };
 
   // Format time ago
-  const timeAgo = (dateString: string) => {
+  const timeAgo = (dateString: string): string => {
     const date = new Date(dateString);
     const now = new Date();
     const diffMs = now.getTime() - date.getTime();
@@ -528,7 +602,7 @@ export default function CustomersPage() {
     return 'destructive';
   };
 
-  const getScoreLabel = (score: number) => {
+  const getScoreLabel = (score: number): string => {
     if (score >= 80) return 'Excelente';
     if (score >= 60) return 'Bueno';
     if (score >= 40) return 'Regular';
@@ -536,19 +610,23 @@ export default function CustomersPage() {
   };
 
   // Get order status badges
-  const resolveAcceptanceStatus = (order: CustomerOrder) => {
+  const resolveAcceptanceStatus = (order: CustomerOrder): 'awaiting_acceptance' | 'accepted' | 'cancelled' => {
     if (order.status === 'cancelled' || order.status === 'returned') return 'cancelled';
     if (order.status === 'awaiting_acceptance' || order.status === 'draft') return 'awaiting_acceptance';
     return 'accepted';
   };
 
-  const resolvePaymentStatus = (order: CustomerOrder) => {
+  const resolvePaymentStatus = (order: CustomerOrder): 'pending_payment' | 'partial_payment' | 'paid' => {
     if (order.total <= 0 || order.paidAmount >= order.total) return 'paid';
     if (order.paidAmount > 0) return 'partial_payment';
     return 'pending_payment';
   };
 
-  const getOrderStatusBadges = (order: CustomerOrder) => {
+  const getOrderStatusBadges = (order: CustomerOrder): {
+    acceptance: { label: string; className: string };
+    payment: { label: string; className: string };
+    invoice?: { label: string; className: string };
+  } => {
     const acceptanceBadges: Record<string, { label: string; className: string }> = {
       awaiting_acceptance: { label: 'Esperando aprobacion', className: 'bg-amber-500/20 text-amber-400 border-amber-500/30' },
       accepted: { label: 'Aceptado', className: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' },
@@ -574,13 +652,13 @@ export default function CustomersPage() {
     };
   };
 
-  const openOrderDetail = () => {
+  const openOrderDetail = (): void => {
     setSelectedCustomer(null);
     navigate('/orders');
   };
 
   // Delete customer
-  const deleteCustomer = async (customerId: string) => {
+  const deleteCustomer = async (customerId: string): Promise<void> => {
     if (!workspace?.id) return;
 
     setIsDeleting(true);
@@ -615,7 +693,7 @@ export default function CustomersPage() {
     }
   };
 
-  const createCustomer = async () => {
+  const createCustomer = async (): Promise<void> => {
     if (!workspace?.id || !newCustomerName.trim() || !newCustomerPhone.trim()) {
       toast.error('Nombre y telefono son obligatorios');
       return;
@@ -655,8 +733,8 @@ export default function CustomersPage() {
         setNewCustomerVatCondition('');
         toast.success('Cliente agregado');
       } else {
-        const errorData = await response.json().catch(() => null);
-        toast.error(errorData?.message || 'No se pudo crear el cliente');
+        const errorData = await readJsonRecord(response);
+        toast.error(readErrorMessage(errorData, 'No se pudo crear el cliente'));
       }
     } catch (error) {
       console.error('Failed to create customer:', error);
@@ -865,7 +943,11 @@ export default function CustomersPage() {
                 placeholder="Nombre y apellido"
                 value={newCustomerName}
                 onChange={(e) => setNewCustomerName(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && createCustomer()}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    void createCustomer();
+                  }
+                }}
                 className="h-11"
               />
             </div>
@@ -880,7 +962,11 @@ export default function CustomersPage() {
                 placeholder="+54 9 11 1234 5678"
                 value={newCustomerPhone}
                 onChange={(e) => setNewCustomerPhone(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && createCustomer()}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    void createCustomer();
+                  }
+                }}
                 className="h-11"
               />
             </div>
@@ -897,7 +983,11 @@ export default function CustomersPage() {
                   placeholder="12345678"
                   value={newCustomerDni}
                   onChange={(e) => setNewCustomerDni(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && createCustomer()}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      void createCustomer();
+                    }
+                  }}
                   className="h-11"
                 />
               </div>
@@ -913,7 +1003,11 @@ export default function CustomersPage() {
                   placeholder="email@ejemplo.com"
                   value={newCustomerEmail}
                   onChange={(e) => setNewCustomerEmail(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && createCustomer()}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      void createCustomer();
+                    }
+                  }}
                   className="h-11"
                 />
               </div>
@@ -932,7 +1026,11 @@ export default function CustomersPage() {
                     placeholder="20123456789"
                     value={newCustomerCuit}
                     onChange={(e) => setNewCustomerCuit(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && createCustomer()}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        void createCustomer();
+                      }
+                    }}
                     className="h-11"
                   />
                 </div>
@@ -942,7 +1040,11 @@ export default function CustomersPage() {
                     placeholder="Nombre legal"
                     value={newCustomerBusinessName}
                     onChange={(e) => setNewCustomerBusinessName(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && createCustomer()}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        void createCustomer();
+                      }
+                    }}
                     className="h-11"
                   />
                 </div>
@@ -954,7 +1056,11 @@ export default function CustomersPage() {
                     placeholder="Calle, número, localidad"
                     value={newCustomerFiscalAddress}
                     onChange={(e) => setNewCustomerFiscalAddress(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && createCustomer()}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        void createCustomer();
+                      }
+                    }}
                     className="h-11"
                   />
                 </div>
@@ -964,7 +1070,11 @@ export default function CustomersPage() {
                     placeholder="Consumidor final, RI, Monotributo..."
                     value={newCustomerVatCondition}
                     onChange={(e) => setNewCustomerVatCondition(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && createCustomer()}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        void createCustomer();
+                      }
+                    }}
                     className="h-11"
                   />
                 </div>
@@ -988,7 +1098,7 @@ export default function CustomersPage() {
               </Button>
               <Button
                 className="flex-1"
-                onClick={createCustomer}
+                onClick={() => { void createCustomer(); }}
                 disabled={isCreating || !newCustomerName.trim() || !newCustomerPhone.trim()}
               >
                 {isCreating ? (
@@ -1080,7 +1190,7 @@ export default function CustomersPage() {
                           <Button
                             size="sm"
                             variant="secondary"
-                            onClick={generateSummary}
+                            onClick={() => { void generateSummary(); }}
                             disabled={isLoadingSummary}
                             className="h-8"
                           >
@@ -1116,7 +1226,7 @@ export default function CustomersPage() {
                             <div className="flex items-center gap-1">
                               <button
                                 type="button"
-                                onClick={saveField}
+                                onClick={() => { void saveField(); }}
                                 disabled={isSavingField}
                                 className="p-1 rounded-md text-emerald-400 hover:bg-emerald-500/10"
                               >
@@ -1161,7 +1271,7 @@ export default function CustomersPage() {
                             <div className="flex items-center gap-1">
                               <button
                                 type="button"
-                                onClick={saveField}
+                                onClick={() => { void saveField(); }}
                                 disabled={isSavingField}
                                 className="p-1 rounded-md text-emerald-400 hover:bg-emerald-500/10"
                               >
@@ -1226,7 +1336,7 @@ export default function CustomersPage() {
                               <div className="flex items-center gap-1">
                                 <button
                                   type="button"
-                                  onClick={saveField}
+                                  onClick={() => { void saveField(); }}
                                   disabled={isSavingField}
                                   className="p-1 rounded-md text-emerald-400 hover:bg-emerald-500/10"
                                 >
@@ -1271,7 +1381,7 @@ export default function CustomersPage() {
                               <div className="flex items-center gap-1">
                                 <button
                                   type="button"
-                                  onClick={saveField}
+                                  onClick={() => { void saveField(); }}
                                   disabled={isSavingField}
                                   className="p-1 rounded-md text-emerald-400 hover:bg-emerald-500/10"
                                 >
@@ -1316,7 +1426,7 @@ export default function CustomersPage() {
                               <div className="flex items-center gap-1">
                                 <button
                                   type="button"
-                                  onClick={saveField}
+                                  onClick={() => { void saveField(); }}
                                   disabled={isSavingField}
                                   className="p-1 rounded-md text-emerald-400 hover:bg-emerald-500/10"
                                 >
@@ -1361,7 +1471,7 @@ export default function CustomersPage() {
                               <div className="flex items-center gap-1">
                                 <button
                                   type="button"
-                                  onClick={saveField}
+                                  onClick={() => { void saveField(); }}
                                   disabled={isSavingField}
                                   className="p-1 rounded-md text-emerald-400 hover:bg-emerald-500/10"
                                 >
@@ -1457,10 +1567,14 @@ export default function CustomersPage() {
                         placeholder="Agregar nota sobre el cliente..."
                         value={newNote}
                         onChange={(e) => setNewNote(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && addNote()}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && !e.shiftKey) {
+                            void addNote();
+                          }
+                        }}
                         className="flex-1"
                       />
-                      <Button onClick={addNote} disabled={isAddingNote || !newNote.trim()}>
+                      <Button onClick={() => { void addNote(); }} disabled={isAddingNote || !newNote.trim()}>
                         {isAddingNote ? (
                           <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
                         ) : (
@@ -1497,7 +1611,7 @@ export default function CustomersPage() {
                                 </div>
                               </div>
                               <button
-                                onClick={() => deleteNote(note.id)}
+                                onClick={() => { void deleteNote(note.id); }}
                                 className="p-1.5 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-red-500/10 text-red-400 transition-all"
                               >
                                 <Trash2 className="w-4 h-4" />
@@ -1518,7 +1632,7 @@ export default function CustomersPage() {
                       value={orderStatusFilter}
                       onValueChange={(value) => {
                         setOrderStatusFilter(value);
-                        fetchOrders(selectedCustomer.id, value === 'all' ? undefined : value);
+                        void fetchOrders(selectedCustomer.id, value === 'all' ? undefined : value);
                       }}
                     >
                       <SelectTrigger className="w-full">
@@ -1661,7 +1775,7 @@ export default function CustomersPage() {
                 </Button>
                 <Button
                   className="flex-1 bg-red-500 hover:bg-red-600"
-                  onClick={() => deleteCustomer(selectedCustomer.id)}
+                  onClick={() => { void deleteCustomer(selectedCustomer.id); }}
                   disabled={isDeleting}
                 >
                   {isDeleting ? (

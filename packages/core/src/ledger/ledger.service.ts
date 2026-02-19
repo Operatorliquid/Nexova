@@ -4,8 +4,8 @@
  */
 
 import type { PrismaClient, Prisma } from '@prisma/client';
+
 import type {
-  CreateLedgerEntryInput,
   LedgerEntryResult,
   CustomerBalance,
   CustomerDebtSummary,

@@ -2,24 +2,32 @@
  * Integrations Routes
  * Handles MercadoPago OAuth, connection management, and webhooks
  */
-import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { randomUUID } from 'crypto';
+import { existsSync, promises as fs } from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+import { type FastifyInstance, type FastifyRequest, type FastifyReply } from 'fastify';
 import { z } from 'zod';
+
+import { LedgerService, decrypt, ArcaInvoicePdfService } from '@nexova/core';
 import {
   MercadoPagoIntegrationService,
-  MercadoPagoWebhookHandler,
-  MercadoPagoClient,
   IntegrationServiceError,
   ArcaIntegrationService,
   ArcaIntegrationError,
   type MercadoPagoConfig,
 } from '@nexova/integrations';
-import { LedgerService, decrypt, ArcaInvoicePdfService } from '@nexova/core';
-import { randomUUID } from 'crypto';
-import { existsSync, promises as fs } from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import { recalcCustomerFinancials } from '../../utils/customer-financials.js';
+
 import { getWorkspacePlanContext } from '../../utils/commerce-plan.js';
+import { recalcCustomerFinancials } from '../../utils/customer-financials.js';
+import { RemoteFetchError, fetchRemoteBinarySafely } from '../../utils/remote-fetch-guard.js';
+import {
+  buildSignedUploadUrl,
+  resolveSignedUploadTtlSeconds,
+  sanitizeUploadCategory,
+  sanitizeUploadFilename,
+} from '../../utils/upload-access.js';
 
 // MercadoPago config from environment
 const getMercadoPagoConfig = (): MercadoPagoConfig => ({
@@ -29,7 +37,7 @@ const getMercadoPagoConfig = (): MercadoPagoConfig => ({
   sandbox: process.env.MP_SANDBOX === 'true',
 });
 
-export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
+export function integrationsRoutes(app: FastifyInstance): void {
   // Initialize services
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = path.dirname(__filename);
@@ -48,6 +56,37 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
 
   const sanitizeFilename = (name: string): string => {
     return (name || 'file').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 160);
+  };
+
+  const resolveLocalUploadPathFromPathname = (pathname: string): string | null => {
+    const normalizedPath = (pathname || '').trim().split('?')[0];
+    if (!normalizedPath) return null;
+
+    if (normalizedPath.startsWith('/uploads/')) {
+      const relative = normalizedPath.replace('/uploads/', '');
+      return path.join(UPLOAD_DIR, relative);
+    }
+
+    const signedMatch = normalizedPath.match(/^\/api\/v1\/uploads\/file\/([^/]+)\/([^/]+)$/i);
+    if (!signedMatch) return null;
+
+    const category = sanitizeUploadCategory(signedMatch[1]);
+    const filename = sanitizeUploadFilename(signedMatch[2]);
+    if (!category || !filename) return null;
+    return path.join(UPLOAD_DIR, category, filename);
+  };
+
+  const resolveLocalUploadPath = (ref: string): string | null => {
+    if (!ref) return null;
+    const direct = resolveLocalUploadPathFromPathname(ref);
+    if (direct) return direct;
+
+    try {
+      const url = new URL(ref);
+      return resolveLocalUploadPathFromPathname(url.pathname);
+    } catch {
+      return null;
+    }
   };
 
   const normalizePhone = (phone: string): string => {
@@ -91,7 +130,7 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
     const forwardedHost = request.headers['x-forwarded-host'];
     const host =
       (Array.isArray(forwardedHost) ? forwardedHost[0] : forwardedHost) ||
-      (request.headers['host'] as string | undefined);
+      (request.headers['host']);
     if (!host) return null;
 
     const forwardedProto = request.headers['x-forwarded-proto'];
@@ -197,10 +236,17 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
     return new Date(`${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}T00:00:00Z`);
   };
 
+  type PlanGuardFailure = {
+    error: 'FORBIDDEN_BY_PLAN';
+    message: string;
+  };
+
+  type PlanGuardResult = { ok: true } | { ok: false; code: number; payload: PlanGuardFailure };
+
   const assertArcaEnabled = async (
     workspaceId: string,
     userId: string
-  ): Promise<{ ok: true } | { ok: false; code: number; payload: any }> => {
+  ): Promise<PlanGuardResult> => {
     const membership = await app.prisma.membership.findFirst({
       where: {
         workspaceId,
@@ -230,7 +276,7 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
   const assertMercadoPagoEnabled = async (
     workspaceId: string,
     userId: string
-  ): Promise<{ ok: true } | { ok: false; code: number; payload: any }> => {
+  ): Promise<PlanGuardResult> => {
     const membership = await app.prisma.membership.findFirst({
       where: {
         workspaceId,
@@ -295,7 +341,17 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
     return Math.round(value * 100);
   };
 
-  const resolveMonotributoLimits = (category?: string | null, activity?: string | null) => {
+  type MonotributoLimitSnapshot = {
+    category: string;
+    activity: 'goods' | 'services';
+    monthlyLimitCents: number | null;
+    annualLimitCents: number | null;
+  };
+
+  const resolveMonotributoLimits = (
+    category?: string | null,
+    activity?: string | null
+  ): MonotributoLimitSnapshot | null => {
     if (!category) return null;
     const key = category.toUpperCase();
     const monthly = MONOTRIBUTO_MONTHLY_LIMITS[key];
@@ -387,7 +443,7 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
    * Get OAuth authorization URL to connect MercadoPago
    */
   app.get('/mercadopago/auth-url', {
-    preHandler: [app.authenticate],
+    preHandler: [app.requirePermission('connections:create')],
     handler: async (request: FastifyRequest, reply: FastifyReply) => {
       const workspaceId = request.workspaceId;
       if (!workspaceId) {
@@ -460,7 +516,7 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
    * Get MercadoPago connection status
    */
   app.get('/mercadopago/status', {
-    preHandler: [app.authenticate],
+    preHandler: [app.requirePermission('connections:read')],
     handler: async (request: FastifyRequest, reply: FastifyReply) => {
       const workspaceId = request.workspaceId;
       if (!workspaceId) {
@@ -481,7 +537,7 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
    * Disconnect MercadoPago
    */
   app.delete('/mercadopago', {
-    preHandler: [app.authenticate],
+    preHandler: [app.requirePermission('connections:delete')],
     handler: async (request: FastifyRequest, reply: FastifyReply) => {
       const workspaceId = request.workspaceId;
       if (!workspaceId) {
@@ -502,7 +558,7 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
    * Health check for MercadoPago connection
    */
   app.get('/mercadopago/health', {
-    preHandler: [app.authenticate],
+    preHandler: [app.requirePermission('connections:read')],
     handler: async (request: FastifyRequest, reply: FastifyReply) => {
       const workspaceId = request.workspaceId;
       if (!workspaceId) {
@@ -565,7 +621,7 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
    * Connect ARCA WSFEv1 using certificate + key
    */
   app.post('/arca/connect', {
-    preHandler: [app.authenticate],
+    preHandler: [app.requirePermission('connections:create')],
     handler: async (request: FastifyRequest, reply: FastifyReply) => {
       const workspaceId = request.workspaceId;
       if (!workspaceId) {
@@ -594,7 +650,7 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
    * Generate CSR + store encrypted private key
    */
   app.post('/arca/csr', {
-    preHandler: [app.authenticate],
+    preHandler: [app.requirePermission('connections:create')],
     handler: async (request: FastifyRequest, reply: FastifyReply) => {
       const workspaceId = request.workspaceId;
       if (!workspaceId) {
@@ -620,7 +676,7 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
    * GET /integrations/arca/status
    */
   app.get('/arca/status', {
-    preHandler: [app.authenticate],
+    preHandler: [app.requirePermission('connections:read')],
     handler: async (request: FastifyRequest, reply: FastifyReply) => {
       const workspaceId = request.workspaceId;
       if (!workspaceId) {
@@ -640,7 +696,7 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
    * DELETE /integrations/arca
    */
   app.delete('/arca', {
-    preHandler: [app.authenticate],
+    preHandler: [app.requirePermission('connections:delete')],
     handler: async (request: FastifyRequest, reply: FastifyReply) => {
       const workspaceId = request.workspaceId;
       if (!workspaceId) {
@@ -660,7 +716,7 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
    * GET /integrations/arca/health
    */
   app.get('/arca/health', {
-    preHandler: [app.authenticate],
+    preHandler: [app.requirePermission('connections:read')],
     handler: async (request: FastifyRequest, reply: FastifyReply) => {
       const workspaceId = request.workspaceId;
       if (!workspaceId) {
@@ -681,7 +737,7 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
    * Billing summary (month/year, inside vs outside Nexova)
    */
   app.get('/arca/summary', {
-    preHandler: [app.authenticate],
+    preHandler: [app.requirePermission('connections:read')],
     handler: async (request: FastifyRequest, reply: FastifyReply) => {
       const workspaceId = request.workspaceId;
       if (!workspaceId) {
@@ -730,7 +786,9 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
         }),
       ]);
 
-      const mapTotals = (rows: Array<{ origin: string; _sum: { total: number | null } }>) => {
+      const mapTotals = (
+        rows: Array<{ origin: string; _sum: { total: number | null } }>
+      ): { inside: number; outside: number; total: number } => {
         let inside = 0;
         let outside = 0;
         rows.forEach((row) => {
@@ -756,7 +814,10 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
         (settings.monotributoActivity as string) || null
       );
 
-      const buildLimit = (limit: number | null, used: number) => {
+      const buildLimit = (
+        limit: number | null,
+        used: number
+      ): { limit: number; used: number; remaining: number; percent: number } | null => {
         if (!limit) return null;
         const remaining = Math.max(limit - used, 0);
         const percent = limit > 0 ? Math.min(used / limit, 1) : 0;
@@ -795,7 +856,7 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
   app.get<{
     Params: { orderId: string };
   }>('/arca/invoices/by-order/:orderId', {
-    preHandler: [app.authenticate],
+    preHandler: [app.requirePermission('payments:read')],
     handler: async (request: FastifyRequest, reply: FastifyReply) => {
       const workspaceId = request.workspaceId;
       if (!workspaceId) {
@@ -844,7 +905,7 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
    * Issue WSFEv1 invoice
    */
   app.post('/arca/invoices', {
-    preHandler: [app.authenticate],
+    preHandler: [app.requirePermission('payments:create')],
     handler: async (request: FastifyRequest, reply: FastifyReply) => {
       const workspaceId = request.workspaceId;
       if (!workspaceId) {
@@ -883,7 +944,7 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
               currency: 'ARS',
               status: result.approved ? 'authorized' : 'rejected',
               requestData: normalizedBody as unknown as object,
-              responseData: result.raw as unknown as object,
+              responseData: result.raw as object,
             },
           });
 
@@ -963,7 +1024,7 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
   app.post<{
     Params: { orderId: string };
   }>('/arca/invoices/:orderId/send', {
-    preHandler: [app.authenticate],
+    preHandler: [app.requirePermission('payments:update')],
     handler: async (request: FastifyRequest, reply: FastifyReply) => {
       const workspaceId = request.workspaceId;
       if (!workspaceId) {
@@ -1094,7 +1155,12 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
         });
       }
 
-      const mediaUrl = `${publicBase}/uploads/invoices/${uniqueName}`;
+      const mediaUrl = buildSignedUploadUrl({
+        baseUrl: publicBase,
+        category: 'invoices',
+        filename: uniqueName,
+        ttlSeconds: resolveSignedUploadTtlSeconds(),
+      });
       const caption = `Te dejo la factura de tu ${order.orderNumber} gracias por tu compra!`;
 
       try {
@@ -1178,8 +1244,33 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
     handler: async (request, reply) => {
       const { workspaceId } = request.params;
       const payload = request.body;
+      const parsedPayload = payload as Record<string, unknown> | null;
+      const webhookType =
+        parsedPayload && typeof parsedPayload.type === 'string'
+          ? parsedPayload.type
+          : null;
+      const webhookAction =
+        parsedPayload && typeof parsedPayload.action === 'string'
+          ? parsedPayload.action
+          : null;
+      const dataObject =
+        parsedPayload && typeof parsedPayload.data === 'object' && parsedPayload.data !== null
+          ? (parsedPayload.data as Record<string, unknown>)
+          : null;
+      const webhookDataId =
+        dataObject && (typeof dataObject.id === 'string' || typeof dataObject.id === 'number')
+          ? String(dataObject.id)
+          : null;
 
-      request.log.info({ workspaceId, payload }, 'Received MercadoPago webhook');
+      request.log.info(
+        {
+          workspaceId,
+          webhookType,
+          webhookAction,
+          webhookDataId,
+        },
+        'Received MercadoPago webhook'
+      );
 
       try {
         const result = await mpService.processWebhook(workspaceId, payload, {
@@ -1262,7 +1353,7 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
       customerId?: string;
     };
   }>('/payments/create-link', {
-    preHandler: [app.authenticate],
+    preHandler: [app.requirePermission('payments:create')],
     schema: {
       body: {
         type: 'object',
@@ -1384,7 +1475,7 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
   app.get<{
     Querystring: { status?: string; customerId?: string; limit?: number; offset?: number };
   }>('/receipts', {
-    preHandler: [app.authenticate],
+    preHandler: [app.requirePermission('payments:read')],
     handler: async (request, reply) => {
       const workspaceId = request.workspaceId;
       if (!workspaceId) {
@@ -1424,7 +1515,7 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
   app.get<{
     Params: { id: string };
   }>('/receipts/:id/file', {
-    preHandler: [app.authenticate],
+    preHandler: [app.requirePermission('payments:read')],
     handler: async (request, reply) => {
       const workspaceId = request.workspaceId;
       if (!workspaceId) {
@@ -1447,27 +1538,10 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
       if (!fileRef) {
         return reply.status(404).send({ error: 'RECEIPT_NO_FILE', message: 'Comprobante sin archivo' });
       }
-      const resolveLocalPath = (ref: string): string | null => {
-        if (ref.startsWith('/uploads/')) {
-          const relative = ref.replace('/uploads/', '');
-          return path.join(UPLOAD_DIR, relative);
-        }
-        try {
-          const url = new URL(ref);
-          if (url.pathname.startsWith('/uploads/')) {
-            const relative = url.pathname.replace('/uploads/', '');
-            return path.join(UPLOAD_DIR, relative);
-          }
-        } catch {
-          // not a URL
-        }
-        return null;
-      };
-
-      const localPath = resolveLocalPath(fileRef);
+      const localPath = resolveLocalUploadPath(fileRef);
       if (localPath && existsSync(localPath)) {
         const buffer = await fs.readFile(localPath);
-        reply.header('Content-Type', contentType);
+        void reply.header('Content-Type', contentType);
         return reply.send(buffer);
       }
 
@@ -1483,8 +1557,33 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
 
       const whatsappNumber = await app.prisma.whatsAppNumber.findFirst({
         where: { workspaceId, isActive: true },
-        select: { apiKeyEnc: true, apiKeyIv: true, provider: true },
+        select: { apiKeyEnc: true, apiKeyIv: true, provider: true, apiUrl: true },
       });
+
+      const parseHost = (value?: string | null): string | null => {
+        const raw = (value || '').trim();
+        if (!raw) return null;
+        const candidate = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+        try {
+          return new URL(candidate).hostname.toLowerCase();
+        } catch {
+          return null;
+        }
+      };
+
+      const configuredHost = parseHost(whatsappNumber?.apiUrl);
+      const envHosts = (process.env.RECEIPT_PROXY_ALLOWED_HOSTS || '')
+        .split(',')
+        .map((entry) => parseHost(entry))
+        .filter(Boolean);
+      const allowedHosts = new Set<string>([
+        ...envHosts,
+        ...(configuredHost ? [configuredHost] : []),
+      ] as string[]);
+      const isAllowedRemoteReceiptHost = (host: string): boolean => {
+        if (host === 'infobip.com' || host.endsWith('.infobip.com')) return true;
+        return allowedHosts.has(host);
+      };
 
       const wantsInfobipAuth = shouldAttachInfobipAuth(fileRef);
       const envKey = wantsInfobipAuth ? (process.env.INFOBIP_API_KEY || '').trim() : '';
@@ -1500,19 +1599,35 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
         headers.Authorization = `App ${apiKey}`;
       }
 
-      const response = await fetch(fileRef, { headers });
-      if (!response.ok) {
-        const errorText = await response.text();
+      const allowedContentTypes = receipt.fileType === 'pdf'
+        ? ['application/pdf']
+        : ['image/*'];
+
+      try {
+        const { buffer, contentType: fetchedType } = await fetchRemoteBinarySafely({
+          url: fileRef,
+          headers,
+          isAllowedHost: isAllowedRemoteReceiptHost,
+          allowedContentTypes,
+          maxBytes: 8 * 1024 * 1024,
+          timeoutMs: 15000,
+        });
+
+        void reply.header('Content-Type', fetchedType || contentType);
+        return reply.send(buffer);
+      } catch (error) {
+        if (error instanceof RemoteFetchError) {
+          return reply.status(error.statusCode).send({
+            error: error.code,
+            message: error.message,
+          });
+        }
+        const message = error instanceof Error ? error.message : 'Receipt fetch failed';
         return reply.status(502).send({
           error: 'RECEIPT_FETCH_FAILED',
-          message: errorText || `HTTP ${response.status}`,
+          message,
         });
       }
-
-      reply.header('Content-Type', response.headers.get('content-type') || contentType);
-
-      const buffer = Buffer.from(await response.arrayBuffer());
-      return reply.send(buffer);
     },
   });
 
@@ -1523,7 +1638,7 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
   app.delete<{
     Params: { id: string };
   }>('/receipts/:id', {
-    preHandler: [app.authenticate],
+    preHandler: [app.requirePermission('payments:update')],
     handler: async (request, reply) => {
       const workspaceId = request.workspaceId;
       if (!workspaceId) {
@@ -1646,28 +1761,11 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
         await recalcCustomerFinancials(app.prisma, workspaceId, receipt.customerId);
       }
 
-      const resolveLocalPath = (ref: string): string | null => {
-        if (ref.startsWith('/uploads/')) {
-          const relative = ref.replace('/uploads/', '');
-          return path.join(UPLOAD_DIR, relative);
-        }
+      const localPath = receipt.fileRef ? resolveLocalUploadPath(receipt.fileRef) : null;
+      if (localPath && existsSync(localPath)) {
         try {
-          const url = new URL(ref);
-          if (url.pathname.startsWith('/uploads/')) {
-            const relative = url.pathname.replace('/uploads/', '');
-            return path.join(UPLOAD_DIR, relative);
-          }
+          await fs.unlink(localPath);
         } catch {
-          // not a URL
-        }
-        return null;
-      };
-
-	      const localPath = receipt.fileRef ? resolveLocalPath(receipt.fileRef) : null;
-	      if (localPath && existsSync(localPath)) {
-	        try {
-	          await fs.unlink(localPath);
-	        } catch {
           // ignore cleanup errors
         }
       }
@@ -1688,7 +1786,7 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
     Params: { id: string };
     Body: { orderId?: string; amount: number };
   }>('/receipts/:id/apply', {
-    preHandler: [app.authenticate],
+    preHandler: [app.requirePermission('payments:update')],
     schema: {
       params: {
         type: 'object',
@@ -1870,7 +1968,7 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
     Params: { id: string };
     Body: { reason?: string };
   }>('/receipts/:id/reject', {
-    preHandler: [app.authenticate],
+    preHandler: [app.requirePermission('payments:update')],
     schema: {
       params: {
         type: 'object',
@@ -1953,7 +2051,7 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
    * Get customer balance and debt summary
    */
   app.get<{ Params: { id: string } }>('/customers/:id/balance', {
-    preHandler: [app.authenticate],
+    preHandler: [app.requirePermission('payments:read')],
     handler: async (request, reply) => {
       const workspaceId = request.workspaceId;
       if (!workspaceId) {
@@ -1982,7 +2080,7 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
     Params: { id: string };
     Querystring: { limit?: number; offset?: number; type?: 'debit' | 'credit' };
   }>('/customers/:id/ledger', {
-    preHandler: [app.authenticate],
+    preHandler: [app.requirePermission('payments:read')],
     handler: async (request, reply) => {
       const workspaceId = request.workspaceId;
       if (!workspaceId) {

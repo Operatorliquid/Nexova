@@ -8,10 +8,12 @@ export interface ToolExecutionResult {
   durationMs: number;
 }
 
-const formatMoney = (amount: number) =>
+type JsonRecord = Record<string, unknown>;
+
+const formatMoney = (amount: number): string =>
   new Intl.NumberFormat('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(amount / 100);
 
-const formatDateTime = (value?: string) => {
+const formatDateTime = (value?: string): string => {
   if (!value) return '';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '';
@@ -23,16 +25,65 @@ const formatDateTime = (value?: string) => {
   }).format(date);
 };
 
-const ResultSection = ({ title, children }: { title: string; children: ReactNode }) => (
+function asRecord(value: unknown): JsonRecord | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as JsonRecord;
+}
+
+function asRecordList(value: unknown): JsonRecord[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => asRecord(entry))
+    .filter((entry): entry is JsonRecord => entry !== null);
+}
+
+function readString(record: JsonRecord | null, key: string): string | undefined {
+  const value = record?.[key];
+  return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
+}
+
+function readFirstString(record: JsonRecord | null, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = readString(record, key);
+    if (value) return value;
+  }
+  return undefined;
+}
+
+function readNumber(record: JsonRecord | null, key: string, fallback = 0): number {
+  const value = record?.[key];
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value.trim());
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+}
+
+function readCount(record: JsonRecord | null, key: string, fallback = 0): number {
+  return Math.trunc(readNumber(record, key, fallback));
+}
+
+function getDisplayName(record: JsonRecord | null, fallback = 'Cliente'): string {
+  const fullName = [readString(record, 'firstName'), readString(record, 'lastName')]
+    .filter((value): value is string => Boolean(value))
+    .join(' ')
+    .trim();
+  if (fullName) return fullName;
+  return readFirstString(record, ['phone', 'email']) ?? fallback;
+}
+
+const ResultSection = ({ title, children }: { title: string; children: ReactNode }): JSX.Element => (
   <div className="rounded-xl border border-border bg-secondary/50 p-4 space-y-3">
     <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</p>
     <div className="space-y-2.5">{children}</div>
   </div>
 );
 
-export function QuickActionToolResult({ tool }: { tool: ToolExecutionResult }) {
+export function QuickActionToolResult({ tool }: { tool: ToolExecutionResult }): JSX.Element | null {
   if (!tool.success) {
-    if (tool.data && typeof tool.data === 'object' && (tool.data as any).kind === 'ambiguous_product') {
+    const data = asRecord(tool.data);
+    if (readString(data, 'kind') === 'ambiguous_product') {
       return null;
     }
     return (
@@ -43,39 +94,55 @@ export function QuickActionToolResult({ tool }: { tool: ToolExecutionResult }) {
   }
 
   if (tool.toolName === 'list_orders' && Array.isArray(tool.data)) {
-    const orders = tool.data as Array<any>;
+    const orders = asRecordList(tool.data);
     return (
       <ResultSection title={`Pedidos (${orders.length})`}>
-        {orders.slice(0, 5).map((order) => (
-          <div key={order.id || order.orderNumber} className="flex items-center justify-between text-sm">
-            <div className="flex flex-col">
-              <span className="font-medium text-foreground">{order.orderNumber || 'Pedido'}</span>
-              <span className="text-muted-foreground">
-                {order.status || 'estado'} {order.createdAt ? `· ${formatDateTime(order.createdAt)}` : ''}
-              </span>
+        {orders.slice(0, 5).map((order, index) => {
+          const orderNumber = readString(order, 'orderNumber') ?? 'Pedido';
+          const orderStatus = readString(order, 'status') ?? 'estado';
+          const createdAt = readString(order, 'createdAt');
+          const total = readNumber(order, 'total');
+          const key = readFirstString(order, ['id', 'orderNumber']) ?? `order-${index}`;
+
+          return (
+            <div key={key} className="flex items-center justify-between text-sm">
+              <div className="flex flex-col">
+                <span className="font-medium text-foreground">{orderNumber}</span>
+                <span className="text-muted-foreground">
+                  {orderStatus} {createdAt ? `· ${formatDateTime(createdAt)}` : ''}
+                </span>
+              </div>
+              <span className="font-medium text-foreground">${formatMoney(total)}</span>
             </div>
-            <span className="font-medium text-foreground">${formatMoney(order.total || 0)}</span>
-          </div>
-        ))}
+          );
+        })}
       </ResultSection>
     );
   }
 
   if ((tool.toolName === 'search_products' || tool.toolName === 'list_products') && Array.isArray(tool.data)) {
-    const products = tool.data as Array<any>;
+    const products = asRecordList(tool.data);
     return (
       <ResultSection title={`Productos (${products.length})`}>
-        {products.slice(0, 5).map((product) => (
-          <div key={product.id || product.sku} className="flex items-center justify-between text-sm">
-            <div className="flex flex-col">
-              <span className="font-medium text-foreground">{product.displayName || product.name}</span>
-              <span className="text-muted-foreground">
-                Stock: {product.stock ?? 0} · SKU: {product.sku || '-'}
-              </span>
+        {products.slice(0, 5).map((product, index) => {
+          const key = readFirstString(product, ['id', 'sku']) ?? `product-${index}`;
+          const name = readFirstString(product, ['displayName', 'name']) ?? 'Producto';
+          const stock = readCount(product, 'stock');
+          const sku = readString(product, 'sku') ?? '-';
+          const price = readNumber(product, 'price');
+
+          return (
+            <div key={key} className="flex items-center justify-between text-sm">
+              <div className="flex flex-col">
+                <span className="font-medium text-foreground">{name}</span>
+                <span className="text-muted-foreground">
+                  Stock: {stock} · SKU: {sku}
+                </span>
+              </div>
+              <span className="font-medium text-foreground">${formatMoney(price)}</span>
             </div>
-            <span className="font-medium text-foreground">${formatMoney(product.price || 0)}</span>
-          </div>
-        ))}
+          );
+        })}
       </ResultSection>
     );
   }
@@ -86,107 +153,118 @@ export function QuickActionToolResult({ tool }: { tool: ToolExecutionResult }) {
       tool.toolName === 'list_debtors') &&
     Array.isArray(tool.data)
   ) {
-    const customers = tool.data as Array<any>;
+    const customers = asRecordList(tool.data);
     return (
       <ResultSection title={`Clientes (${customers.length})`}>
-        {customers.slice(0, 5).map((customer) => (
-          <div key={customer.id || customer.phone} className="flex items-center justify-between text-sm">
-            <div className="flex flex-col">
-              <span className="font-medium text-foreground">
-                {[customer.firstName, customer.lastName].filter(Boolean).join(' ') || 'Cliente'}
-              </span>
-              <span className="text-muted-foreground">{customer.phone || customer.email || ''}</span>
+        {customers.slice(0, 5).map((customer, index) => {
+          const key = readFirstString(customer, ['id', 'phone']) ?? `customer-${index}`;
+          const contact = readFirstString(customer, ['phone', 'email']) ?? '';
+          const balance = readNumber(customer, 'currentBalance');
+
+          return (
+            <div key={key} className="flex items-center justify-between text-sm">
+              <div className="flex flex-col">
+                <span className="font-medium text-foreground">{getDisplayName(customer)}</span>
+                <span className="text-muted-foreground">{contact}</span>
+              </div>
+              <span className="text-muted-foreground">${formatMoney(balance)}</span>
             </div>
-            <span className="text-muted-foreground">${formatMoney(customer.currentBalance || 0)}</span>
-          </div>
-        ))}
+          );
+        })}
       </ResultSection>
     );
   }
 
   if (tool.toolName === 'get_unpaid_orders' && tool.data && typeof tool.data === 'object') {
-    const data = tool.data as any;
-    const orders = Array.isArray(data.orders) ? data.orders : [];
+    const data = asRecord(tool.data);
+    const orders = asRecordList(data?.orders);
+    const totalPending = readNumber(data, 'totalPending');
+
     return (
       <ResultSection title="Pedidos impagos">
         <div className="flex items-center justify-between text-sm">
           <span className="text-muted-foreground">Total pendiente</span>
-          <span className="font-medium text-foreground">${formatMoney(data.totalPending || 0)}</span>
+          <span className="font-medium text-foreground">${formatMoney(totalPending)}</span>
         </div>
-        {orders.slice(0, 4).map((order: any) => (
-          <div key={order.id || order.orderNumber} className="flex items-center justify-between text-sm">
-            <span className="text-foreground">{order.orderNumber}</span>
-            <span className="text-muted-foreground">${formatMoney(order.pendingAmount || 0)}</span>
-          </div>
-        ))}
+        {orders.slice(0, 4).map((order, index) => {
+          const key = readFirstString(order, ['id', 'orderNumber']) ?? `unpaid-order-${index}`;
+          const orderNumber = readString(order, 'orderNumber') ?? 'Pedido';
+          const pendingAmount = readNumber(order, 'pendingAmount');
+
+          return (
+            <div key={key} className="flex items-center justify-between text-sm">
+              <span className="text-foreground">{orderNumber}</span>
+              <span className="text-muted-foreground">${formatMoney(pendingAmount)}</span>
+            </div>
+          );
+        })}
       </ResultSection>
     );
   }
 
   if (tool.toolName === 'get_customer_balance' && tool.data && typeof tool.data === 'object') {
-    const data = tool.data as any;
+    const data = asRecord(tool.data);
     return (
       <ResultSection title="Saldo del cliente">
         <div className="flex items-center justify-between text-sm">
-          <span className="text-muted-foreground">
-            {[data.firstName, data.lastName].filter(Boolean).join(' ') || data.phone || 'Cliente'}
-          </span>
-          <span className="font-medium text-foreground">${formatMoney(data.currentBalance || 0)}</span>
+          <span className="text-muted-foreground">{getDisplayName(data)}</span>
+          <span className="font-medium text-foreground">${formatMoney(readNumber(data, 'currentBalance'))}</span>
         </div>
       </ResultSection>
     );
   }
 
   if (tool.toolName === 'send_debt_reminder' && tool.data && typeof tool.data === 'object') {
-    const data = tool.data as any;
-    const customer = data.customer || {};
+    const data = asRecord(tool.data);
+    const customer = asRecord(data?.customer);
+
     return (
       <ResultSection title="Recordatorio de deuda">
         <div className="flex items-center justify-between text-sm">
-          <span className="text-muted-foreground">
-            {[customer.firstName, customer.lastName].filter(Boolean).join(' ') || customer.phone || 'Cliente'}
-          </span>
-          <span className="font-medium text-foreground">${formatMoney(data.totalDebt || 0)}</span>
+          <span className="text-muted-foreground">{getDisplayName(customer)}</span>
+          <span className="font-medium text-foreground">${formatMoney(readNumber(data, 'totalDebt'))}</span>
         </div>
         <div className="flex items-center justify-between text-sm">
           <span className="text-muted-foreground">Pedidos pendientes</span>
-          <span className="text-foreground">{data.ordersCount || 0}</span>
+          <span className="text-foreground">{readCount(data, 'ordersCount')}</span>
         </div>
       </ResultSection>
     );
   }
 
   if (tool.toolName === 'send_debt_reminders_bulk' && tool.data && typeof tool.data === 'object') {
-    const data = tool.data as any;
+    const data = asRecord(tool.data);
     return (
       <ResultSection title="Recordatorios masivos">
         <div className="flex items-center justify-between text-sm">
           <span className="text-muted-foreground">Enviados</span>
-          <span className="font-medium text-foreground">{data.sent || 0}</span>
+          <span className="font-medium text-foreground">{readCount(data, 'sent')}</span>
         </div>
         <div className="flex items-center justify-between text-sm">
           <span className="text-muted-foreground">Fallidos</span>
-          <span className="text-foreground">{data.failed || 0}</span>
+          <span className="text-foreground">{readCount(data, 'failed')}</span>
         </div>
         <div className="flex items-center justify-between text-sm">
           <span className="text-muted-foreground">Total deudores</span>
-          <span className="text-foreground">{data.total || 0}</span>
+          <span className="text-foreground">{readCount(data, 'total')}</span>
         </div>
       </ResultSection>
     );
   }
 
   if (tool.toolName === 'get_order_details' && tool.data && typeof tool.data === 'object') {
-    const order = tool.data as any;
+    const order = asRecord(tool.data);
+    const orderNumber = readString(order, 'orderNumber') ?? '';
+
     return (
-      <ResultSection title={`Pedido ${order.orderNumber || ''}`}>
+      <ResultSection title={`Pedido ${orderNumber}`}>
         <div className="flex items-center justify-between text-sm">
           <span className="text-muted-foreground">Estado</span>
-          <span className="text-foreground">{order.status || '-'}</span>
+          <span className="text-foreground">{readString(order, 'status') ?? '-'}</span>
         </div>
         <div className="flex items-center justify-between text-sm">
           <span className="text-muted-foreground">Total</span>
-          <span className="font-medium text-foreground">${formatMoney(order.total || 0)}</span>
+          <span className="font-medium text-foreground">${formatMoney(readNumber(order, 'total'))}</span>
         </div>
       </ResultSection>
     );
@@ -197,28 +275,31 @@ export function QuickActionToolResult({ tool }: { tool: ToolExecutionResult }) {
     tool.data &&
     typeof tool.data === 'object'
   ) {
-    const data = tool.data as any;
-    const summary = data.summary || {};
-    const topCustomer = Array.isArray(data.topCustomers) ? data.topCustomers[0] : null;
-    const topProduct = Array.isArray(data.topProducts) ? data.topProducts[0] : null;
+    const data = asRecord(tool.data);
+    const summary = asRecord(data?.summary);
+    const topCustomer = asRecordList(data?.topCustomers)[0] ?? null;
+    const topProduct = asRecordList(data?.topProducts)[0] ?? null;
+    const range = asRecord(data?.range);
+    const rangeLabel = readString(range, 'label');
+
     return (
-      <ResultSection title={`Ventas${data.range?.label ? ` · ${data.range.label}` : ''}`}>
+      <ResultSection title={`Ventas${rangeLabel ? ` · ${rangeLabel}` : ''}`}>
         <div className="grid grid-cols-2 gap-2 text-sm">
           <div className="rounded-lg bg-secondary/60 p-2">
             <p className="text-muted-foreground">Total</p>
-            <p className="font-semibold text-foreground">${formatMoney(summary.totalRevenue || 0)}</p>
+            <p className="font-semibold text-foreground">${formatMoney(readNumber(summary, 'totalRevenue'))}</p>
           </div>
           <div className="rounded-lg bg-secondary/60 p-2">
             <p className="text-muted-foreground">Pedidos</p>
-            <p className="font-semibold text-foreground">{summary.totalOrders || 0}</p>
+            <p className="font-semibold text-foreground">{readCount(summary, 'totalOrders')}</p>
           </div>
           <div className="rounded-lg bg-secondary/60 p-2">
             <p className="text-muted-foreground">Ticket prom.</p>
-            <p className="font-semibold text-foreground">${formatMoney(summary.avgOrderValue || 0)}</p>
+            <p className="font-semibold text-foreground">${formatMoney(readNumber(summary, 'avgOrderValue'))}</p>
           </div>
           <div className="rounded-lg bg-secondary/60 p-2">
             <p className="text-muted-foreground">Pendiente</p>
-            <p className="font-semibold text-foreground">${formatMoney(summary.pendingRevenue || 0)}</p>
+            <p className="font-semibold text-foreground">${formatMoney(readNumber(summary, 'pendingRevenue'))}</p>
           </div>
         </div>
         {(topCustomer || topProduct) && (
@@ -226,13 +307,13 @@ export function QuickActionToolResult({ tool }: { tool: ToolExecutionResult }) {
             {topCustomer && (
               <div className="flex items-center justify-between">
                 <span className="text-muted-foreground">Cliente top</span>
-                <span className="text-foreground">{topCustomer.name}</span>
+                <span className="text-foreground">{readString(topCustomer, 'name') ?? 'Cliente'}</span>
               </div>
             )}
             {topProduct && (
               <div className="flex items-center justify-between">
                 <span className="text-muted-foreground">Producto top</span>
-                <span className="text-foreground">{topProduct.name}</span>
+                <span className="text-foreground">{readString(topProduct, 'name') ?? 'Producto'}</span>
               </div>
             )}
           </div>
@@ -242,115 +323,155 @@ export function QuickActionToolResult({ tool }: { tool: ToolExecutionResult }) {
   }
 
   if (tool.toolName === 'get_low_stock_products' && tool.data && typeof tool.data === 'object') {
-    const data = tool.data as any;
-    const products = Array.isArray(data.products) ? data.products : [];
+    const data = asRecord(tool.data);
+    const products = asRecordList(data?.products);
+    const totalLowStock = readCount(data, 'totalLowStock', products.length);
+
     return (
-      <ResultSection title={`Stock bajo (${data.totalLowStock || products.length || 0})`}>
-        {products.slice(0, 5).map((product: any) => (
-          <div key={product.id || product.sku} className="flex items-center justify-between text-sm">
-            <span className="text-foreground">{product.displayName || product.name}</span>
-            <span className="text-muted-foreground">{product.available ?? 0} uds</span>
-          </div>
-        ))}
+      <ResultSection title={`Stock bajo (${totalLowStock})`}>
+        {products.slice(0, 5).map((product, index) => {
+          const key = readFirstString(product, ['id', 'sku']) ?? `low-stock-${index}`;
+          const name = readFirstString(product, ['displayName', 'name']) ?? 'Producto';
+          const available = readCount(product, 'available');
+
+          return (
+            <div key={key} className="flex items-center justify-between text-sm">
+              <span className="text-foreground">{name}</span>
+              <span className="text-muted-foreground">{available} uds</span>
+            </div>
+          );
+        })}
       </ResultSection>
     );
   }
 
   if (tool.toolName === 'list_categories' && Array.isArray(tool.data)) {
-    const categories = tool.data as Array<any>;
+    const categories = asRecordList(tool.data);
     return (
       <ResultSection title={`Categorías (${categories.length})`}>
-        {categories.slice(0, 5).map((category) => (
-          <div key={category.id || category.name} className="flex items-center justify-between text-sm">
-            <span className="text-foreground">{category.name}</span>
-            <span className="text-muted-foreground">{category.productCount || 0} prod.</span>
-          </div>
-        ))}
+        {categories.slice(0, 5).map((category, index) => {
+          const key = readFirstString(category, ['id', 'name']) ?? `category-${index}`;
+          const name = readString(category, 'name') ?? 'Categoría';
+          const productCount = readCount(category, 'productCount');
+
+          return (
+            <div key={key} className="flex items-center justify-between text-sm">
+              <span className="text-foreground">{name}</span>
+              <span className="text-muted-foreground">{productCount} prod.</span>
+            </div>
+          );
+        })}
       </ResultSection>
     );
   }
 
   if (tool.toolName === 'get_product_details' && tool.data && typeof tool.data === 'object') {
-    const product = tool.data as any;
+    const product = asRecord(tool.data);
+
     return (
       <ResultSection title="Detalle de producto">
         <div className="flex items-center justify-between text-sm">
           <span className="text-muted-foreground">Nombre</span>
-          <span className="text-foreground">{product.displayName || product.name}</span>
+          <span className="text-foreground">{readFirstString(product, ['displayName', 'name']) ?? 'Producto'}</span>
         </div>
         <div className="flex items-center justify-between text-sm">
           <span className="text-muted-foreground">Precio</span>
-          <span className="text-foreground">${formatMoney(product.price || 0)}</span>
+          <span className="text-foreground">${formatMoney(readNumber(product, 'price'))}</span>
         </div>
         <div className="flex items-center justify-between text-sm">
           <span className="text-muted-foreground">Stock</span>
-          <span className="text-foreground">{product.stock ?? 0}</span>
+          <span className="text-foreground">{readCount(product, 'stock')}</span>
         </div>
       </ResultSection>
     );
   }
 
   if (tool.toolName === 'list_conversations' && Array.isArray(tool.data)) {
-    const conversations = tool.data as Array<any>;
+    const conversations = asRecordList(tool.data);
     return (
       <ResultSection title={`Conversaciones (${conversations.length})`}>
-        {conversations.slice(0, 5).map((conversation) => (
-          <div key={conversation.id} className="flex flex-col text-sm">
-            <span className="font-medium text-foreground">{conversation.customerName || 'Cliente'}</span>
-            <span className="text-muted-foreground line-clamp-1">{conversation.lastMessage || 'Sin mensajes'}</span>
-          </div>
-        ))}
+        {conversations.slice(0, 5).map((conversation, index) => {
+          const key = readFirstString(conversation, ['id']) ?? `conversation-${index}`;
+          const customerName = readString(conversation, 'customerName') ?? 'Cliente';
+          const lastMessage = readString(conversation, 'lastMessage') ?? 'Sin mensajes';
+
+          return (
+            <div key={key} className="flex flex-col text-sm">
+              <span className="font-medium text-foreground">{customerName}</span>
+              <span className="text-muted-foreground line-clamp-1">{lastMessage}</span>
+            </div>
+          );
+        })}
       </ResultSection>
     );
   }
 
   if (tool.toolName === 'get_conversation_messages' && tool.data && typeof tool.data === 'object') {
-    const data = tool.data as any;
-    const messages = Array.isArray(data.messages) ? data.messages : [];
+    const data = asRecord(tool.data);
+    const messages = asRecordList(data?.messages);
+
     return (
       <ResultSection title={`Mensajes (${messages.length})`}>
-        {messages.slice(-5).map((message: any) => (
-          <div key={message.id} className="text-sm text-muted-foreground">
-            <span className="font-medium text-foreground/80">{message.role}:</span> {message.content}
-          </div>
-        ))}
+        {messages.slice(-5).map((message, index) => {
+          const key = readFirstString(message, ['id']) ?? `message-${index}`;
+          const role = readString(message, 'role') ?? 'usuario';
+          const content = readString(message, 'content') ?? '';
+
+          return (
+            <div key={key} className="text-sm text-muted-foreground">
+              <span className="font-medium text-foreground/80">{role}:</span> {content}
+            </div>
+          );
+        })}
       </ResultSection>
     );
   }
 
   if (tool.toolName === 'list_notifications' && Array.isArray(tool.data)) {
-    const notifications = tool.data as Array<any>;
+    const notifications = asRecordList(tool.data);
     return (
       <ResultSection title={`Notificaciones (${notifications.length})`}>
-        {notifications.slice(0, 5).map((notification) => (
-          <div key={notification.id} className="flex flex-col text-sm">
-            <span className="font-medium text-foreground">{notification.title || 'Notificación'}</span>
-            <span className="text-muted-foreground line-clamp-1">{notification.message || ''}</span>
-          </div>
-        ))}
+        {notifications.slice(0, 5).map((notification, index) => {
+          const key = readFirstString(notification, ['id']) ?? `notification-${index}`;
+          const title = readString(notification, 'title') ?? 'Notificación';
+          const message = readString(notification, 'message') ?? '';
+
+          return (
+            <div key={key} className="flex flex-col text-sm">
+              <span className="font-medium text-foreground">{title}</span>
+              <span className="text-muted-foreground line-clamp-1">{message}</span>
+            </div>
+          );
+        })}
       </ResultSection>
     );
   }
 
   if (tool.toolName === 'get_business_insights' && tool.data && typeof tool.data === 'object') {
-    const data = tool.data as any;
-    const insights = data.insights || {};
+    const data = asRecord(tool.data);
+    const insights = asRecord(data?.insights);
+    const actions = asRecordList(insights?.actions);
+
     return (
       <ResultSection title="Insights del negocio">
-        {insights.headline && (
-          <p className="text-sm font-medium text-foreground">{insights.headline}</p>
+        {readString(insights, 'headline') && (
+          <p className="text-sm font-medium text-foreground">{readString(insights, 'headline')}</p>
         )}
-        {insights.summary && (
-          <p className="text-sm text-muted-foreground">{insights.summary}</p>
+        {readString(insights, 'summary') && (
+          <p className="text-sm text-muted-foreground">{readString(insights, 'summary')}</p>
         )}
-        {Array.isArray(insights.actions) && insights.actions.length > 0 && (
+        {actions.length > 0 && (
           <div className="space-y-1 text-sm">
-            {insights.actions.slice(0, 3).map((action: any, idx: number) => (
-              <div key={`${action.title}-${idx}`} className="rounded-lg bg-secondary/60 p-2">
-                <p className="font-medium text-foreground">{action.title}</p>
-                <p className="text-muted-foreground">{action.detail}</p>
-              </div>
-            ))}
+            {actions.slice(0, 3).map((action, index) => {
+              const title = readString(action, 'title') ?? `Acción ${index + 1}`;
+              const detail = readString(action, 'detail') ?? '';
+              return (
+                <div key={`${title}-${index}`} className="rounded-lg bg-secondary/60 p-2">
+                  <p className="font-medium text-foreground">{title}</p>
+                  <p className="text-muted-foreground">{detail}</p>
+                </div>
+              );
+            })}
           </div>
         )}
       </ResultSection>
@@ -358,16 +479,18 @@ export function QuickActionToolResult({ tool }: { tool: ToolExecutionResult }) {
   }
 
   if (tool.toolName === 'generate_catalog_pdf' && tool.data && typeof tool.data === 'object') {
-    const data = tool.data as any;
+    const data = asRecord(tool.data);
+    const url = readString(data, 'url');
+
     return (
       <ResultSection title="Catálogo">
         <div className="flex items-center justify-between text-sm">
           <span className="text-muted-foreground">Productos</span>
-          <span className="text-foreground">{data.productCount || 0}</span>
+          <span className="text-foreground">{readCount(data, 'productCount')}</span>
         </div>
-        {data.url && (
+        {url && (
           <button
-            onClick={() => window.open(data.url, '_blank')}
+            onClick={() => window.open(url, '_blank')}
             className="w-full h-9 rounded-xl bg-secondary hover:bg-secondary/80 text-sm text-foreground border border-border transition-all"
           >
             Descargar catálogo

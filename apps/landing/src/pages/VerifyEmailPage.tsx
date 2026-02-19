@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+
 import { apiFetch, readErrorMessage } from '../lib/api';
 
 type VerifyResponse = {
@@ -14,10 +15,10 @@ type IntentStatusResponse = {
   };
 };
 
-const isVerifiedStatus = (status?: string) =>
+const isVerifiedStatus = (status?: string): boolean =>
   status === 'verified' || status === 'checkout_created' || status === 'completed';
 
-export default function VerifyEmailPage() {
+export default function VerifyEmailPage(): JSX.Element {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
@@ -43,7 +44,7 @@ export default function VerifyEmailPage() {
   const autoAttemptedRef = useRef(false);
   const navigatingRef = useRef(false);
 
-  const notifyVerified = () => {
+  const notifyVerified = (): void => {
     if (!flowToken) return;
     try {
       localStorage.setItem(syncKey, String(Date.now()));
@@ -51,21 +52,22 @@ export default function VerifyEmailPage() {
       // noop
     }
     try {
-      if (window.opener) {
-        window.opener.postMessage({ type: 'nexova.billing.emailVerified', flowToken }, '*');
+      const opener = window.opener as Window | null;
+      if (opener) {
+        opener.postMessage({ type: 'nexova.billing.emailVerified', flowToken }, '*');
       }
     } catch {
       // noop
     }
   };
 
-  const goToCheckout = () => {
+  const goToCheckout = (): void => {
     if (!flowToken || navigatingRef.current) return;
     navigatingRef.current = true;
     navigate(`/checkout/continue?flowToken=${encodeURIComponent(flowToken)}`, { replace: true });
   };
 
-  const verifyToken = async (tokenToVerify: string) => {
+  const verifyToken = async (tokenToVerify: string): Promise<void> => {
     if (!flowToken) {
       setIsVerifying(false);
       setError('Falta flowToken para verificar la cuenta.');
@@ -108,7 +110,7 @@ export default function VerifyEmailPage() {
 
   const canContinue = success && Boolean(flowToken) && !isVerifying && !isPolling;
 
-  const onContinue = () => {
+  const onContinue = (): void => {
     if (!flowToken) return;
     if (canContinue) {
       goToCheckout();
@@ -121,7 +123,7 @@ export default function VerifyEmailPage() {
     }
   };
 
-  const pollIntent = async () => {
+  const pollIntent = async (): Promise<void> => {
     if (!flowToken || hasToken || navigatingRef.current) return;
     try {
       const response = await apiFetch(`/api/v1/billing/intents/${encodeURIComponent(flowToken)}`);
@@ -158,7 +160,7 @@ export default function VerifyEmailPage() {
 
   useEffect(() => {
     if (!syncKey || hasToken) return;
-    const onStorage = (event: StorageEvent) => {
+    const onStorage = (event: StorageEvent): void => {
       if (event.key !== syncKey || !event.newValue) return;
       setSuccess(true);
       setError('');

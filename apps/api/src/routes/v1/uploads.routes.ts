@@ -2,12 +2,24 @@
  * Uploads Routes
  * Handles file uploads for products, etc.
  */
-import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { randomUUID } from 'crypto';
-import { createWriteStream, existsSync, mkdirSync } from 'fs';
-import { pipeline } from 'stream/promises';
+import { createWriteStream, existsSync, mkdirSync, promises as fs } from 'fs';
 import path from 'path';
+import { pipeline } from 'stream/promises';
 import { fileURLToPath } from 'url';
+
+import { type FastifyInstance, type FastifyRequest, type FastifyReply } from 'fastify';
+
+import {
+  DOWNLOADABLE_UPLOAD_CATEGORIES,
+  buildSignedUploadPath,
+  buildSignedUploadUrl,
+  extractWorkspaceIdFromFilename,
+  resolveSignedUploadTtlSeconds,
+  sanitizeUploadCategory,
+  sanitizeUploadFilename,
+  verifySignedUploadAccess,
+} from '../../utils/upload-access.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -16,6 +28,58 @@ const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
 const INTERNAL_MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const INTERNAL_ALLOWED_CATEGORIES = new Set(['catalogs', 'orders', 'invoices', 'stock-receipts']);
+const WORKSPACE_SCOPED_CATEGORIES = new Set([
+  'catalogs',
+  'orders',
+  'invoices',
+  'receipts',
+  'stock-receipts',
+  'whatsapp-media',
+  'products',
+]);
+
+function inferContentType(filename: string): string {
+  const ext = path.extname(filename).toLowerCase();
+  if (ext === '.pdf') return 'application/pdf';
+  if (ext === '.png') return 'image/png';
+  if (ext === '.webp') return 'image/webp';
+  if (ext === '.gif') return 'image/gif';
+  if (ext === '.svg') return 'image/svg+xml';
+  if (ext === '.txt') return 'text/plain; charset=utf-8';
+  if (ext === '.json') return 'application/json';
+  return 'image/jpeg';
+}
+
+function requiredPermissionForCategory(category: string): string {
+  switch (category) {
+    case 'products':
+      return 'products:read';
+    case 'catalogs':
+      return 'products:read';
+    case 'orders':
+      return 'orders:read';
+    case 'invoices':
+    case 'receipts':
+      return 'payments:read';
+    case 'stock-receipts':
+      return 'stock:read';
+    case 'whatsapp-media':
+      return 'orders:read';
+    default:
+      return 'products:read';
+  }
+}
+
+function hasPermission(permissions: string[] | undefined, permission: string): boolean {
+  const granted = permissions || [];
+  return granted.some((p) => {
+    if (p === '*') return true;
+    if (p === permission) return true;
+    const [resource] = permission.split(':');
+    const [grantedResource, grantedAction] = p.split(':');
+    return resource === grantedResource && grantedAction === '*';
+  });
+}
 
 function getMultipartFieldValue(field: unknown): string {
   if (!field) return '';
@@ -28,12 +92,78 @@ function getMultipartFieldValue(field: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-export async function uploadsRoutes(app: FastifyInstance): Promise<void> {
+function readHeaderValue(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) {
+    const values = value as unknown[];
+    const first = values[0];
+    return typeof first === 'string' ? first : '';
+  }
+  return '';
+}
+
+export function uploadsRoutes(app: FastifyInstance): void {
   // Ensure upload directories exist
   const productsDir = path.join(UPLOAD_DIR, 'products');
   if (!existsSync(productsDir)) {
     mkdirSync(productsDir, { recursive: true });
   }
+
+  /**
+   * GET /uploads/file/:category/:filename
+   * Serve uploads via signed URL or authenticated workspace access.
+   */
+  app.get<{
+    Params: { category: string; filename: string };
+    Querystring: { exp?: string; sig?: string };
+  }>('/file/:category/:filename', {
+    handler: async (request, reply) => {
+      const category = sanitizeUploadCategory(request.params.category);
+      const filename = sanitizeUploadFilename(request.params.filename);
+
+      if (!category || !filename || !DOWNLOADABLE_UPLOAD_CATEGORIES.has(category)) {
+        return reply.status(400).send({ error: 'INVALID_FILE_REFERENCE' });
+      }
+
+      const hasValidSignature = verifySignedUploadAccess({
+        category,
+        filename,
+        exp: request.query.exp,
+        sig: request.query.sig,
+      });
+
+      if (!hasValidSignature) {
+        const requiredPermission = requiredPermissionForCategory(category);
+        const guard = app.requirePermission(requiredPermission);
+        await guard(request, reply);
+        if (reply.sent) return;
+
+        const scopeByWorkspace = WORKSPACE_SCOPED_CATEGORIES.has(category) && !request.user?.isSuperAdmin;
+        if (scopeByWorkspace) {
+          const ownerWorkspaceId = extractWorkspaceIdFromFilename(filename);
+          if (!ownerWorkspaceId || !request.workspaceId || ownerWorkspaceId !== request.workspaceId.toLowerCase()) {
+            return reply.status(403).send({ error: 'FORBIDDEN', message: 'File does not belong to workspace' });
+          }
+        }
+      }
+
+      const filePath = path.join(UPLOAD_DIR, category, filename);
+      if (!existsSync(filePath)) {
+        return reply.status(404).send({ error: 'FILE_NOT_FOUND' });
+      }
+
+      const stat = await fs.stat(filePath);
+      if (!stat.isFile()) {
+        return reply.status(404).send({ error: 'FILE_NOT_FOUND' });
+      }
+
+      const buffer = await fs.readFile(filePath);
+      void reply.header('Content-Type', inferContentType(filename));
+      void reply.header('Content-Length', String(buffer.length));
+      void reply.header('Cache-Control', hasValidSignature ? 'private, max-age=300' : 'private, no-store');
+      return reply.send(buffer);
+    },
+  });
 
   /**
    * POST /uploads/product-image
@@ -45,6 +175,18 @@ export async function uploadsRoutes(app: FastifyInstance): Promise<void> {
       const workspaceId = request.workspaceId;
       if (!workspaceId) {
         return reply.status(400).send({ error: 'Workspace required' });
+      }
+
+      if (!request.user?.isSuperAdmin) {
+        const permissions = (request as FastifyRequest & { permissions?: string[] }).permissions;
+        const canCreateProduct = hasPermission(permissions, 'products:create');
+        const canUpdateProduct = hasPermission(permissions, 'products:update');
+        if (!canCreateProduct && !canUpdateProduct) {
+          return reply.status(403).send({
+            error: 'FORBIDDEN',
+            message: "Se requiere el permiso 'products:create' o 'products:update'",
+          });
+        }
       }
 
       try {
@@ -141,17 +283,28 @@ export async function uploadsRoutes(app: FastifyInstance): Promise<void> {
 
         await pipeline(data.file, createWriteStream(filepath));
 
-        const host = request.headers['x-forwarded-host'] || request.headers.host || '';
+        const forwardedHost = readHeaderValue(request.headers['x-forwarded-host']);
+        const host = forwardedHost || readHeaderValue(request.headers.host);
         const proto = String(request.headers['x-forwarded-proto'] || request.protocol || 'https');
         const configuredBase =
           (process.env.PUBLIC_BASE_URL || process.env.API_PUBLIC_URL || process.env.API_BASE_URL || '').trim();
         const publicBase = configuredBase || `${proto}://${host}`;
 
-        const relativeUrl = `/uploads/${category}/${filename}`;
+        const ttlSeconds = resolveSignedUploadTtlSeconds();
+        const relativeUrl = buildSignedUploadPath({ category, filename, ttlSeconds });
+        const signedUrl = buildSignedUploadUrl({
+          baseUrl: publicBase.replace(/\/$/, ''),
+          category,
+          filename,
+          ttlSeconds,
+        });
+
         return reply.send({
           success: true,
-          url: `${publicBase.replace(/\/$/, '')}${relativeUrl}`,
+          url: signedUrl,
           relativeUrl,
+          localRef: `/uploads/${category}/${filename}`,
+          expiresInSeconds: ttlSeconds,
           filename,
         });
       } catch (err: unknown) {

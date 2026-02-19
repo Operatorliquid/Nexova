@@ -2,26 +2,37 @@
  * Debt Reminder Job
  * Sends WhatsApp reminders to customers with overdue payments
  */
-import { Job, Queue } from 'bullmq';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { type PrismaClient, type Prisma } from '@prisma/client';
+import { type Job, type Queue } from 'bullmq';
+
+import { DEFAULT_DEBT_SETTINGS, LedgerService, logger } from '@nexova/core';
 import {
   COMMERCE_USAGE_METRICS,
   DEFAULT_COMMERCE_PLAN_LIMITS,
-  DebtReminderPayload,
+  type DebtReminderPayload,
   getCommercePlanCapabilities,
-  MessageSendPayload,
+  type MessageSendPayload,
   QUEUES,
   resolveCommercePlan,
   type CommercePlan,
   type CommercePlanLimitConfig,
 } from '@nexova/shared';
-import { LedgerService, DEFAULT_DEBT_SETTINGS } from '@nexova/core';
 
 interface DebtReminderResult {
   workspaceId: string;
   processedCustomers: number;
   remindersSent: number;
   errors: string[];
+}
+
+interface EligibleCustomer {
+  id: string;
+  phone: string;
+  firstName: string | null;
+  lastName: string | null;
+  currentBalance: number;
+  debtReminderCount: number;
+  lastDebtReminderAt: Date | null;
 }
 
 function asObject(value: unknown): Record<string, unknown> {
@@ -81,7 +92,7 @@ async function getMonthlyUsage(prisma: PrismaClient, params: { workspaceId: stri
     },
     _sum: { quantity: true },
   });
-  return (agg._sum.quantity ?? 0n) as bigint;
+  return (agg._sum.quantity ?? 0n);
 }
 
 async function recordMonthlyUsage(
@@ -170,7 +181,7 @@ export class DebtReminderJob {
       return this.processAllWorkspaces(job);
     }
 
-    console.log(`[DebtReminder] Processing workspace ${workspaceId}`);
+    logger.info(`[DebtReminder] Processing workspace ${workspaceId}`);
 
     const result: DebtReminderResult = {
       workspaceId,
@@ -204,7 +215,7 @@ export class DebtReminderJob {
       });
       const capabilities = getCommercePlanCapabilities(plan);
       if (!capabilities.showDebtsModule) {
-        console.log(`[DebtReminder] Plan ${plan} does not include debts module. Skipping.`);
+        logger.info(`[DebtReminder] Plan ${plan} does not include debts module. Skipping.`);
         return result;
       }
 
@@ -218,7 +229,7 @@ export class DebtReminderJob {
         });
         remainingQuota = Math.max(0, monthlyLimit - Number(used));
         if (remainingQuota <= 0) {
-          console.log(`[DebtReminder] Monthly quota reached (${monthlyLimit}). Skipping.`);
+          logger.info(`[DebtReminder] Monthly quota reached (${monthlyLimit}). Skipping.`);
           return result;
         }
       }
@@ -229,15 +240,15 @@ export class DebtReminderJob {
 
       // Check if reminders are enabled
       if (!debtSettings.enabled && !force) {
-        console.log(`[DebtReminder] Reminders disabled for workspace ${workspaceId}`);
+        logger.info(`[DebtReminder] Reminders disabled for workspace ${workspaceId}`);
         return result;
       }
 
       // Check if within allowed hours
       const currentHour = new Date().getHours();
-      const [startHour, endHour] = debtSettings.sendBetweenHours as [number, number];
+      const [startHour, endHour] = debtSettings.sendBetweenHours;
       if (currentHour < startHour || currentHour >= endHour) {
-        console.log(`[DebtReminder] Outside sending hours (${startHour}-${endHour})`);
+        logger.info(`[DebtReminder] Outside sending hours (${startHour}-${endHour})`);
         return result;
       }
 
@@ -249,7 +260,7 @@ export class DebtReminderJob {
       );
 
       result.processedCustomers = customers.length;
-      console.log(`[DebtReminder] Found ${customers.length} eligible customers`);
+      logger.info(`[DebtReminder] Found ${customers.length} eligible customers`);
 
       // Process each customer
       for (const customer of customers) {
@@ -279,7 +290,7 @@ export class DebtReminderJob {
         });
       }
 
-      console.log(
+      logger.info(
         `[DebtReminder] Completed: ${result.remindersSent} reminders sent, ${result.errors.length} errors`
       );
     } catch (err) {
@@ -297,7 +308,7 @@ export class DebtReminderJob {
   private async processAllWorkspaces(
     job: Job<DebtReminderPayload>
   ): Promise<DebtReminderResult> {
-    console.log('[DebtReminder] Processing all workspaces');
+    logger.info('[DebtReminder] Processing all workspaces');
 
     const result: DebtReminderResult = {
       workspaceId: '*',
@@ -314,7 +325,7 @@ export class DebtReminderJob {
       select: { id: true },
     });
 
-    console.log(`[DebtReminder] Found ${workspaces.length} active workspaces`);
+    logger.info(`[DebtReminder] Found ${workspaces.length} active workspaces`);
 
     for (const workspace of workspaces) {
       try {
@@ -342,8 +353,7 @@ export class DebtReminderJob {
     workspaceId: string,
     customerId: string | undefined,
     settings: Record<string, unknown>
-  ) {
-    const firstReminderDays = (settings.firstReminderDays as number) || 3;
+  ): Promise<EligibleCustomer[]> {
     const maxReminders = (settings.maxReminders as number) || 3;
 
     const where: Prisma.CustomerWhereInput = {
@@ -374,15 +384,7 @@ export class DebtReminderJob {
    */
   private async sendReminderIfNeeded(
     workspace: { id: string; name: string },
-    customer: {
-      id: string;
-      phone: string;
-      firstName: string | null;
-      lastName: string | null;
-      currentBalance: number;
-      debtReminderCount: number;
-      lastDebtReminderAt: Date | null;
-    },
+    customer: EligibleCustomer,
     settings: Record<string, unknown>
   ): Promise<boolean> {
     const {
@@ -412,7 +414,7 @@ export class DebtReminderJob {
     const requiredDays = daysForLevel[reminderLevel - 1] || firstReminderDays;
 
     if (customer.debtReminderCount > 0 && daysSinceLastReminder < requiredDays) {
-      console.log(
+      logger.info(
         `[DebtReminder] Skipping ${customer.id}: only ${daysSinceLastReminder} days since last reminder`
       );
       return false;
@@ -425,7 +427,7 @@ export class DebtReminderJob {
     );
 
     if (unpaidOrders.length === 0) {
-      console.log(`[DebtReminder] No unpaid orders for customer ${customer.id}`);
+      logger.info(`[DebtReminder] No unpaid orders for customer ${customer.id}`);
       return false;
     }
 
@@ -433,7 +435,7 @@ export class DebtReminderJob {
     if (customer.debtReminderCount === 0) {
       const oldest = unpaidOrders[0];
       if (oldest && oldest.daysOld < firstReminderDays) {
-        console.log(
+        logger.info(
           `[DebtReminder] Skipping ${customer.id}: debt age ${oldest.daysOld}d < ${firstReminderDays}d`
         );
         return false;
@@ -465,7 +467,7 @@ export class DebtReminderJob {
     });
 
     if (!session) {
-      console.log(`[DebtReminder] No active session for customer ${customer.id}`);
+      logger.info(`[DebtReminder] No active session for customer ${customer.id}`);
       return false;
     }
 
@@ -495,7 +497,7 @@ export class DebtReminderJob {
       },
     });
 
-    console.log(`[DebtReminder] Sent reminder to ${customer.phone} (level ${reminderLevel})`);
+    logger.info(`[DebtReminder] Sent reminder to ${customer.phone} (level ${reminderLevel})`);
     return true;
   }
 
@@ -506,7 +508,7 @@ export class DebtReminderJob {
     template: string,
     vars: Record<string, string>
   ): string {
-    return template.replace(/\{(\w+)\}/g, (_, key) => vars[key] || `{${key}}`);
+    return template.replace(/\{(\w+)\}/g, (_: string, key: string) => vars[key] || `{${key}}`);
   }
 
   /**

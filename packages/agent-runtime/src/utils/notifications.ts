@@ -82,11 +82,11 @@ export function resolveNotificationPreferences(
   return { ...DEFAULT_NOTIFICATION_PREFERENCES, ...sanitized };
 }
 
-export async function shouldCreateNotification(
+export function shouldCreateNotification(
   prisma: PrismaClient,
   workspaceId: string,
   type: string
-): Promise<boolean> {
+): boolean {
   // Dashboard notifications are always enabled and cannot be disabled.
   void prisma;
   void workspaceId;

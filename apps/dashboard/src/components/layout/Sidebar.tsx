@@ -1,9 +1,10 @@
 import { NavLink } from 'react-router-dom';
+
+import { getModulesForBusinessType, modules as moduleConfig } from '../../config/modules';
+import { useAuth } from '../../contexts/AuthContext';
+import { getWorkspaceCommerceCapabilities } from '../../lib/commerce-plan';
 import { cn } from '../../lib/utils';
 import { ModuleIcon } from '../ui';
-import { useAuth } from '../../contexts/AuthContext';
-import { getModulesForBusinessType, modules as moduleConfig } from '../../config/modules';
-import { getWorkspaceCommerceCapabilities } from '../../lib/commerce-plan';
 import { Sheet, SheetContent } from '../ui/sheet';
 
 interface SidebarProps {
@@ -11,12 +12,12 @@ interface SidebarProps {
   onClose?: () => void;
 }
 
-function SidebarContent({ onClose }: { onClose?: () => void }) {
+function SidebarContent({ onClose }: { onClose?: () => void }): JSX.Element {
   const { user, workspace, logout } = useAuth();
   const capabilities = getWorkspaceCommerceCapabilities(workspace);
 
   // Get business type from workspace settings, default to 'commerce'
-  const businessType = (workspace as any)?.businessType || 'commerce';
+  const businessType = workspace?.businessType || 'commerce';
 
   // Get modules for this business type
   const availableModules = getModulesForBusinessType(businessType).filter((module) => {
@@ -118,7 +119,9 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
           </div>
         </div>
         <button
-          onClick={logout}
+          onClick={() => {
+            void logout();
+          }}
           className="mt-3 w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-sm text-muted-foreground hover:text-red-500 hover:bg-red-500/10 transition-all duration-200"
         >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -131,7 +134,7 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
   );
 }
 
-export function Sidebar({ open, onClose }: SidebarProps) {
+export function Sidebar({ open, onClose }: SidebarProps): JSX.Element {
   return (
     <>
       {/* Desktop sidebar */}

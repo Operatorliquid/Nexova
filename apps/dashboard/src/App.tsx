@@ -1,10 +1,11 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
 import { Suspense, lazy } from 'react';
-import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { ThemeProvider } from './contexts/ThemeContext';
+import { Routes, Route, Navigate } from 'react-router-dom';
+
 import { DashboardLayout } from './components/layout/DashboardLayout';
 import { LoadingSpinner } from './components/ui/LoadingSpinner';
 import { ToastContainer } from './components/ui/Toast';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { ThemeProvider } from './contexts/ThemeContext';
 import { getWorkspaceCommerceCapabilities } from './lib/commerce-plan';
 import WorkspaceSuspendedPage from './pages/paywall/WorkspaceSuspendedPage';
 
@@ -33,7 +34,7 @@ const WorkspacesPage = lazy(() => import('./pages/admin/WorkspacesPage'));
 const AdminSettingsPage = lazy(() => import('./pages/admin/AdminSettingsPage'));
 const BillingPage = lazy(() => import('./pages/admin/BillingPage'));
 
-function PageLoader() {
+function PageLoader(): JSX.Element {
   return (
     <div className="flex items-center justify-center min-h-screen bg-background">
       <LoadingSpinner size="lg" />
@@ -41,7 +42,7 @@ function PageLoader() {
   );
 }
 
-function ProtectedRoute({ children }: { children: React.ReactNode }) {
+function ProtectedRoute({ children }: { children: React.ReactNode }): JSX.Element {
   const { isAuthenticated, isLoading, workspace, user } = useAuth();
 
   if (isLoading) {
@@ -70,7 +71,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-function AdminRoute({ children }: { children: React.ReactNode }) {
+function AdminRoute({ children }: { children: React.ReactNode }): JSX.Element {
   const { isAuthenticated, isLoading, user } = useAuth();
 
   if (isLoading) {
@@ -85,7 +86,7 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
 }
 
 
-function PublicRoute({ children }: { children: React.ReactNode }) {
+function PublicRoute({ children }: { children: React.ReactNode }): JSX.Element {
   const { isAuthenticated, isLoading, workspace, user } = useAuth();
 
   if (isLoading) {
@@ -107,7 +108,7 @@ function PublicRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-function OnboardingRoute({ children }: { children: React.ReactNode }) {
+function OnboardingRoute({ children }: { children: React.ReactNode }): JSX.Element {
   const { isAuthenticated, isLoading, workspace } = useAuth();
 
   if (isLoading) {
@@ -126,7 +127,7 @@ function OnboardingRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-function AppRoutes() {
+function AppRoutes(): JSX.Element {
   const { workspace } = useAuth();
   const capabilities = getWorkspaceCommerceCapabilities(workspace);
 
@@ -221,7 +222,7 @@ function AppRoutes() {
   );
 }
 
-export default function App() {
+export default function App(): JSX.Element {
   return (
     <ThemeProvider>
       <AuthProvider>

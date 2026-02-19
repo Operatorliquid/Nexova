@@ -8,26 +8,30 @@
  * - StockMove tracking for all stock changes
  * - PROCESSED status protection
  */
-import { z } from 'zod';
-import { PrismaClient, Prisma } from '@prisma/client';
 import { createHash } from 'crypto';
-import { BaseTool } from '../base.js';
-import { ToolCategory, ToolContext, ToolResult, AgentState } from '../../types/index.js';
-import { MemoryManager } from '../../core/memory-manager.js';
+
+import { type PrismaClient, Prisma } from '@prisma/client';
+import { z } from 'zod';
+
 import { buildProductDisplayName } from './product-utils.js';
+import { type MemoryManager } from '../../core/memory-manager.js';
+import { ToolCategory, type ToolContext, type ToolResult, AgentState } from '../../types/index.js';
+import { getEffectivePlanLimits, resolveWorkspacePlan } from '../../utils/commerce-plan-limits.js';
 import { createNotificationIfEnabled } from '../../utils/notifications.js';
 import { withVisibleOrders } from '../../utils/orders.js';
-import { getEffectivePlanLimits, resolveWorkspacePlan } from '../../utils/commerce-plan-limits.js';
+import { BaseTool } from '../base.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONSTANTS & POLICIES
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// Order statuses that can be modified by agent
-const MODIFIABLE_STATUSES = ['draft', 'awaiting_acceptance', 'pending_payment', 'paid'] as const;
-
 // Order statuses that are "processed" - NO modifications allowed
 const PROCESSED_STATUSES = ['accepted', 'processing', 'shipped', 'delivered', 'invoiced'] as const;
+type ProcessedStatus = (typeof PROCESSED_STATUSES)[number];
+
+function isProcessedStatus(status: string): status is ProcessedStatus {
+  return (PROCESSED_STATUSES as readonly string[]).includes(status);
+}
 
 // Stock movement types
 const STOCK_MOVE_TYPE = {
@@ -42,7 +46,7 @@ const STOCK_MOVE_TYPE = {
  * Policy check: can modify this order?
  */
 function canModifyOrder(status: string): { allowed: boolean; reason?: string } {
-  if (PROCESSED_STATUSES.includes(status as any)) {
+  if (isProcessedStatus(status)) {
     return {
       allowed: false,
       reason: `El pedido está en estado "${status}" y no puede ser modificado. Necesitás hablar con un operador.`,
@@ -131,7 +135,7 @@ export class ConfirmOrderTool extends BaseTool<typeof ConfirmOrderInput> {
       category: ToolCategory.MUTATION,
       inputSchema: ConfirmOrderInput,
       requiresConfirmation: true,
-      idempotencyKey: (input) => {
+      idempotencyKey: (_input) => {
         // Will be replaced with actual cart hash in execute
         return `confirm_order_${Date.now()}`;
       },
@@ -533,7 +537,7 @@ export class GetOrderDetailsTool extends BaseTool<typeof GetOrderDetailsInput> {
         orderNumber: order.orderNumber,
         status: order.status,
         canModify: policy.allowed,
-        isProcessed: PROCESSED_STATUSES.includes(order.status as any),
+        isProcessed: isProcessedStatus(order.status),
         items: order.items.map((i) => ({
           id: i.id,
           name: i.name,
@@ -1154,7 +1158,7 @@ export class ModifyOrderIfNotProcessedTool extends BaseTool<typeof ModifyOrderIn
 export function createOrderTools(
   prisma: PrismaClient,
   memoryManager: MemoryManager
-): BaseTool<any, any>[] {
+): Array<BaseTool<z.ZodSchema, unknown>> {
   return [
     new ConfirmOrderTool(prisma, memoryManager),
     new GetOrderDetailsTool(prisma),

@@ -1,6 +1,7 @@
+import { createHmac, randomUUID } from 'crypto';
 import { promises as fs, existsSync } from 'fs';
 import path from 'path';
-import { randomUUID } from 'crypto';
+
 import type { FileUploader } from '../tools/retail/catalog.tools.js';
 
 type UploadOptions = {
@@ -43,7 +44,7 @@ export class LocalFileUploader implements FileUploader {
       throw new Error('No hay una URL pública configurada para enviar el PDF.');
     }
 
-    return `${publicBase}/uploads/${category}/${uniqueName}`;
+    return this.buildPublicFileUrl(publicBase, category, uniqueName);
   }
 
   private sanitizeCategory(category: string): string {
@@ -92,8 +93,12 @@ export class LocalFileUploader implements FileUploader {
       const payload = bodyText ? (this.safeJsonParse(bodyText) as Record<string, unknown> | null) : null;
 
       if (!response.ok) {
+        const payloadError = payload?.error;
+        const errorMessage = typeof payloadError === 'string' && payloadError.trim()
+          ? payloadError
+          : bodyText || 'unknown_error';
         throw new Error(
-          `Internal upload failed (${response.status}): ${payload?.error || bodyText || 'unknown_error'}`
+          `Internal upload failed (${response.status}): ${errorMessage}`
         );
       }
 
@@ -113,7 +118,10 @@ export class LocalFileUploader implements FileUploader {
         if (publicBase) {
           try {
             const parsed = new URL(rawUrl);
-            if (parsed.pathname.startsWith('/uploads/')) {
+            if (
+              parsed.pathname.startsWith('/uploads/')
+              || parsed.pathname.startsWith('/api/v1/uploads/file/')
+            ) {
               return `${publicBase}${parsed.pathname}${parsed.search || ''}`;
             }
           } catch {
@@ -151,6 +159,51 @@ export class LocalFileUploader implements FileUploader {
 
   private sanitizeFilename(name: string): string {
     return name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  }
+
+  private sanitizeUploadFilename(name: string): string {
+    try {
+      return decodeURIComponent(name).replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 255);
+    } catch {
+      return name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 255);
+    }
+  }
+
+  private resolveSignedUploadTtlSeconds(): number {
+    const raw = Number(process.env.UPLOAD_SIGNED_URL_TTL_SECONDS || 604800);
+    if (!Number.isFinite(raw)) return 604800;
+    const parsed = Math.trunc(raw);
+    if (parsed < 30) return 30;
+    if (parsed > 2592000) return 2592000;
+    return parsed;
+  }
+
+  private resolveUploadSigningSecret(): string {
+    return (
+      process.env.UPLOAD_URL_SIGNING_SECRET
+      || process.env.JWT_SECRET
+      || process.env.COOKIE_SECRET
+      || ''
+    ).trim();
+  }
+
+  private buildPublicFileUrl(baseUrl: string, category: string, filename: string): string {
+    const safeCategory = this.sanitizeCategory(category);
+    const safeFilename = this.sanitizeUploadFilename(filename);
+    const normalizedBase = baseUrl.replace(/\/$/, '');
+    const ttlSeconds = this.resolveSignedUploadTtlSeconds();
+    const expSeconds = Math.floor(Date.now() / 1000) + ttlSeconds;
+    const secret = this.resolveUploadSigningSecret();
+
+    if (!secret) {
+      return `${normalizedBase}/uploads/${safeCategory}/${safeFilename}`;
+    }
+
+    const signature = createHmac('sha256', secret)
+      .update(`${safeCategory}/${safeFilename}:${expSeconds}`)
+      .digest('hex');
+
+    return `${normalizedBase}/api/v1/uploads/file/${encodeURIComponent(safeCategory)}/${encodeURIComponent(safeFilename)}?exp=${expSeconds}&sig=${signature}`;
   }
 
   private getUploadDir(): string {
@@ -212,7 +265,7 @@ export class LocalFileUploader implements FileUploader {
     return null;
   }
 
-  private safeJsonParse(text: string): unknown | null {
+  private safeJsonParse(text: string): unknown {
     try {
       return JSON.parse(text);
     } catch {

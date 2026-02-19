@@ -3,26 +3,30 @@
  * Translates natural language commands to tool calls with policy enforcement
  */
 
-import Anthropic from '@anthropic-ai/sdk';
-import { PrismaClient, Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { promises as fs, existsSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+
+import Anthropic from '@anthropic-ai/sdk';
+import { type PrismaClient, Prisma } from '@prisma/client';
+
+import { LedgerService, CatalogPdfService, decrypt, logger } from '@nexova/core';
+
 import {
-  QuickActionRequest,
-  QuickActionResult,
-  ParsedToolCall,
-  ToolExecutionResult,
-  ConfirmationRequest,
-  QuickActionHistoryItem,
+  type QuickActionRequest,
+  type QuickActionResult,
+  type ParsedToolCall,
+  type ToolExecutionResult,
+  type ConfirmationRequest,
+  type QuickActionHistoryItem,
   TOOL_POLICIES,
-  QuickActionUIAction,
+  type QuickActionUIAction,
 } from './types.js';
-import { buildMetrics, normalizeRange } from '../analytics/metrics.service.js';
-import { generateBusinessInsights } from '../analytics/insights.service.js';
-import { LedgerService, CatalogPdfService, decrypt } from '@nexova/core';
 import { createNotificationIfEnabled } from '../../utils/notifications.js';
+import { buildSignedUploadPath, resolveSignedUploadTtlSeconds } from '../../utils/upload-access.js';
+import { generateBusinessInsights } from '../analytics/insights.service.js';
+import { buildMetrics, normalizeRange } from '../analytics/metrics.service.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -50,6 +54,75 @@ const SECONDARY_UNIT_LABELS: Record<string, string> = {
 };
 
 const DEFAULT_LOW_STOCK_THRESHOLD = 10;
+
+type UnknownRecord = Record<string, unknown>;
+
+function isRecord(value: unknown): value is UnknownRecord {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function toRecord(value: unknown): UnknownRecord | null {
+  return isRecord(value) ? value : null;
+}
+
+function toRecordArray(value: unknown): UnknownRecord[] {
+  return Array.isArray(value) ? value.filter(isRecord) : [];
+}
+
+function readRecord(record: UnknownRecord | null, key: string): UnknownRecord | null {
+  return toRecord(record?.[key]);
+}
+
+function readRecordArray(record: UnknownRecord | null, key: string): UnknownRecord[] {
+  return toRecordArray(record?.[key]);
+}
+
+function readString(record: UnknownRecord | null, key: string): string {
+  const value = record?.[key];
+  return typeof value === 'string' ? value : '';
+}
+
+function readTrimmedString(record: UnknownRecord | null, key: string): string {
+  return readString(record, key).trim();
+}
+
+function readNumber(record: UnknownRecord | null, key: string): number | null {
+  const value = record?.[key];
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value.trim());
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function readBoolean(record: UnknownRecord | null, key: string): boolean | null {
+  const value = record?.[key];
+  return typeof value === 'boolean' ? value : null;
+}
+
+function toCustomerNameInput(record: UnknownRecord | null): {
+  firstName?: string | null;
+  lastName?: string | null;
+  phone?: string | null;
+} {
+  return {
+    firstName: readString(record, 'firstName') || null,
+    lastName: readString(record, 'lastName') || null,
+    phone: readString(record, 'phone') || null,
+  };
+}
+
+function toStringRecord(record: UnknownRecord | null): Record<string, string> | undefined {
+  if (!record) return undefined;
+  const out: Record<string, string> = {};
+  Object.entries(record).forEach(([key, value]) => {
+    if (typeof value === 'string') {
+      out[key] = value;
+    }
+  });
+  return Object.keys(out).length > 0 ? out : undefined;
+}
 
 const normalizeLowStockThreshold = (value: unknown): number | null => {
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -113,6 +186,23 @@ type AmbiguousProductCandidate = {
   unitValue?: string | null;
   secondaryUnit?: string | null;
   secondaryUnitValue?: string | null;
+};
+
+type ProductWithStockItems = Prisma.ProductGetPayload<{ include: { stockItems: true } }>;
+type CustomerRecord = Prisma.CustomerGetPayload<Record<string, never>>;
+type OrderRecord = Prisma.OrderGetPayload<Record<string, never>>;
+type CategoryRecord = Prisma.ProductCategoryGetPayload<Record<string, never>>;
+type ToolResult = { data: unknown; canRollback?: boolean; rollbackData?: unknown };
+type ResolvedConversation = {
+  id: string;
+  customerId: string;
+  customerPhone: string;
+  customerName: string;
+  channelType: string;
+  agentActive: boolean;
+  currentState: string | null;
+  lastActivityAt: Date;
+  channelId: string;
 };
 
 class AmbiguousProductError extends Error {
@@ -229,9 +319,9 @@ export class QuickActionService {
   private logDebug(message: string, data?: Record<string, unknown>): void {
     if (!this.isDebugEnabled()) return;
     if (data) {
-      console.log(`[quick-actions] ${message}`, data);
+      logger.info({ data }, `[quick-actions] ${message}`);
     } else {
-      console.log(`[quick-actions] ${message}`);
+      logger.info(`[quick-actions] ${message}`);
     }
   }
 
@@ -591,24 +681,33 @@ export class QuickActionService {
       const jsonMatch = content.text.match(/\{[\s\S]*\}/);
       if (!jsonMatch) return { tools: [] };
 
-      const parsed = JSON.parse(jsonMatch[0]);
-
-      if (!parsed.tools || !Array.isArray(parsed.tools)) {
+      const parsedRaw: unknown = JSON.parse(jsonMatch[0]);
+      const parsed = toRecord(parsedRaw);
+      if (!parsed) {
         return { tools: [] };
       }
 
-      const tools = parsed.tools.map((tool: { name: string; input: Record<string, unknown> }) => ({
-        toolName: tool.name,
-        input: tool.input || {},
-        policy: TOOL_POLICIES[tool.name] || {
-          name: tool.name,
-          riskLevel: 'moderate',
-          requiresConfirmation: true,
-          allowedRoles: ['owner'],
-          description: 'Herramienta desconocida',
-        },
-      }));
-      const explanation = typeof parsed.explanation === 'string' ? parsed.explanation : undefined;
+      const toolEntries = Array.isArray(parsed.tools) ? parsed.tools : [];
+      const tools: ParsedToolCall[] = [];
+      for (const entry of toolEntries) {
+        const toolRecord = toRecord(entry);
+        if (!toolRecord) continue;
+        const toolName = readTrimmedString(toolRecord, 'name');
+        if (!toolName) continue;
+        const input = readRecord(toolRecord, 'input') ?? {};
+        tools.push({
+          toolName,
+          input,
+          policy: TOOL_POLICIES[toolName] || {
+            name: toolName,
+            riskLevel: 'moderate',
+            requiresConfirmation: true,
+            allowedRoles: ['owner'],
+            description: 'Herramienta desconocida',
+          },
+        });
+      }
+      const explanation = readTrimmedString(parsed, 'explanation') || undefined;
 
       return { tools, explanation };
     } catch {
@@ -733,7 +832,7 @@ export class QuickActionService {
     input: Record<string, unknown>,
     workspaceId: string,
     userId: string
-  ): Promise<{ data: unknown; canRollback?: boolean; rollbackData?: unknown }> {
+  ): Promise<ToolResult> {
     switch (toolName) {
       case 'navigate_dashboard':
         return this.toolNavigateDashboard(input);
@@ -825,7 +924,7 @@ export class QuickActionService {
   }
 
   // Tool implementations
-  private async toolGetCustomerInfo(input: Record<string, unknown>, workspaceId: string) {
+  private async toolGetCustomerInfo(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
     const where: Prisma.CustomerWhereInput = { workspaceId };
 
     if (input.phone) {
@@ -857,7 +956,7 @@ export class QuickActionService {
     return { data: customers.map((customer) => this.normalizeCustomerTotals(customer)) };
   }
 
-  private async toolListCustomers(input: Record<string, unknown>, workspaceId: string) {
+  private async toolListCustomers(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
     const where: Prisma.CustomerWhereInput = { workspaceId, deletedAt: null };
     const query = input.query ? String(input.query).trim() : '';
 
@@ -895,7 +994,7 @@ export class QuickActionService {
     return { data: customers.map((customer) => this.normalizeCustomerTotals(customer)) };
   }
 
-  private async toolListDebtors(input: Record<string, unknown>, workspaceId: string) {
+  private async toolListDebtors(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
     const customers = await this.prisma.customer.findMany({
       where: {
         workspaceId,
@@ -919,7 +1018,7 @@ export class QuickActionService {
     return { data: customers.map((customer) => this.normalizeCustomerTotals(customer)) };
   }
 
-  private async toolSendDebtReminder(input: Record<string, unknown>, workspaceId: string) {
+  private async toolSendDebtReminder(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
     const customer = await this.resolveCustomer(input, workspaceId);
     const ledger = new LedgerService(this.prisma);
     const orders = await ledger.getUnpaidOrders(workspaceId, customer.id);
@@ -987,7 +1086,7 @@ export class QuickActionService {
     };
   }
 
-  private async toolSendDebtRemindersBulk(workspaceId: string) {
+  private async toolSendDebtRemindersBulk(workspaceId: string): Promise<ToolResult> {
     const whatsappNumber = await this.prisma.whatsAppNumber.findFirst({
       where: { workspaceId, isActive: true },
       select: { apiKeyEnc: true, apiKeyIv: true, apiUrl: true, phoneNumber: true, provider: true, providerConfig: true },
@@ -1098,7 +1197,7 @@ export class QuickActionService {
     return { data: { sent, failed, total: customers.length } };
   }
 
-  private async toolNavigateDashboard(input: Record<string, unknown>) {
+  private toolNavigateDashboard(input: Record<string, unknown>): ToolResult {
     const page = typeof input.page === 'string' ? input.page : '';
     const path = this.resolveDashboardPath(page);
     if (!path) {
@@ -1108,7 +1207,7 @@ export class QuickActionService {
     return { data: { path, query } };
   }
 
-  private async toolGetUnpaidOrders(input: Record<string, unknown>, workspaceId: string) {
+  private async toolGetUnpaidOrders(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
     const customer = await this.resolveCustomer(input, workspaceId);
     const ledger = new LedgerService(this.prisma);
     const orders = await ledger.getUnpaidOrders(workspaceId, customer.id);
@@ -1122,7 +1221,7 @@ export class QuickActionService {
     };
   }
 
-  private async toolUpdateCustomer(input: Record<string, unknown>, workspaceId: string) {
+  private async toolUpdateCustomer(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
     const customer = await this.resolveCustomer(input, workspaceId);
     const data = input.data && typeof input.data === 'object' ? (input.data as Record<string, unknown>) : {};
 
@@ -1168,7 +1267,7 @@ export class QuickActionService {
     return { data: updated };
   }
 
-  private async toolSearchProducts(input: Record<string, unknown>, workspaceId: string) {
+  private async toolSearchProducts(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
     const baseWhere: Prisma.ProductWhereInput = {
       workspaceId,
       // Quick actions are an owner/admin operator surface, allow draft products too.
@@ -1310,7 +1409,7 @@ export class QuickActionService {
     };
   }
 
-  private async toolListProducts(input: Record<string, unknown>, workspaceId: string) {
+  private async toolListProducts(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
     const where: Prisma.ProductWhereInput = {
       workspaceId,
       deletedAt: null,
@@ -1394,7 +1493,7 @@ export class QuickActionService {
     };
   }
 
-  private async toolGetProductDetails(input: Record<string, unknown>, workspaceId: string) {
+  private async toolGetProductDetails(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
     const product = await this.resolveProduct(input, workspaceId);
 
     const productWithCategories = await this.prisma.product.findFirst({
@@ -1435,9 +1534,9 @@ export class QuickActionService {
         categories: productWithCategories.categoryMappings
           .filter((m) => m.category)
           .map((m) => ({
-            id: m.category!.id,
-            name: m.category!.name,
-            color: m.category!.color,
+            id: m.category.id,
+            name: m.category.name,
+            color: m.category.color,
           })),
         stock,
         lowThreshold,
@@ -1447,7 +1546,7 @@ export class QuickActionService {
     };
   }
 
-  private async toolListCategories(input: Record<string, unknown>, workspaceId: string) {
+  private async toolListCategories(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
     const categories = await this.prisma.productCategory.findMany({
       where: { workspaceId, deletedAt: null },
       take: Number(input.limit) || 20,
@@ -1471,7 +1570,7 @@ export class QuickActionService {
     };
   }
 
-  private async toolGetOrderDetails(input: Record<string, unknown>, workspaceId: string) {
+  private async toolGetOrderDetails(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
     const where: Prisma.OrderWhereInput = { workspaceId };
 
     if (input.orderId) {
@@ -1497,7 +1596,7 @@ export class QuickActionService {
     return { data: order };
   }
 
-  private async toolListOrders(input: Record<string, unknown>, workspaceId: string) {
+  private async toolListOrders(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
     const where: Prisma.OrderWhereInput = { workspaceId };
 
     if (input.status) {
@@ -1544,7 +1643,7 @@ export class QuickActionService {
     return { data: orders };
   }
 
-  private async toolListConversations(input: Record<string, unknown>, workspaceId: string) {
+  private async toolListConversations(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
     const sessions = await this.prisma.agentSession.findMany({
       where: {
         workspaceId,
@@ -1586,12 +1685,12 @@ export class QuickActionService {
     };
   }
 
-  private async toolOpenConversation(input: Record<string, unknown>, workspaceId: string) {
+  private async toolOpenConversation(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
     const session = await this.resolveConversation(input, workspaceId);
     return { data: session };
   }
 
-  private async toolGetConversationMessages(input: Record<string, unknown>, workspaceId: string) {
+  private async toolGetConversationMessages(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
     const session = await this.resolveConversation(input, workspaceId);
     const limit = Number(input.limit) || 20;
 
@@ -1615,7 +1714,7 @@ export class QuickActionService {
     };
   }
 
-  private async toolGetCustomerBalance(input: Record<string, unknown>, workspaceId: string) {
+  private async toolGetCustomerBalance(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
     const customer = await this.resolveCustomer(input, workspaceId);
     const customerId = customer.id;
 
@@ -1640,7 +1739,7 @@ export class QuickActionService {
     };
   }
 
-  private async toolUpdateOrderStatus(input: Record<string, unknown>, workspaceId: string) {
+  private async toolUpdateOrderStatus(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
     const status = String(input.status || '').trim();
     if (!status) {
       throw new Error('Estado inválido');
@@ -1674,7 +1773,7 @@ export class QuickActionService {
     };
   }
 
-  private async toolCancelOrder(input: Record<string, unknown>, workspaceId: string) {
+  private async toolCancelOrder(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
     const order = await this.resolveOrder(input, workspaceId);
 
     if (order.status === 'cancelled') {
@@ -1710,7 +1809,7 @@ export class QuickActionService {
     input: Record<string, unknown>,
     workspaceId: string,
     userId: string
-  ) {
+  ): Promise<ToolResult> {
     const note = String(input.note || '').trim();
     if (!note) {
       throw new Error('La nota no puede estar vacía');
@@ -1744,7 +1843,7 @@ export class QuickActionService {
     input: Record<string, unknown>,
     workspaceId: string,
     userId: string
-  ) {
+  ): Promise<ToolResult> {
     const customer = await this.resolveCustomer(input, workspaceId);
     const amountRaw = Number(input.amount);
     if (!Number.isFinite(amountRaw) || amountRaw <= 0) {
@@ -1789,7 +1888,7 @@ export class QuickActionService {
     return { data: { customer, amount, result } };
   }
 
-  private async toolAdjustStock(input: Record<string, unknown>, workspaceId: string) {
+  private async toolAdjustStock(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
     const product = await this.resolveProduct(input, workspaceId);
     const workspaceLowThreshold = await this.getWorkspaceLowStockThreshold(workspaceId);
     const adjustment = Number(input.quantity);
@@ -1797,8 +1896,8 @@ export class QuickActionService {
       throw new Error('Cantidad inválida');
     }
 
-    const stockItems = Array.isArray((product as any).stockItems)
-      ? ((product as any).stockItems as Array<{ quantity?: number | null; reserved?: number | null }>)
+    const stockItems = Array.isArray((product).stockItems)
+      ? ((product).stockItems as Array<{ quantity?: number | null; reserved?: number | null }>)
       : [];
     const previousTotalQty = stockItems.reduce((sum, s) => sum + (s.quantity || 0), 0);
     const reservedTotal = stockItems.reduce((sum, s) => sum + (s.reserved || 0), 0);
@@ -1886,7 +1985,7 @@ export class QuickActionService {
     };
   }
 
-  private async toolBulkSetStock(input: Record<string, unknown>, workspaceId: string) {
+  private async toolBulkSetStock(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
     const rawTarget = input.target ?? input.quantity ?? input.amount;
     const targetValue = Number(rawTarget);
     if (!Number.isFinite(targetValue)) {
@@ -2034,11 +2133,17 @@ export class QuickActionService {
     };
   }
 
-  private async toolAdjustPricesPercent(input: Record<string, unknown>, workspaceId: string) {
+  private async toolAdjustPricesPercent(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
     const percentCandidate = input.percent ?? input.percentage ?? input.deltaPercent;
     const amountCandidate = input.amount ?? input.amountPesos ?? input.deltaAmount;
-    const hasPercent = percentCandidate !== undefined && percentCandidate !== null && `${percentCandidate}`.trim() !== '';
-    const hasAmount = amountCandidate !== undefined && amountCandidate !== null && `${amountCandidate}`.trim() !== '';
+    const toCandidateText = (value: unknown): string => {
+      if (typeof value === 'string' || typeof value === 'number') {
+        return String(value).trim();
+      }
+      return '';
+    };
+    const hasPercent = toCandidateText(percentCandidate) !== '';
+    const hasAmount = toCandidateText(amountCandidate) !== '';
     if (!hasPercent && !hasAmount) {
       throw new Error('Indicá un porcentaje o un monto en pesos para ajustar precios.');
     }
@@ -2117,7 +2222,7 @@ export class QuickActionService {
         secondaryUnit: string | null;
         secondaryUnitValue: string | null;
       }>
-    ) => {
+    ): void => {
       for (const product of products) {
         selectedProducts.set(product.id, product);
       }
@@ -2310,7 +2415,7 @@ export class QuickActionService {
     };
   }
 
-  private async toolCreateProduct(input: Record<string, unknown>, workspaceId: string) {
+  private async toolCreateProduct(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
     const name = String(input.name || '').trim();
     if (!name) {
       throw new Error('El nombre del producto es requerido');
@@ -2385,7 +2490,7 @@ export class QuickActionService {
     return { data: product };
   }
 
-  private async toolUpdateProduct(input: Record<string, unknown>, workspaceId: string) {
+  private async toolUpdateProduct(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
     const product = await this.resolveProduct(input, workspaceId);
     const data = input.data && typeof input.data === 'object' ? (input.data as Record<string, unknown>) : null;
     const mergeSource = data && Object.keys(data).length > 0
@@ -2482,7 +2587,7 @@ export class QuickActionService {
     return { data: updated };
   }
 
-  private async toolDeleteProduct(input: Record<string, unknown>, workspaceId: string) {
+  private async toolDeleteProduct(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
     const product = await this.resolveProduct(input, workspaceId);
 
     const orderItems = await this.prisma.orderItem.count({
@@ -2509,7 +2614,7 @@ export class QuickActionService {
     return { data: { id: product.id, name: product.name, hardDeleted: false, reason: orderItems > 0 ? 'HAS_ORDER_ITEMS' : 'SOFT_DELETE' } };
   }
 
-  private async toolCreateCategory(input: Record<string, unknown>, workspaceId: string) {
+  private async toolCreateCategory(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
     const name = String(input.name || '').trim();
     if (!name) {
       throw new Error('El nombre de la categoría es requerido');
@@ -2586,7 +2691,7 @@ export class QuickActionService {
     return { data: category };
   }
 
-  private async toolAssignCategoryToProducts(input: Record<string, unknown>, workspaceId: string) {
+  private async toolAssignCategoryToProducts(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
     const categoryNameRaw = typeof input.categoryName === 'string' ? input.categoryName.trim() : '';
     const productQueryRaw = typeof input.productQuery === 'string' ? input.productQuery.trim() : '';
     const rawColor = input.color !== undefined && input.color !== null ? String(input.color).trim() : '';
@@ -2691,14 +2796,14 @@ export class QuickActionService {
     await this.prisma.productCategoryMapping.createMany({
       data: products.map((product) => ({
         productId: product.id,
-        categoryId: category!.id,
+        categoryId: category.id,
       })),
       skipDuplicates: true,
     });
 
     return {
       data: {
-        category: { id: category!.id, name: category!.name, color: category!.color, created },
+        category: { id: category.id, name: category.name, color: category.color, created },
         productQuery,
         matchedCount: products.length,
         products: products.slice(0, 5),
@@ -2706,7 +2811,7 @@ export class QuickActionService {
     };
   }
 
-  private async toolUpdateCategory(input: Record<string, unknown>, workspaceId: string) {
+  private async toolUpdateCategory(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
     const category = await this.resolveCategory(input, workspaceId);
     const data = input.data && typeof input.data === 'object' ? (input.data as Record<string, unknown>) : null;
     const merge = data && Object.keys(data).length > 0
@@ -2748,7 +2853,7 @@ export class QuickActionService {
     return { data: updated };
   }
 
-  private async toolDeleteCategory(input: Record<string, unknown>, workspaceId: string) {
+  private async toolDeleteCategory(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
     const category = await this.resolveCategory(input, workspaceId);
 
     await this.prisma.productCategory.updateMany({
@@ -2763,7 +2868,7 @@ export class QuickActionService {
     input: Record<string, unknown>,
     workspaceId: string,
     userId: string
-  ) {
+  ): Promise<ToolResult> {
     const content = String(input.content || '').trim();
     if (!content) {
       throw new Error('El mensaje no puede estar vacío');
@@ -2825,7 +2930,7 @@ export class QuickActionService {
     return { data: { session, message } };
   }
 
-  private async toolSetAgentActive(input: Record<string, unknown>, workspaceId: string) {
+  private async toolSetAgentActive(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
     if (input.agentActive === undefined) {
       throw new Error('agentActive es requerido');
     }
@@ -2844,7 +2949,7 @@ export class QuickActionService {
     return { data: { sessionId: session.id, agentActive } };
   }
 
-  private async toolListNotifications(input: Record<string, unknown>, workspaceId: string) {
+  private async toolListNotifications(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
     const limit = Number(input.limit) || 10;
     const unread = this.parseOptionalBoolean(input.unread);
     const readCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
@@ -2867,7 +2972,7 @@ export class QuickActionService {
     return { data: notifications };
   }
 
-  private async toolMarkNotificationRead(input: Record<string, unknown>, workspaceId: string) {
+  private async toolMarkNotificationRead(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
     const notificationId = String(input.notificationId || '').trim();
     if (!notificationId) {
       throw new Error('notificationId es requerido');
@@ -2881,7 +2986,7 @@ export class QuickActionService {
     return { data: { updated: result.count > 0 } };
   }
 
-  private async toolMarkAllNotificationsRead(_input: Record<string, unknown>, workspaceId: string) {
+  private async toolMarkAllNotificationsRead(_input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
     const result = await this.prisma.notification.updateMany({
       where: { workspaceId, readAt: null },
       data: { readAt: new Date() },
@@ -2890,7 +2995,7 @@ export class QuickActionService {
     return { data: { updated: result.count } };
   }
 
-  private async toolGenerateCatalogPdf(input: Record<string, unknown>, workspaceId: string) {
+  private async toolGenerateCatalogPdf(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
     const catalogService = new CatalogPdfService(this.prisma);
     const filter = {
       ...(input.category ? { category: String(input.category) } : {}),
@@ -2908,7 +3013,11 @@ export class QuickActionService {
 
     return {
       data: {
-        url: `/uploads/catalogs/${filename}`,
+        url: buildSignedUploadPath({
+          category: 'catalogs',
+          filename,
+          ttlSeconds: resolveSignedUploadTtlSeconds(),
+        }),
         filename: result.filename,
         productCount: result.productCount,
         pageCount: result.pageCount,
@@ -2916,13 +3025,13 @@ export class QuickActionService {
     };
   }
 
-  private async toolGetBusinessMetrics(input: Record<string, unknown>, workspaceId: string) {
+  private async toolGetBusinessMetrics(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
     const range = typeof input.range === 'string' ? normalizeRange(input.range) : '90d';
     const metrics = await buildMetrics(this.prisma, workspaceId, range);
     return { data: metrics };
   }
 
-  private async toolGetSalesSummary(input: Record<string, unknown>, workspaceId: string) {
+  private async toolGetSalesSummary(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
     const resolvedRange = this.resolveSalesRangeFromInput(input);
     if (resolvedRange) {
       const metrics = await buildMetrics(this.prisma, workspaceId, resolvedRange);
@@ -2934,7 +3043,7 @@ export class QuickActionService {
     return { data: metrics };
   }
 
-  private async toolGetLowStockProducts(input: Record<string, unknown>, workspaceId: string) {
+  private async toolGetLowStockProducts(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
     const limit = Number(input.limit) || 10;
     const thresholdRaw = input.threshold !== undefined ? Number(input.threshold) : null;
     if (thresholdRaw !== null && (!Number.isFinite(thresholdRaw) || thresholdRaw < 0)) {
@@ -2982,7 +3091,7 @@ export class QuickActionService {
     };
   }
 
-  private async toolGetBusinessInsights(input: Record<string, unknown>, workspaceId: string) {
+  private async toolGetBusinessInsights(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
     const range = typeof input.range === 'string' ? normalizeRange(input.range) : '90d';
     const insights = await generateBusinessInsights(this.prisma, workspaceId, range);
     return { data: insights };
@@ -3194,7 +3303,7 @@ export class QuickActionService {
 
   private inferOrderStatusFromCommand(normalized: string): string | null {
     if (!normalized) return null;
-    const hasAny = (terms: string[]) => terms.some((term) => normalized.includes(term));
+    const hasAny = (terms: string[]): boolean => terms.some((term) => normalized.includes(term));
 
     if (
       hasAny([
@@ -3370,7 +3479,7 @@ export class QuickActionService {
     ].join('\n');
   }
 
-  private formatCustomerName(customer: { firstName?: string | null; lastName?: string | null; phone?: string | null }) {
+  private formatCustomerName(customer: { firstName?: string | null; lastName?: string | null; phone?: string | null }): string {
     const name = `${customer.firstName || ''} ${customer.lastName || ''}`.trim();
     return name || customer.phone || 'Cliente';
   }
@@ -3400,10 +3509,6 @@ export class QuickActionService {
 
   private resolveDirectNavigation(command: string): { summary: string; actions: QuickActionUIAction[] } | null {
     const normalized = this.normalizeText(command);
-    const wantsTopCustomer = this.commandWantsTopCustomer(normalized);
-    const wantsTopProduct = this.commandWantsTopProduct(normalized);
-    const wantsSalesSummary = this.commandWantsSalesSummary(normalized);
-    const wantsMetrics = this.commandWantsMetrics(normalized);
     if (!normalized) return null;
 
     const directPatterns: Array<{ regex: RegExp; page: string; label: string }> = [
@@ -3484,7 +3589,6 @@ export class QuickActionService {
     const wantsLowStock = this.commandWantsLowStock(normalized);
     const wantsInsights = this.commandWantsInsights(normalized);
     const wantsProductStock = this.commandWantsProductStock(normalized);
-    const wantsDebtReminder = this.commandWantsDebtReminder(normalized);
     const inferredOrderStatus = this.inferOrderStatusFromCommand(normalized);
     const bulkStockIntent = this.extractBulkStockIntent(command);
     const existingBulkTool = tools.find((tool) => tool.toolName === 'bulk_set_stock');
@@ -3538,7 +3642,7 @@ export class QuickActionService {
       });
     }
 
-    const hasTool = (name: string) => tools.some((t) => t.toolName === name);
+    const hasTool = (name: string): boolean => tools.some((t) => t.toolName === name);
     const hasSalesSummary = hasTool('get_sales_summary');
     const hasMetrics = hasTool('get_business_metrics');
     const hasInsights = hasTool('get_business_insights');
@@ -3641,7 +3745,7 @@ export class QuickActionService {
       if (cleanedName) {
         const hasDetails = hasTool('get_product_details');
         const normalizedCleaned = this.normalizeText(cleanedName);
-        const shouldOverrideName = (input: Record<string, unknown>) => {
+        const shouldOverrideName = (input: Record<string, unknown>): boolean => {
           if (input.productId || input.sku) return false;
           const existingName = typeof input.name === 'string' ? input.name.trim() : '';
           if (!existingName) return true;
@@ -4678,7 +4782,7 @@ export class QuickActionService {
     return deduped;
   }
 
-  private async resolveCustomer(input: Record<string, unknown>, workspaceId: string) {
+  private async resolveCustomer(input: Record<string, unknown>, workspaceId: string): Promise<CustomerRecord> {
     const where: Prisma.CustomerWhereInput = { workspaceId, deletedAt: null };
     const customerId = input.customerId ? String(input.customerId) : undefined;
     if (customerId) {
@@ -4748,7 +4852,7 @@ export class QuickActionService {
     input: Record<string, unknown>,
     workspaceId: string,
     customerId?: string
-  ) {
+  ): Promise<OrderRecord> {
     const orderId = input.orderId ? String(input.orderId) : undefined;
     const orderNumber = input.orderNumber ? String(input.orderNumber).toUpperCase() : undefined;
 
@@ -4785,7 +4889,7 @@ export class QuickActionService {
     return candidates[0];
   }
 
-  private async resolveProduct(input: Record<string, unknown>, workspaceId: string) {
+  private async resolveProduct(input: Record<string, unknown>, workspaceId: string): Promise<ProductWithStockItems> {
     const productId = input.productId ? String(input.productId) : undefined;
     const sku = input.sku ? String(input.sku) : undefined;
     const name = input.name ? String(input.name) : undefined;
@@ -4820,7 +4924,7 @@ export class QuickActionService {
       });
     }
 
-    let candidates: Array<any> = [];
+    let candidates: ProductWithStockItems[] = [];
 
     if (!sku && measurement?.baseName) {
       const baseName = measurement.baseName.trim();
@@ -5016,16 +5120,16 @@ export class QuickActionService {
     return null;
   }
 
-  private filterProductsByMeasurement(
-    products: Array<{
-      name: string;
-      unit?: string | null;
-      unitValue?: string | number | null;
-      secondaryUnit?: string | null;
-      secondaryUnitValue?: string | number | null;
-    }>,
+  private filterProductsByMeasurement<T extends {
+    name: string;
+    unit?: string | null;
+    unitValue?: string | number | null;
+    secondaryUnit?: string | null;
+    secondaryUnitValue?: string | number | null;
+  }>(
+    products: T[],
     measurement: { unitValue?: string; unit?: string; secondaryUnit?: string; secondaryUnitValue?: string }
-  ) {
+  ): T[] {
     let filtered = products;
     if (measurement.unit) {
       const unitMatches = filtered.filter((p) => (p.unit || 'unit') === measurement.unit);
@@ -5036,7 +5140,7 @@ export class QuickActionService {
 
     if (measurement.unitValue) {
       const normalizedValue = measurement.unitValue.replace(',', '.').trim();
-      const normalize = (value: string | number | null | undefined) =>
+      const normalize = (value: string | number | null | undefined): string =>
         value === null || value === undefined ? '' : String(value).replace(',', '.').trim();
 
       const valueMatches = filtered.filter((p) => normalize(p.unitValue) === normalizedValue);
@@ -5062,7 +5166,7 @@ export class QuickActionService {
 
     if (measurement.secondaryUnitValue) {
       const normalizedValue = measurement.secondaryUnitValue.replace(',', '.').trim();
-      const normalize = (value: string | number | null | undefined) =>
+      const normalize = (value: string | number | null | undefined): string =>
         value === null || value === undefined ? '' : String(value).replace(',', '.').trim();
 
       const valueMatches = filtered.filter((p) => normalize(p.secondaryUnitValue) === normalizedValue);
@@ -5074,7 +5178,7 @@ export class QuickActionService {
     return filtered;
   }
 
-  private async resolveCategory(input: Record<string, unknown>, workspaceId: string) {
+  private async resolveCategory(input: Record<string, unknown>, workspaceId: string): Promise<CategoryRecord> {
     const categoryId = input.categoryId ? String(input.categoryId) : undefined;
     const name = input.name ? String(input.name) : undefined;
 
@@ -5107,7 +5211,7 @@ export class QuickActionService {
     return candidates[0];
   }
 
-  private async resolveConversation(input: Record<string, unknown>, workspaceId: string) {
+  private async resolveConversation(input: Record<string, unknown>, workspaceId: string): Promise<ResolvedConversation> {
     const sessionId = input.sessionId ? String(input.sessionId) : undefined;
     if (sessionId) {
       const session = await this.prisma.agentSession.findFirst({
@@ -5216,7 +5320,7 @@ export class QuickActionService {
     unitValue?: string | null;
     secondaryUnit?: string | null;
     secondaryUnitValue?: string | null;
-  }) {
+  }): string {
     const unit = product.unit || 'unit';
     const unitValue = product.unitValue?.toString().trim();
     const primarySuffix = unit !== 'unit' && unitValue ? `${unitValue} ${UNIT_SHORT_LABELS[unit] || unit}` : '';
@@ -5272,13 +5376,14 @@ export class QuickActionService {
     for (const tool of parsedTools) {
       if (!productTools.has(tool.toolName)) continue;
       if (tool.input.productId || tool.input.sku) continue;
+      const input = tool.input;
 
       const rawName =
-        (typeof tool.input.name === 'string' && tool.input.name.trim()) ||
-        (typeof (tool.input as any).productName === 'string' && String((tool.input as any).productName).trim()) ||
-        (typeof (tool.input as any).product === 'string' && String((tool.input as any).product).trim()) ||
-        (typeof tool.input.query === 'string' && tool.input.query.trim()) ||
-        (typeof (tool.input as any).search === 'string' && String((tool.input as any).search).trim()) ||
+        readTrimmedString(input, 'name') ||
+        readTrimmedString(input, 'productName') ||
+        readTrimmedString(input, 'product') ||
+        readTrimmedString(input, 'query') ||
+        readTrimmedString(input, 'search') ||
         this.extractProductNameFromCommand(command) ||
         '';
 
@@ -5331,12 +5436,12 @@ export class QuickActionService {
   ): Promise<AmbiguousProductCandidate[]> {
     if (!workspaceId) return [];
     const name =
-      (typeof input.name === 'string' && input.name.trim()) ||
-      (typeof (input as any).productName === 'string' && String((input as any).productName).trim()) ||
-      (typeof (input as any).product === 'string' && String((input as any).product).trim()) ||
-      (typeof input.query === 'string' && input.query.trim()) ||
-      (typeof (input as any).search === 'string' && String((input as any).search).trim()) ||
-      (typeof (input as any).term === 'string' && String((input as any).term).trim()) ||
+      readTrimmedString(input, 'name') ||
+      readTrimmedString(input, 'productName') ||
+      readTrimmedString(input, 'product') ||
+      readTrimmedString(input, 'query') ||
+      readTrimmedString(input, 'search') ||
+      readTrimmedString(input, 'term') ||
       (fallbackQuery ? fallbackQuery.trim() : '') ||
       '';
     if (!name) return [];
@@ -5391,15 +5496,35 @@ export class QuickActionService {
     const actions: QuickActionUIAction[] = [];
     const summaryLines: string[] = [];
     const resultMap = new Map(results.map((r) => [r.toolName, r]));
-    const ambiguousProductResults = results.filter((r) => {
-      if (r.success || !r.data || typeof r.data !== 'object') return false;
-      return (r.data as any).kind === 'ambiguous_product';
-    }) as Array<ToolExecutionResult & { data: { kind: string; candidates: AmbiguousProductCandidate[] } }>;
+    const ambiguousProductResults = results
+      .filter((result) => !result.success)
+      .map((result) => {
+        const data = toRecord(result.data);
+        const kind = readString(data, 'kind');
+        const candidates = readRecordArray(data, 'candidates')
+          .map((candidate) => {
+            const id = readTrimmedString(candidate, 'id');
+            const name = readTrimmedString(candidate, 'name');
+            if (!id || !name) return null;
+            return {
+              id,
+              name,
+              sku: readTrimmedString(candidate, 'sku') || null,
+              unit: readTrimmedString(candidate, 'unit') || null,
+              unitValue: readTrimmedString(candidate, 'unitValue') || null,
+              secondaryUnit: readTrimmedString(candidate, 'secondaryUnit') || null,
+              secondaryUnitValue: readTrimmedString(candidate, 'secondaryUnitValue') || null,
+            } as AmbiguousProductCandidate;
+          })
+          .filter((candidate): candidate is AmbiguousProductCandidate => candidate !== null);
+        return { kind, candidates };
+      })
+      .filter((result) => result.kind === 'ambiguous_product' && result.candidates.length > 0);
 
     if (ambiguousProductResults.length > 0) {
       const candidateMap = new Map<string, AmbiguousProductCandidate>();
       ambiguousProductResults.forEach((result) => {
-        result.data.candidates?.forEach((candidate) => {
+        result.candidates.forEach((candidate) => {
           if (candidate?.id) {
             candidateMap.set(candidate.id, candidate);
           }
@@ -5420,90 +5545,105 @@ export class QuickActionService {
       }
     }
 
-    const addNavigate = (label: string, path: string, query?: Record<string, string>, _auto?: boolean) => {
+    const addNavigate = (label: string, path: string, query?: Record<string, string>, _auto?: boolean): void => {
       actions.push({ type: 'navigate', label, path, query });
     };
 
-    const addOpenUrl = (label: string, url: string) => {
+    const addOpenUrl = (label: string, url: string): void => {
       actions.push({ type: 'open_url', label, url });
     };
 
     const navResult = resultMap.get('navigate_dashboard');
-    if (navResult?.success && navResult.data && typeof navResult.data === 'object') {
-      const data = navResult.data as { path?: string; query?: Record<string, string> };
-      if (data.path) {
+    if (navResult?.success) {
+      const data = toRecord(navResult.data);
+      const path = readTrimmedString(data, 'path');
+      const query = toStringRecord(readRecord(data, 'query'));
+      if (path) {
         summaryLines.push('Listo. Podés abrir la sección desde esta ventana.');
-        addNavigate('Abrir', data.path, data.query);
+        addNavigate('Abrir', path, query);
       }
     }
 
     const customerResult = resultMap.get('get_customer_info');
     if (customerResult?.success) {
-      const customers = Array.isArray(customerResult.data) ? customerResult.data as Array<any> : [];
+      const customers = toRecordArray(customerResult.data);
       if (customers.length === 0) {
         summaryLines.push('No encontré clientes con ese criterio.');
       } else if (customers.length === 1) {
         const customer = customers[0];
-        const name = this.formatCustomerName(customer);
+        const name = this.formatCustomerName(toCustomerNameInput(customer));
+        const customerId = readTrimmedString(customer, 'id');
         summaryLines.push(`Encontré a ${name}.`);
-        addNavigate(`Abrir ${name}`, '/customers', { customerId: customer.id });
+        if (customerId) {
+          addNavigate(`Abrir ${name}`, '/customers', { customerId });
+        }
       } else {
         summaryLines.push(`Encontré ${customers.length} clientes.`);
         customers.slice(0, 5).forEach((customer) => {
-          const name = this.formatCustomerName(customer);
-          addNavigate(`Abrir ${name}`, '/customers', { customerId: customer.id });
+          const name = this.formatCustomerName(toCustomerNameInput(customer));
+          const customerId = readTrimmedString(customer, 'id');
+          if (customerId) {
+            addNavigate(`Abrir ${name}`, '/customers', { customerId });
+          }
         });
       }
     }
 
     const listCustomersResult = resultMap.get('list_customers');
     if (listCustomersResult?.success) {
-      const customers = Array.isArray(listCustomersResult.data) ? listCustomersResult.data as Array<any> : [];
+      const customers = toRecordArray(listCustomersResult.data);
       if (customers.length === 0) {
         summaryLines.push('No encontré clientes.');
       } else {
         summaryLines.push(`Encontré ${customers.length} cliente(s).`);
         customers.slice(0, 5).forEach((customer) => {
-          const name = this.formatCustomerName(customer);
-          addNavigate(`Abrir ${name}`, '/customers', { customerId: customer.id });
+          const name = this.formatCustomerName(toCustomerNameInput(customer));
+          const customerId = readTrimmedString(customer, 'id');
+          if (customerId) {
+            addNavigate(`Abrir ${name}`, '/customers', { customerId });
+          }
         });
         addNavigate('Ver clientes', '/customers');
       }
     }
 
     const unpaidResult = resultMap.get('get_unpaid_orders');
-    if (unpaidResult?.success && unpaidResult.data && typeof unpaidResult.data === 'object') {
-      const data = unpaidResult.data as any;
-      const customer = data.customer || {};
-      const orders = Array.isArray(data.orders) ? data.orders : [];
+    if (unpaidResult?.success) {
+      const data = toRecord(unpaidResult.data);
+      const customer = readRecord(data, 'customer');
+      const orders = readRecordArray(data, 'orders');
       if (orders.length === 0) {
-        summaryLines.push(`El cliente ${this.formatCustomerName(customer)} no tiene pedidos impagos.`);
+        summaryLines.push(`El cliente ${this.formatCustomerName(toCustomerNameInput(customer))} no tiene pedidos impagos.`);
       } else {
+        const totalPending = readNumber(data, 'totalPending') ?? 0;
         summaryLines.push(
-          `${this.formatCustomerName(customer)} tiene ${orders.length} pedido(s) impago(s) por $${this.formatMoney(data.totalPending || 0)}.`
+          `${this.formatCustomerName(toCustomerNameInput(customer))} tiene ${orders.length} pedido(s) impago(s) por $${this.formatMoney(totalPending)}.`
         );
-        orders.slice(0, 5).forEach((order: any) => {
-          if (order.orderNumber) {
-            addNavigate(`Abrir ${order.orderNumber}`, '/orders', { orderNumber: order.orderNumber });
+        orders.slice(0, 5).forEach((order) => {
+          const orderNumber = readTrimmedString(order, 'orderNumber');
+          if (orderNumber) {
+            addNavigate(`Abrir ${orderNumber}`, '/orders', { orderNumber });
           }
         });
       }
     }
 
     const balanceResult = resultMap.get('get_customer_balance');
-    if (balanceResult?.success && balanceResult.data && typeof balanceResult.data === 'object') {
-      const data = balanceResult.data as any;
+    if (balanceResult?.success) {
+      const data = toRecord(balanceResult.data);
+      const currentBalance = readNumber(data, 'currentBalance') ?? 0;
+      const customerId = readTrimmedString(data, 'id');
       summaryLines.push(
-        `Saldo de ${this.formatCustomerName(data)}: $${this.formatMoney(data.currentBalance || 0)}.`
+        `Saldo de ${this.formatCustomerName(toCustomerNameInput(data))}: $${this.formatMoney(currentBalance)}.`
       );
-      if (data.id) {
-        addNavigate('Ver cliente', '/customers', { customerId: data.id });
+      if (customerId) {
+        addNavigate('Ver cliente', '/customers', { customerId });
       }
     }
 
     const debtorsResult = resultMap.get('list_debtors');
-    if (debtorsResult?.success && Array.isArray(debtorsResult.data)) {
-      const customers = debtorsResult.data as Array<any>;
+    if (debtorsResult?.success) {
+      const customers = toRecordArray(debtorsResult.data);
       if (customers.length === 0) {
         summaryLines.push('No hay clientes con deuda.');
       } else {
@@ -5513,44 +5653,55 @@ export class QuickActionService {
     }
 
     const debtReminderResult = resultMap.get('send_debt_reminder');
-    if (debtReminderResult?.success && debtReminderResult.data && typeof debtReminderResult.data === 'object') {
-      const data = debtReminderResult.data as any;
-      const customer = data.customer || {};
-      const totalDebt = data.totalDebt ?? 0;
+    if (debtReminderResult?.success) {
+      const data = toRecord(debtReminderResult.data);
+      const customer = readRecord(data, 'customer');
+      const customerId = readTrimmedString(customer, 'id');
+      const totalDebt = readNumber(data, 'totalDebt') ?? 0;
       summaryLines.push(
-        `Recordatorio enviado a ${this.formatCustomerName(customer)} por $${this.formatMoney(totalDebt)}.`
+        `Recordatorio enviado a ${this.formatCustomerName(toCustomerNameInput(customer))} por $${this.formatMoney(totalDebt)}.`
       );
-      if (customer.id) {
-        addNavigate('Ver cliente', '/customers', { customerId: customer.id }, true);
+      if (customerId) {
+        addNavigate('Ver cliente', '/customers', { customerId }, true);
       } else {
         addNavigate('Ver deudas', '/debts', undefined, true);
       }
     }
 
     const bulkDebtReminderResult = resultMap.get('send_debt_reminders_bulk');
-    if (bulkDebtReminderResult?.success && bulkDebtReminderResult.data && typeof bulkDebtReminderResult.data === 'object') {
-      const data = bulkDebtReminderResult.data as any;
+    if (bulkDebtReminderResult?.success) {
+      const data = toRecord(bulkDebtReminderResult.data);
+      const sent = readNumber(data, 'sent') ?? 0;
+      const failed = readNumber(data, 'failed') ?? 0;
+      const total = readNumber(data, 'total') ?? 0;
       summaryLines.push(
-        `Recordatorios enviados: ${data.sent || 0} · Fallidos: ${data.failed || 0} · Total deudores: ${data.total || 0}.`
+        `Recordatorios enviados: ${sent} · Fallidos: ${failed} · Total deudores: ${total}.`
       );
       addNavigate('Ver deudas', '/debts', undefined, true);
     }
 
     const orderDetailResult = resultMap.get('get_order_details');
-    if (orderDetailResult?.success && orderDetailResult.data && typeof orderDetailResult.data === 'object') {
-      const order = orderDetailResult.data as any;
-      summaryLines.push(`Pedido ${order.orderNumber} (${order.status}).`);
-      addNavigate(`Abrir ${order.orderNumber}`, '/orders', { orderId: order.id }, true);
+    if (orderDetailResult?.success) {
+      const order = toRecord(orderDetailResult.data);
+      const orderNumber = readTrimmedString(order, 'orderNumber') || 'pedido';
+      const status = readTrimmedString(order, 'status') || 'sin estado';
+      const orderId = readTrimmedString(order, 'id');
+      summaryLines.push(`Pedido ${orderNumber} (${status}).`);
+      if (orderId) {
+        addNavigate(`Abrir ${orderNumber}`, '/orders', { orderId }, true);
+      }
     }
 
     const listOrdersResult = resultMap.get('list_orders');
-    if (listOrdersResult?.success && Array.isArray(listOrdersResult.data)) {
-      const orders = listOrdersResult.data as Array<any>;
+    if (listOrdersResult?.success) {
+      const orders = toRecordArray(listOrdersResult.data);
       summaryLines.push(`Encontré ${orders.length} pedido(s).`);
       if (orders.length === 1) {
         const order = orders[0];
-        if (order?.id) {
-          addNavigate(`Abrir ${order.orderNumber || 'pedido'}`, '/orders', { orderId: order.id }, true);
+        const orderId = readTrimmedString(order, 'id');
+        const orderNumber = readTrimmedString(order, 'orderNumber') || 'pedido';
+        if (orderId) {
+          addNavigate(`Abrir ${orderNumber}`, '/orders', { orderId }, true);
         }
       } else if (orders.length > 1) {
         addNavigate('Ver pedidos', '/orders', undefined, true);
@@ -5558,15 +5709,17 @@ export class QuickActionService {
     }
 
     const conversationsResult = resultMap.get('list_conversations');
-    if (conversationsResult?.success && Array.isArray(conversationsResult.data)) {
-      const conversations = conversationsResult.data as Array<any>;
+    if (conversationsResult?.success) {
+      const conversations = toRecordArray(conversationsResult.data);
       if (conversations.length === 0) {
         summaryLines.push('No hay conversaciones activas.');
       } else {
         summaryLines.push(`Conversaciones activas: ${conversations.length}.`);
         const first = conversations[0];
-        if (first?.id) {
-          addNavigate(`Abrir ${first.customerName || 'conversación'}`, '/inbox', { sessionId: first.id }, true);
+        const sessionId = readTrimmedString(first, 'id');
+        const customerName = readTrimmedString(first, 'customerName') || 'conversación';
+        if (sessionId) {
+          addNavigate(`Abrir ${customerName}`, '/inbox', { sessionId }, true);
         } else {
           addNavigate('Abrir inbox', '/inbox', undefined, true);
         }
@@ -5574,26 +5727,31 @@ export class QuickActionService {
     }
 
     const openConversationResult = resultMap.get('open_conversation');
-    if (openConversationResult?.success && openConversationResult.data && typeof openConversationResult.data === 'object') {
-      const session = openConversationResult.data as any;
-      summaryLines.push(`Abrí la conversación con ${session.customerName || 'cliente'}.`);
-      if (session.id) {
-        addNavigate(`Abrir ${session.customerName || 'conversación'}`, '/inbox', { sessionId: session.id }, true);
+    if (openConversationResult?.success) {
+      const session = toRecord(openConversationResult.data);
+      const customerName = readTrimmedString(session, 'customerName') || 'cliente';
+      const sessionId = readTrimmedString(session, 'id');
+      summaryLines.push(`Abrí la conversación con ${customerName}.`);
+      if (sessionId) {
+        addNavigate(`Abrir ${customerName}`, '/inbox', { sessionId }, true);
       }
     }
 
     const messagesResult = resultMap.get('get_conversation_messages');
-    if (messagesResult?.success && messagesResult.data && typeof messagesResult.data === 'object') {
-      const data = messagesResult.data as any;
-      if (data.session?.id) {
-        summaryLines.push(`Mostrando mensajes de ${data.session.customerName || 'cliente'}.`);
-        addNavigate('Abrir conversación', '/inbox', { sessionId: data.session.id }, true);
+    if (messagesResult?.success) {
+      const data = toRecord(messagesResult.data);
+      const session = readRecord(data, 'session');
+      const sessionId = readTrimmedString(session, 'id');
+      const customerName = readTrimmedString(session, 'customerName') || 'cliente';
+      if (sessionId) {
+        summaryLines.push(`Mostrando mensajes de ${customerName}.`);
+        addNavigate('Abrir conversación', '/inbox', { sessionId }, true);
       }
     }
 
     const productResult = resultMap.get('search_products');
-    if (productResult?.success && Array.isArray(productResult.data)) {
-      const products = productResult.data as Array<any>;
+    if (productResult?.success) {
+      const products = toRecordArray(productResult.data);
       if (products.length === 0) {
         summaryLines.push(
           wantsProductStock
@@ -5602,10 +5760,19 @@ export class QuickActionService {
         );
       } else if (wantsProductStock && products.length === 1) {
         const product = products[0];
-        const displayName = this.buildProductDisplayName(product);
-        summaryLines.push(`Stock de ${displayName}: ${product.stock ?? 0} unidades.`);
-        if (product.id) {
-          addNavigate(`Abrir ${product.name}`, '/stock', { productId: product.id }, false);
+        const displayName = this.buildProductDisplayName({
+          name: readTrimmedString(product, 'name') || 'Producto',
+          unit: readTrimmedString(product, 'unit') || null,
+          unitValue: readTrimmedString(product, 'unitValue') || null,
+          secondaryUnit: readTrimmedString(product, 'secondaryUnit') || null,
+          secondaryUnitValue: readTrimmedString(product, 'secondaryUnitValue') || null,
+        });
+        const stock = readNumber(product, 'stock') ?? 0;
+        const productId = readTrimmedString(product, 'id');
+        const productName = readTrimmedString(product, 'name') || 'producto';
+        summaryLines.push(`Stock de ${displayName}: ${stock} unidades.`);
+        if (productId) {
+          addNavigate(`Abrir ${productName}`, '/stock', { productId }, false);
         } else {
           addNavigate('Ver stock', '/stock', undefined, false);
         }
@@ -5619,101 +5786,127 @@ export class QuickActionService {
     }
 
     const listProductsResult = resultMap.get('list_products');
-    if (listProductsResult?.success && Array.isArray(listProductsResult.data)) {
-      const products = listProductsResult.data as Array<any>;
+    if (listProductsResult?.success) {
+      const products = toRecordArray(listProductsResult.data);
       summaryLines.push(`Encontré ${products.length} producto(s).`);
       addNavigate('Ver stock', '/stock', undefined, false);
-      if (products[0]?.id) {
-        addNavigate(`Abrir ${products[0].name}`, '/stock', { productId: products[0].id });
+      const firstProduct = products[0];
+      const firstProductId = readTrimmedString(firstProduct, 'id');
+      const firstProductName = readTrimmedString(firstProduct, 'name') || 'producto';
+      if (firstProductId) {
+        addNavigate(`Abrir ${firstProductName}`, '/stock', { productId: firstProductId });
       }
     }
 
     const productDetailResult = resultMap.get('get_product_details');
-    if (productDetailResult?.success && productDetailResult.data && typeof productDetailResult.data === 'object') {
-      const product = productDetailResult.data as any;
-      const displayName = this.buildProductDisplayName(product);
-      summaryLines.push(`Stock de ${displayName}: ${product.stock ?? 0} unidades.`);
-      if (product.id) {
-        addNavigate(`Abrir ${product.name}`, '/stock', { productId: product.id }, false);
+    if (productDetailResult?.success) {
+      const product = toRecord(productDetailResult.data);
+      const displayName = this.buildProductDisplayName({
+        name: readTrimmedString(product, 'name') || 'Producto',
+        unit: readTrimmedString(product, 'unit') || null,
+        unitValue: readTrimmedString(product, 'unitValue') || null,
+        secondaryUnit: readTrimmedString(product, 'secondaryUnit') || null,
+        secondaryUnitValue: readTrimmedString(product, 'secondaryUnitValue') || null,
+      });
+      const stock = readNumber(product, 'stock') ?? 0;
+      const productId = readTrimmedString(product, 'id');
+      const productName = readTrimmedString(product, 'name') || 'producto';
+      summaryLines.push(`Stock de ${displayName}: ${stock} unidades.`);
+      if (productId) {
+        addNavigate(`Abrir ${productName}`, '/stock', { productId }, false);
       }
     }
 
     const categoriesResult = resultMap.get('list_categories');
-    if (categoriesResult?.success && Array.isArray(categoriesResult.data)) {
-      const categories = categoriesResult.data as Array<any>;
+    if (categoriesResult?.success) {
+      const categories = toRecordArray(categoriesResult.data);
       summaryLines.push(`Encontré ${categories.length} categoría(s).`);
       addNavigate('Ver stock', '/stock', undefined, false);
     }
 
     const updateCustomerResult = resultMap.get('update_customer');
-    if (updateCustomerResult?.success && updateCustomerResult.data && typeof updateCustomerResult.data === 'object') {
-      const customer = updateCustomerResult.data as any;
-      summaryLines.push(`Actualicé los datos de ${this.formatCustomerName(customer)}.`);
-      if (customer.id) {
-        addNavigate('Ver cliente', '/customers', { customerId: customer.id }, true);
+    if (updateCustomerResult?.success) {
+      const customer = toRecord(updateCustomerResult.data);
+      const customerId = readTrimmedString(customer, 'id');
+      summaryLines.push(`Actualicé los datos de ${this.formatCustomerName(toCustomerNameInput(customer))}.`);
+      if (customerId) {
+        addNavigate('Ver cliente', '/customers', { customerId }, true);
       }
     }
 
     const updateStatusResult = resultMap.get('update_order_status');
-    if (updateStatusResult?.success && updateStatusResult.data && typeof updateStatusResult.data === 'object') {
-      const order = updateStatusResult.data as any;
-      summaryLines.push(`Actualicé ${order.orderNumber} a estado ${order.status}.`);
-      if (order.id) {
-        addNavigate('Ver pedido', '/orders', { orderId: order.id }, true);
+    if (updateStatusResult?.success) {
+      const order = toRecord(updateStatusResult.data);
+      const orderId = readTrimmedString(order, 'id');
+      const orderNumber = readTrimmedString(order, 'orderNumber') || 'pedido';
+      const status = readTrimmedString(order, 'status') || 'actualizado';
+      summaryLines.push(`Actualicé ${orderNumber} a estado ${status}.`);
+      if (orderId) {
+        addNavigate('Ver pedido', '/orders', { orderId }, true);
       }
     }
 
     const cancelResult = resultMap.get('cancel_order');
-    if (cancelResult?.success && cancelResult.data && typeof cancelResult.data === 'object') {
-      const order = cancelResult.data as any;
-      summaryLines.push(`Cancelé el pedido ${order.orderNumber}.`);
-      if (order.id) {
-        addNavigate('Ver pedido', '/orders', { orderId: order.id });
+    if (cancelResult?.success) {
+      const order = toRecord(cancelResult.data);
+      const orderId = readTrimmedString(order, 'id');
+      const orderNumber = readTrimmedString(order, 'orderNumber') || 'pedido';
+      summaryLines.push(`Cancelé el pedido ${orderNumber}.`);
+      if (orderId) {
+        addNavigate('Ver pedido', '/orders', { orderId });
       }
     }
 
     const noteResult = resultMap.get('add_order_note');
-    if (noteResult?.success && noteResult.data && typeof noteResult.data === 'object') {
-      const order = noteResult.data as any;
-      summaryLines.push(`Agregué la nota al pedido ${order.orderNumber}.`);
-      if (order.id) {
-        addNavigate('Ver pedido', '/orders', { orderId: order.id }, true);
+    if (noteResult?.success) {
+      const order = toRecord(noteResult.data);
+      const orderId = readTrimmedString(order, 'id');
+      const orderNumber = readTrimmedString(order, 'orderNumber') || 'pedido';
+      summaryLines.push(`Agregué la nota al pedido ${orderNumber}.`);
+      if (orderId) {
+        addNavigate('Ver pedido', '/orders', { orderId }, true);
       }
     }
 
     const sendMessageResult = resultMap.get('send_conversation_message');
-    if (sendMessageResult?.success && sendMessageResult.data && typeof sendMessageResult.data === 'object') {
-      const data = sendMessageResult.data as any;
-      summaryLines.push(`Mensaje enviado a ${data.session?.customerName || 'cliente'}.`);
-      if (data.session?.id) {
-        addNavigate('Abrir conversación', '/inbox', { sessionId: data.session.id }, true);
+    if (sendMessageResult?.success) {
+      const data = toRecord(sendMessageResult.data);
+      const session = readRecord(data, 'session');
+      const sessionId = readTrimmedString(session, 'id');
+      const customerName = readTrimmedString(session, 'customerName') || 'cliente';
+      summaryLines.push(`Mensaje enviado a ${customerName}.`);
+      if (sessionId) {
+        addNavigate('Abrir conversación', '/inbox', { sessionId }, true);
       }
     }
 
     const agentActiveResult = resultMap.get('set_agent_active');
-    if (agentActiveResult?.success && agentActiveResult.data && typeof agentActiveResult.data === 'object') {
-      const data = agentActiveResult.data as any;
-      summaryLines.push(`Agente ${data.agentActive ? 'activado' : 'pausado'} en la conversación.`);
-      if (data.sessionId) {
-        addNavigate('Abrir conversación', '/inbox', { sessionId: data.sessionId });
+    if (agentActiveResult?.success) {
+      const data = toRecord(agentActiveResult.data);
+      const agentActive = readBoolean(data, 'agentActive') === true;
+      const sessionId = readTrimmedString(data, 'sessionId');
+      summaryLines.push(`Agente ${agentActive ? 'activado' : 'pausado'} en la conversación.`);
+      if (sessionId) {
+        addNavigate('Abrir conversación', '/inbox', { sessionId });
       }
     }
 
     const notificationsResult = resultMap.get('list_notifications');
-    if (notificationsResult?.success && Array.isArray(notificationsResult.data)) {
-      const notifications = notificationsResult.data as Array<any>;
+    if (notificationsResult?.success) {
+      const notifications = toRecordArray(notificationsResult.data);
       summaryLines.push(`Notificaciones: ${notifications.length}.`);
     }
 
     const bulkStockResult = resultMap.get('bulk_set_stock');
-    if (bulkStockResult?.success && bulkStockResult.data && typeof bulkStockResult.data === 'object') {
-      const data = bulkStockResult.data as any;
-      const target = data.target ?? 0;
-      const updatedCount = data.updatedCount ?? 0;
-      const totalProducts = data.totalProducts ?? updatedCount;
-      const unchangedCount = data.unchangedCount ?? Math.max(0, totalProducts - updatedCount);
-      const categoryLabel = data.categoryName ? ` de ${data.categoryName}` : '';
-      if (data.mode === 'adjust') {
+    if (bulkStockResult?.success) {
+      const data = toRecord(bulkStockResult.data);
+      const target = readNumber(data, 'target') ?? 0;
+      const updatedCount = readNumber(data, 'updatedCount') ?? 0;
+      const totalProducts = readNumber(data, 'totalProducts') ?? updatedCount;
+      const unchangedCount = readNumber(data, 'unchangedCount') ?? Math.max(0, totalProducts - updatedCount);
+      const categoryName = readTrimmedString(data, 'categoryName');
+      const categoryLabel = categoryName ? ` de ${categoryName}` : '';
+      if (readTrimmedString(data, 'mode') === 'adjust') {
         summaryLines.push(`Ajusté el stock de ${updatedCount} productos${categoryLabel} (delta ${target}).`);
       } else {
         summaryLines.push(`Actualicé el stock de ${updatedCount} productos${categoryLabel} a ${target} unidades.`);
@@ -5725,15 +5918,16 @@ export class QuickActionService {
     }
 
     const adjustPricesResult = resultMap.get('adjust_prices_percent');
-    if (adjustPricesResult?.success && adjustPricesResult.data && typeof adjustPricesResult.data === 'object') {
-      const data = adjustPricesResult.data as any;
-      const mode = data.mode === 'amount' ? 'amount' : 'percent';
-      const percent = Number(data.percent || 0);
-      const amount = Number(data.amount || 0);
-      const updatedCount = Number(data.updatedCount || 0);
-      const totalProducts = Number(data.totalProducts || updatedCount);
-      const unchangedCount = Number(data.unchangedCount || Math.max(0, totalProducts - updatedCount));
-      const categoryLabel = data.categoryName ? ` en ${data.categoryName}` : '';
+    if (adjustPricesResult?.success) {
+      const data = toRecord(adjustPricesResult.data);
+      const mode = readTrimmedString(data, 'mode') === 'amount' ? 'amount' : 'percent';
+      const percent = readNumber(data, 'percent') ?? 0;
+      const amount = readNumber(data, 'amount') ?? 0;
+      const updatedCount = readNumber(data, 'updatedCount') ?? 0;
+      const totalProducts = readNumber(data, 'totalProducts') ?? updatedCount;
+      const unchangedCount = readNumber(data, 'unchangedCount') ?? Math.max(0, totalProducts - updatedCount);
+      const categoryName = readTrimmedString(data, 'categoryName');
+      const categoryLabel = categoryName ? ` en ${categoryName}` : '';
       if (mode === 'amount') {
         const direction = amount >= 0 ? 'Aumenté' : 'Bajé';
         summaryLines.push(`${direction} precios $${this.formatMoney(Math.abs(amount) * 100)}${categoryLabel} en ${updatedCount} producto(s).`);
@@ -5748,67 +5942,81 @@ export class QuickActionService {
     }
 
     const notificationReadResult = resultMap.get('mark_notification_read');
-    if (notificationReadResult?.success && notificationReadResult.data && typeof notificationReadResult.data === 'object') {
+    if (notificationReadResult?.success) {
       summaryLines.push('Notificación marcada como leída.');
     }
 
     const notificationReadAllResult = resultMap.get('mark_all_notifications_read');
-    if (notificationReadAllResult?.success && notificationReadAllResult.data && typeof notificationReadAllResult.data === 'object') {
+    if (notificationReadAllResult?.success) {
       summaryLines.push('Notificaciones marcadas como leídas.');
     }
 
     const paymentResult = resultMap.get('apply_payment');
-    if (paymentResult?.success && paymentResult.data && typeof paymentResult.data === 'object') {
-      const data = paymentResult.data as any;
-      summaryLines.push(`Pago de $${this.formatMoney(data.amount || 0)} aplicado a ${this.formatCustomerName(data.customer || {})}.`);
-      if (data.customer?.id) {
-        addNavigate('Ver cliente', '/customers', { customerId: data.customer.id }, true);
+    if (paymentResult?.success) {
+      const data = toRecord(paymentResult.data);
+      const amount = readNumber(data, 'amount') ?? 0;
+      const customer = readRecord(data, 'customer');
+      const customerId = readTrimmedString(customer, 'id');
+      const order = readRecord(data, 'order');
+      const orderId = readTrimmedString(order, 'id');
+      summaryLines.push(`Pago de $${this.formatMoney(amount)} aplicado a ${this.formatCustomerName(toCustomerNameInput(customer))}.`);
+      if (customerId) {
+        addNavigate('Ver cliente', '/customers', { customerId }, true);
       }
-      if (data.order?.id) {
-        addNavigate('Ver pedido', '/orders', { orderId: data.order.id });
+      if (orderId) {
+        addNavigate('Ver pedido', '/orders', { orderId });
       }
     }
 
     const stockResult = resultMap.get('adjust_stock');
-    if (stockResult?.success && stockResult.data && typeof stockResult.data === 'object') {
-      const data = stockResult.data as any;
-      const available = typeof data.newAvailable === 'number' ? data.newAvailable : data.newQuantity;
+    if (stockResult?.success) {
+      const data = toRecord(stockResult.data);
+      const newAvailable = readNumber(data, 'newAvailable');
+      const newQuantity = readNumber(data, 'newQuantity');
+      const reserved = readNumber(data, 'reserved');
+      const available = typeof newAvailable === 'number' ? newAvailable : newQuantity;
       const availableLabel = typeof available === 'number' ? String(available) : '';
-      const reservedLabel = typeof data.reserved === 'number' && data.reserved > 0 ? ` (Reservado: ${data.reserved})` : '';
+      const reservedLabel = typeof reserved === 'number' && reserved > 0 ? ` (Reservado: ${reserved})` : '';
       summaryLines.push(`Ajusté el stock. Stock disponible: ${availableLabel}${reservedLabel}.`);
       addNavigate('Ver stock', '/stock', undefined, true);
     }
 
     const createProductResult = resultMap.get('create_product');
-    if (createProductResult?.success && createProductResult.data && typeof createProductResult.data === 'object') {
-      const product = createProductResult.data as any;
-      summaryLines.push(`Producto creado: ${product.name}.`);
-      if (product.id) {
-        addNavigate('Ver producto', '/stock', { productId: product.id }, true);
+    if (createProductResult?.success) {
+      const product = toRecord(createProductResult.data);
+      const productName = readTrimmedString(product, 'name') || 'producto';
+      const productId = readTrimmedString(product, 'id');
+      summaryLines.push(`Producto creado: ${productName}.`);
+      if (productId) {
+        addNavigate('Ver producto', '/stock', { productId }, true);
       }
     }
 
     const updateProductResult = resultMap.get('update_product');
-    if (updateProductResult?.success && updateProductResult.data && typeof updateProductResult.data === 'object') {
-      const product = updateProductResult.data as any;
-      summaryLines.push(`Producto actualizado: ${product.name}.`);
-      if (product.id) {
-        addNavigate('Ver producto', '/stock', { productId: product.id }, true);
+    if (updateProductResult?.success) {
+      const product = toRecord(updateProductResult.data);
+      const productName = readTrimmedString(product, 'name') || 'producto';
+      const productId = readTrimmedString(product, 'id');
+      summaryLines.push(`Producto actualizado: ${productName}.`);
+      if (productId) {
+        addNavigate('Ver producto', '/stock', { productId }, true);
       }
     }
 
     const deleteProductResult = resultMap.get('delete_product');
-    if (deleteProductResult?.success && deleteProductResult.data && typeof deleteProductResult.data === 'object') {
-      const product = deleteProductResult.data as any;
-      summaryLines.push(`Producto eliminado: ${product.name || 'producto'}.`);
+    if (deleteProductResult?.success) {
+      const product = toRecord(deleteProductResult.data);
+      const productName = readTrimmedString(product, 'name') || 'producto';
+      summaryLines.push(`Producto eliminado: ${productName}.`);
     }
 
     const assignCategoryResult = resultMap.get('assign_category_to_products');
-    if (assignCategoryResult?.success && assignCategoryResult.data && typeof assignCategoryResult.data === 'object') {
-      const data = assignCategoryResult.data as any;
-      const categoryName = data.category?.name || 'la categoría';
-      const matchedCount = data.matchedCount ?? 0;
-      if (data.category?.created) {
+    if (assignCategoryResult?.success) {
+      const data = toRecord(assignCategoryResult.data);
+      const category = readRecord(data, 'category');
+      const categoryName = readTrimmedString(category, 'name') || 'la categoría';
+      const matchedCount = readNumber(data, 'matchedCount') ?? 0;
+      if (readBoolean(category, 'created') === true) {
         summaryLines.push(`Categoría creada: ${categoryName}.`);
       }
       summaryLines.push(`Asigné ${categoryName} a ${matchedCount} producto(s).`);
@@ -5816,31 +6024,36 @@ export class QuickActionService {
     }
 
     const createCategoryResult = resultMap.get('create_category');
-    if (createCategoryResult?.success && createCategoryResult.data && typeof createCategoryResult.data === 'object') {
-      const category = createCategoryResult.data as any;
-      summaryLines.push(`Categoría creada: ${category.name}.`);
+    if (createCategoryResult?.success) {
+      const category = toRecord(createCategoryResult.data);
+      const categoryName = readTrimmedString(category, 'name') || 'categoría';
+      summaryLines.push(`Categoría creada: ${categoryName}.`);
       addNavigate('Ver stock', '/stock', undefined, true);
     }
 
     const updateCategoryResult = resultMap.get('update_category');
-    if (updateCategoryResult?.success && updateCategoryResult.data && typeof updateCategoryResult.data === 'object') {
-      const category = updateCategoryResult.data as any;
-      summaryLines.push(`Categoría actualizada: ${category.name}.`);
+    if (updateCategoryResult?.success) {
+      const category = toRecord(updateCategoryResult.data);
+      const categoryName = readTrimmedString(category, 'name') || 'categoría';
+      summaryLines.push(`Categoría actualizada: ${categoryName}.`);
       addNavigate('Ver stock', '/stock', undefined, true);
     }
 
     const deleteCategoryResult = resultMap.get('delete_category');
-    if (deleteCategoryResult?.success && deleteCategoryResult.data && typeof deleteCategoryResult.data === 'object') {
-      const category = deleteCategoryResult.data as any;
-      summaryLines.push(`Categoría eliminada: ${category.name || 'categoría'}.`);
+    if (deleteCategoryResult?.success) {
+      const category = toRecord(deleteCategoryResult.data);
+      const categoryName = readTrimmedString(category, 'name') || 'categoría';
+      summaryLines.push(`Categoría eliminada: ${categoryName}.`);
     }
 
     const catalogResult = resultMap.get('generate_catalog_pdf');
-    if (catalogResult?.success && catalogResult.data && typeof catalogResult.data === 'object') {
-      const data = catalogResult.data as any;
-      summaryLines.push(`Catálogo generado (${data.productCount || 0} productos).`);
-      if (data.url) {
-        addOpenUrl('Descargar catálogo', data.url);
+    if (catalogResult?.success) {
+      const data = toRecord(catalogResult.data);
+      const productCount = readNumber(data, 'productCount') ?? 0;
+      const url = readTrimmedString(data, 'url');
+      summaryLines.push(`Catálogo generado (${productCount} productos).`);
+      if (url) {
+        addOpenUrl('Descargar catálogo', url);
       }
     }
 
@@ -5849,33 +6062,47 @@ export class QuickActionService {
       ? salesSummaryResult
       : resultMap.get('get_business_metrics');
 
-    if (metricsResult?.success && metricsResult.data && typeof metricsResult.data === 'object') {
-      const data = metricsResult.data as any;
-      const rangeLabel = data.range?.label ? ` (${data.range.label})` : '';
+    if (metricsResult?.success) {
+      const data = toRecord(metricsResult.data);
+      const range = readRecord(data, 'range');
+      const rangeLabelValue = readTrimmedString(range, 'label');
+      const rangeLabel = rangeLabelValue ? ` (${rangeLabelValue})` : '';
+      const summary = readRecord(data, 'summary');
       const shouldShowSummary = wantsSalesSummary || wantsMetrics || (!wantsTopCustomer && !wantsTopProduct);
-      if (data.summary && shouldShowSummary) {
+      if (summary && shouldShowSummary) {
+        const totalRevenue = readNumber(summary, 'totalRevenue') ?? 0;
+        const totalOrders = readNumber(summary, 'totalOrders') ?? 0;
+        const avgOrderValue = readNumber(summary, 'avgOrderValue') ?? 0;
         summaryLines.push(
-          `Ventas${rangeLabel}: $${this.formatMoney(data.summary.totalRevenue || 0)} · Pedidos: ${data.summary.totalOrders || 0} · Ticket promedio: $${this.formatMoney(data.summary.avgOrderValue || 0)}`
+          `Ventas${rangeLabel}: $${this.formatMoney(totalRevenue)} · Pedidos: ${totalOrders} · Ticket promedio: $${this.formatMoney(avgOrderValue)}`
         );
       }
       if (wantsMetrics) {
         addNavigate('Ver métricas', '/metrics', undefined, true);
       }
 
-      if (wantsTopCustomer && Array.isArray(data.topCustomers) && data.topCustomers.length > 0) {
-        const top = data.topCustomers[0];
-        summaryLines.push(`Cliente top${rangeLabel}: ${top.name}.`);
-        addNavigate(`Abrir ${top.name}`, '/customers', { customerId: top.id }, true);
+      const topCustomers = readRecordArray(data, 'topCustomers');
+      if (wantsTopCustomer && topCustomers.length > 0) {
+        const top = topCustomers[0];
+        const topName = readTrimmedString(top, 'name') || 'cliente';
+        const customerId = readTrimmedString(top, 'id');
+        summaryLines.push(`Cliente top${rangeLabel}: ${topName}.`);
+        if (customerId) {
+          addNavigate(`Abrir ${topName}`, '/customers', { customerId }, true);
+        }
       } else if (wantsTopCustomer) {
         summaryLines.push(`No hay datos suficientes para identificar el cliente con más compras${rangeLabel}.`);
       }
 
 
-      if (wantsTopProduct && Array.isArray(data.topProducts) && data.topProducts.length > 0) {
-        const top = data.topProducts[0];
-        summaryLines.push(`Producto top${rangeLabel}: ${top.name}.`);
-        if (top.id) {
-          addNavigate(`Abrir ${top.name}`, '/stock', { productId: top.id }, true);
+      const topProducts = readRecordArray(data, 'topProducts');
+      if (wantsTopProduct && topProducts.length > 0) {
+        const top = topProducts[0];
+        const topName = readTrimmedString(top, 'name') || 'producto';
+        const productId = readTrimmedString(top, 'id');
+        summaryLines.push(`Producto top${rangeLabel}: ${topName}.`);
+        if (productId) {
+          addNavigate(`Abrir ${topName}`, '/stock', { productId }, true);
         } else {
           addNavigate('Ver stock', '/stock', undefined, true);
         }
@@ -5885,10 +6112,10 @@ export class QuickActionService {
     }
 
     const lowStockResult = resultMap.get('get_low_stock_products');
-    if (lowStockResult?.success && lowStockResult.data && typeof lowStockResult.data === 'object') {
-      const data = lowStockResult.data as any;
-      const products = Array.isArray(data.products) ? data.products as Array<any> : [];
-      const totalLowStock = typeof data.totalLowStock === 'number' ? data.totalLowStock : products.length;
+    if (lowStockResult?.success) {
+      const data = toRecord(lowStockResult.data);
+      const products = readRecordArray(data, 'products');
+      const totalLowStock = readNumber(data, 'totalLowStock') ?? products.length;
 
       if (totalLowStock === 0) {
         summaryLines.push('No hay productos con stock bajo.');
@@ -5897,13 +6124,23 @@ export class QuickActionService {
         const sample = products.slice(0, 5);
         if (sample.length > 0) {
           const preview = sample
-            .map((item) => `${item.displayName || item.name} (${item.available ?? 0} uds)`)
+            .map((item) => {
+              const name = readTrimmedString(item, 'displayName') || readTrimmedString(item, 'name') || 'producto';
+              const available = readNumber(item, 'available') ?? 0;
+              return `${name} (${available} uds)`;
+            })
             .join(', ');
           summaryLines.push(`Ejemplos: ${preview}.`);
         }
         addNavigate('Ver stock', '/stock', undefined, false);
-        if (products[0]?.id) {
-          addNavigate(`Abrir ${products[0].displayName || products[0].name}`, '/stock', { productId: products[0].id });
+        const firstProduct = products[0];
+        const firstProductId = readTrimmedString(firstProduct, 'id');
+        const firstProductName =
+          readTrimmedString(firstProduct, 'displayName')
+          || readTrimmedString(firstProduct, 'name')
+          || 'producto';
+        if (firstProductId) {
+          addNavigate(`Abrir ${firstProductName}`, '/stock', { productId: firstProductId });
         }
       }
     }
@@ -5915,7 +6152,8 @@ export class QuickActionService {
 
     const errors = results.filter((r) => {
       if (r.success || !r.error) return false;
-      if (r.data && typeof r.data === 'object' && (r.data as any).kind === 'ambiguous_product') {
+      const data = toRecord(r.data);
+      if (readString(data, 'kind') === 'ambiguous_product') {
         return false;
       }
       return true;

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
+
 import { Button, Input } from '../../components/ui';
 import { apiFetch } from '../../lib/api';
 
@@ -8,7 +9,7 @@ type ApiErrorBody = {
   error?: string;
 };
 
-const readApiError = async (response: Response, fallback: string) => {
+const readApiError = async (response: Response, fallback: string): Promise<string> => {
   try {
     const body = (await response.json()) as ApiErrorBody;
     if (typeof body.message === 'string' && body.message.trim()) return body.message;
@@ -19,13 +20,13 @@ const readApiError = async (response: Response, fallback: string) => {
   return fallback;
 };
 
-export default function ForgotPasswordPage() {
+export default function ForgotPasswordPage(): JSX.Element {
   const [email, setEmail] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [sent, setSent] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
     setError('');
     setIsLoading(true);
@@ -89,7 +90,12 @@ export default function ForgotPasswordPage() {
               </Link>
             </div>
           ) : (
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <form
+              onSubmit={(event) => {
+                void handleSubmit(event);
+              }}
+              className="space-y-4"
+            >
               <Input
                 type="email"
                 label="Email"

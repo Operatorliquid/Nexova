@@ -2,12 +2,14 @@
  * Quick Actions Floating Button
  * A floating command panel accessible throughout the dashboard
  */
+import { AlertTriangle, ArrowRight, CheckCircle, Command, Search, X, XCircle, Zap } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, ArrowRight, CheckCircle, Command, Search, X, XCircle, Zap } from 'lucide-react';
+
+import { Button } from './ui';
 import { useAuth } from '../contexts/AuthContext';
 import { cn } from '../lib/utils';
-import { Button } from './ui';
+import { QuickActionToolResult } from './quick-actions/QuickActionToolResult';
 import {
   Dialog,
   DialogContent,
@@ -15,9 +17,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from './ui/dialog';
-import { QuickActionToolResult } from './quick-actions/QuickActionToolResult';
 
-const API_URL = import.meta.env.VITE_API_URL || '';
+type JsonRecord = Record<string, unknown>;
+
+const envValues = import.meta.env as unknown as Record<string, unknown>;
+const apiUrlFromEnv = envValues['VITE_API_URL'];
+const API_URL = typeof apiUrlFromEnv === 'string' ? apiUrlFromEnv : '';
 
 interface CommandSuggestion {
   command: string;
@@ -71,7 +76,217 @@ interface QuickActionUIAction {
   auto?: boolean;
 }
 
-const sanitizeQuickActionText = (value?: string) => {
+function asRecord(value: unknown): JsonRecord | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as JsonRecord)
+    : null;
+}
+
+function readString(record: JsonRecord | null, key: string): string | undefined {
+  if (!record) {
+    return undefined;
+  }
+  const value = record[key];
+  return typeof value === 'string' ? value : undefined;
+}
+
+function readNumber(record: JsonRecord | null, key: string): number | undefined {
+  if (!record) {
+    return undefined;
+  }
+  const value = record[key];
+  return typeof value === 'number' ? value : undefined;
+}
+
+function readBoolean(record: JsonRecord | null, key: string): boolean | undefined {
+  if (!record) {
+    return undefined;
+  }
+  const value = record[key];
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+function readArray(record: JsonRecord | null, key: string): unknown[] {
+  if (!record) {
+    return [];
+  }
+  const value = record[key];
+  return Array.isArray(value) ? value : [];
+}
+
+async function readJsonRecord(response: Response): Promise<JsonRecord | null> {
+  try {
+    const payload: unknown = await response.json();
+    return asRecord(payload);
+  } catch {
+    return null;
+  }
+}
+
+function parseCommandSuggestion(value: unknown): CommandSuggestion | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  const command = readString(record, 'command');
+  const example = readString(record, 'example');
+  const description = readString(record, 'description');
+  if (!command || !example || !description) {
+    return null;
+  }
+  return { command, example, description };
+}
+
+function parseToolExecutionResult(value: unknown): ToolExecutionResult | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  const toolName = readString(record, 'toolName');
+  const success = readBoolean(record, 'success');
+  const durationMs = readNumber(record, 'durationMs');
+  if (!toolName || typeof success !== 'boolean' || typeof durationMs !== 'number') {
+    return null;
+  }
+  return {
+    toolName,
+    success,
+    data: record.data,
+    error: readString(record, 'error'),
+    durationMs,
+  };
+}
+
+function parseConfirmationTool(
+  value: unknown
+): ConfirmationRequest['tools'][number] | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  const name = readString(record, 'name');
+  const riskLevel = readString(record, 'riskLevel');
+  const description = readString(record, 'description');
+  if (!name || !riskLevel || !description) {
+    return null;
+  }
+  return {
+    name,
+    input: asRecord(record.input) ?? {},
+    riskLevel,
+    description,
+  };
+}
+
+function parseConfirmationRequest(value: unknown): ConfirmationRequest | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  const token = readString(record, 'token');
+  const expiresAt = readString(record, 'expiresAt');
+  const warningMessage = readString(record, 'warningMessage');
+  if (!token || !expiresAt || !warningMessage) {
+    return null;
+  }
+  const tools = readArray(record, 'tools')
+    .map(tool => parseConfirmationTool(tool))
+    .filter((tool): tool is ConfirmationRequest['tools'][number] => tool !== null);
+  return {
+    token,
+    expiresAt,
+    tools,
+    warningMessage,
+  };
+}
+
+function parseUIAction(value: unknown): QuickActionUIAction | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  const type = readString(record, 'type');
+  const label = readString(record, 'label');
+  if (
+    !label ||
+    (type !== 'navigate' && type !== 'open_url' && type !== 'execute_command')
+  ) {
+    return null;
+  }
+  const queryRecord = asRecord(record.query);
+  const query: Record<string, string> | undefined = queryRecord
+    ? Object.fromEntries(
+        Object.entries(queryRecord).filter(
+          (entry): entry is [string, string] => typeof entry[1] === 'string'
+        )
+      )
+    : undefined;
+
+  return {
+    type,
+    label,
+    path: readString(record, 'path'),
+    query,
+    url: readString(record, 'url'),
+    command: readString(record, 'command'),
+    requiresConfirmation: readBoolean(record, 'requiresConfirmation'),
+    confirmationMessage: readString(record, 'confirmationMessage'),
+    auto: readBoolean(record, 'auto'),
+  };
+}
+
+function parseParsedTool(
+  value: unknown
+): { toolName: string; input: Record<string, unknown> } | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  const toolName = readString(record, 'toolName');
+  if (!toolName) {
+    return null;
+  }
+  return {
+    toolName,
+    input: asRecord(record.input) ?? {},
+  };
+}
+
+function parseQuickActionResult(
+  payload: JsonRecord | null,
+  fallbackCommand: string
+): QuickActionResult {
+  const statusRaw = readString(payload, 'status');
+  const status: QuickActionResult['status'] =
+    statusRaw === 'success' ||
+    statusRaw === 'pending_confirmation' ||
+    statusRaw === 'error' ||
+    statusRaw === 'denied'
+      ? statusRaw
+      : 'error';
+
+  return {
+    id: readString(payload, 'id') ?? '',
+    status,
+    command: readString(payload, 'command') ?? fallbackCommand,
+    parsedTools: readArray(payload, 'parsedTools')
+      .map(item => parseParsedTool(item))
+      .filter((item): item is { toolName: string; input: Record<string, unknown> } => item !== null),
+    results: readArray(payload, 'results')
+      .map(item => parseToolExecutionResult(item))
+      .filter((item): item is ToolExecutionResult => item !== null),
+    confirmationRequired: parseConfirmationRequest(payload?.confirmationRequired),
+    error: readString(payload, 'error'),
+    summary: readString(payload, 'summary'),
+    explanation: readString(payload, 'explanation'),
+    uiActions: readArray(payload, 'uiActions')
+      .map(action => parseUIAction(action))
+      .filter((action): action is QuickActionUIAction => action !== null),
+    executedAt: readString(payload, 'executedAt'),
+  };
+}
+
+const sanitizeQuickActionText = (value?: string): string | undefined => {
   if (!value) return undefined;
   const trimmed = value.trim();
   if (!trimmed) return undefined;
@@ -86,7 +301,7 @@ const sanitizeQuickActionText = (value?: string) => {
   return value;
 };
 
-export function QuickActionsFloat() {
+export function QuickActionsFloat(): JSX.Element {
   const { workspace } = useAuth();
   const navigate = useNavigate();
   const [isOpen, setIsOpen] = useState(false);
@@ -100,7 +315,7 @@ export function QuickActionsFloat() {
   const [showResultModal, setShowResultModal] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-  const shouldShowResultsInModal = (data: QuickActionResult | null) => Boolean(data);
+  const shouldShowResultsInModal = (data: QuickActionResult | null): boolean => Boolean(data);
 
   // ── Draggable button (mobile) ──
   const [btnPos, setBtnPos] = useState({ bottom: 24, right: 24 });
@@ -115,7 +330,7 @@ export function QuickActionsFloat() {
 
   // Fetch suggestions on mount
   useEffect(() => {
-    const fetchSuggestions = async () => {
+    const fetchSuggestions = async (): Promise<void> => {
       try {
         const res = await fetch(`${API_URL}/api/v1/quick-actions/suggestions`, {
           headers: {
@@ -124,8 +339,12 @@ export function QuickActionsFloat() {
           credentials: 'include',
         });
         if (res.ok) {
-          const data = await res.json();
-          setSuggestions(data.suggestions || []);
+          const data = await readJsonRecord(res);
+          setSuggestions(
+            readArray(data, 'suggestions')
+              .map(item => parseCommandSuggestion(item))
+              .filter((item): item is CommandSuggestion => item !== null)
+          );
         }
       } catch (err) {
         console.error('Failed to fetch suggestions:', err);
@@ -133,7 +352,7 @@ export function QuickActionsFloat() {
     };
 
     if (workspace?.id) {
-      fetchSuggestions();
+      void fetchSuggestions();
     }
   }, [workspace?.id]);
 
@@ -146,7 +365,7 @@ export function QuickActionsFloat() {
 
   // Close on click outside
   useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
+    const handleClickOutside = (e: MouseEvent): void => {
       if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
         setIsOpen(false);
       }
@@ -166,7 +385,7 @@ export function QuickActionsFloat() {
 
   // Keyboard shortcut (Cmd/Ctrl + K)
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
+    const handleKeyDown = (e: KeyboardEvent): void => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
         setIsOpen((prev) => !prev);
@@ -184,8 +403,10 @@ export function QuickActionsFloat() {
     cmd: string,
     confirmationToken?: string,
     skipConfirmation?: boolean
-  ) => {
-    if (!cmd.trim() && !confirmationToken) return;
+  ): Promise<void> => {
+    if (!cmd.trim() && !confirmationToken) {
+      return;
+    }
 
     setIsExecuting(true);
     setResult(null);
@@ -208,7 +429,7 @@ export function QuickActionsFloat() {
         credentials: 'include',
       });
 
-      const data: QuickActionResult = await res.json();
+      const data = parseQuickActionResult(await readJsonRecord(res), cmd);
 
       if (data.status === 'pending_confirmation' && data.confirmationRequired) {
         setPendingConfirmation(data.confirmationRequired);
@@ -240,7 +461,7 @@ export function QuickActionsFloat() {
     }
   };
 
-  const handleAction = (action: QuickActionUIAction) => {
+  const handleAction = (action: QuickActionUIAction): void => {
     if (action.type === 'navigate' && action.path) {
       const query = action.query ? `?${new URLSearchParams(action.query).toString()}` : '';
       navigate(`${action.path}${query}`);
@@ -259,42 +480,44 @@ export function QuickActionsFloat() {
         setPendingAction(action);
         return;
       }
-      executeCommand(action.command);
+      void executeCommand(action.command);
       return;
     }
   };
 
-  const handleConfirm = () => {
+  const handleConfirm = (): void => {
     if (pendingConfirmation) {
-      executeCommand(command, pendingConfirmation.token);
+      void executeCommand(command, pendingConfirmation.token);
     }
   };
 
-  const handleInlineConfirm = () => {
-    if (!pendingAction?.command) return;
+  const handleInlineConfirm = (): void => {
+    if (!pendingAction?.command) {
+      return;
+    }
     const nextCommand = pendingAction.command;
     setPendingAction(null);
-    executeCommand(nextCommand, undefined, true);
+    void executeCommand(nextCommand, undefined, true);
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent): void => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      executeCommand(command);
+      void executeCommand(command);
     }
     if (e.key === 'Escape') {
       setShowSuggestions(false);
     }
   };
 
-  const handleSuggestionClick = (suggestion: CommandSuggestion) => {
+  const handleSuggestionClick = (suggestion: CommandSuggestion): void => {
     setCommand(suggestion.example);
     setShowSuggestions(false);
     inputRef.current?.focus();
   };
 
   // ── Touch drag handlers ──
-  const handleTouchStart = (e: React.TouchEvent) => {
+  const handleTouchStart = (e: React.TouchEvent): void => {
     const touch = e.touches[0];
     dragState.current = {
       startX: touch.clientX,
@@ -305,7 +528,7 @@ export function QuickActionsFloat() {
     };
   };
 
-  const handleTouchMove = (e: React.TouchEvent) => {
+  const handleTouchMove = (e: React.TouchEvent): void => {
     if (!dragState.current) return;
     const touch = e.touches[0];
     const dx = dragState.current.startX - touch.clientX;
@@ -324,7 +547,7 @@ export function QuickActionsFloat() {
     });
   };
 
-  const handleTouchEnd = () => {
+  const handleTouchEnd = (): void => {
     if (!dragState.current) return;
     const wasDrag = dragState.current.moved;
     dragState.current = null;
@@ -440,7 +663,9 @@ export function QuickActionsFloat() {
                 )}
               </div>
               <Button
-                onClick={() => executeCommand(command)}
+                onClick={() => {
+                  void executeCommand(command);
+                }}
                 disabled={!command.trim() || isExecuting}
                 className="h-10 px-4"
               >

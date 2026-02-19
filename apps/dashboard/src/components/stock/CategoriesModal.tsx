@@ -1,5 +1,6 @@
-import { useState } from 'react';
 import { Plus, Trash2, Tags } from 'lucide-react';
+import { useState } from 'react';
+
 import {
   Button,
   Input,
@@ -34,7 +35,7 @@ export function CategoriesModal({
   onCreateCategory,
   onUpdateCategory,
   onDeleteCategory,
-}: CategoriesModalProps) {
+}: CategoriesModalProps): JSX.Element {
   const [newCategoryName, setNewCategoryName] = useState('');
   const [newCategoryColor, setNewCategoryColor] = useState('#6366f1');
   const [isCreating, setIsCreating] = useState(false);
@@ -42,7 +43,7 @@ export function CategoriesModal({
   const [isDeleting, setIsDeleting] = useState(false);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
 
-  const handleCreate = async () => {
+  const handleCreate = async (): Promise<void> => {
     if (!newCategoryName.trim()) return;
 
     setIsCreating(true);
@@ -54,7 +55,7 @@ export function CategoriesModal({
     }
   };
 
-  const handleDelete = async () => {
+  const handleDelete = async (): Promise<void> => {
     if (!deletingId) return;
     setIsDeleting(true);
     try {
@@ -65,7 +66,7 @@ export function CategoriesModal({
     }
   };
 
-  const handleColorChange = async (categoryId: string, color: string) => {
+  const handleColorChange = async (categoryId: string, color: string): Promise<void> => {
     setUpdatingId(categoryId);
     try {
       await onUpdateCategory(categoryId, color);
@@ -102,14 +103,20 @@ export function CategoriesModal({
             onChange={(e) => setNewCategoryName(e.target.value)}
             placeholder="Nueva categoría..."
             className="flex-1"
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                handleCreate();
-              }
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    void handleCreate();
+                  }
+                }}
+              />
+          <Button
+            onClick={() => {
+              void handleCreate();
             }}
-          />
-          <Button onClick={handleCreate} isLoading={isCreating} disabled={!newCategoryName.trim()}>
+            isLoading={isCreating}
+            disabled={!newCategoryName.trim()}
+          >
             <Plus className="w-4 h-4" />
           </Button>
         </div>
@@ -135,7 +142,9 @@ export function CategoriesModal({
                     <input
                       type="color"
                       value={category.color || '#6366f1'}
-                      onChange={(e) => handleColorChange(category.id, e.target.value)}
+                      onChange={(e) => {
+                        void handleColorChange(category.id, e.target.value);
+                      }}
                       disabled={updatingId === category.id}
                       className="w-4 h-4 rounded-full cursor-pointer border-0 bg-transparent disabled:opacity-60"
                       title="Cambiar color"

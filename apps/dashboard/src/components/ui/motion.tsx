@@ -1,5 +1,6 @@
-import { type ReactNode } from 'react';
 import { motion, AnimatePresence, type HTMLMotionProps } from 'motion/react';
+import { type ReactNode } from 'react';
+
 import { cn } from '../../lib/utils';
 
 // ── Variants ──────────────────────────────────────────────
@@ -30,7 +31,7 @@ export function AnimatedPage({
 }: {
   children: ReactNode;
   className?: string;
-}) {
+}): JSX.Element {
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
@@ -53,7 +54,7 @@ export function AnimatedStagger({
   children: ReactNode;
   className?: string;
   delay?: number;
-}) {
+}): JSX.Element {
   return (
     <motion.div
       initial="hidden"
@@ -76,7 +77,7 @@ export function AnimatedItem({
 }: {
   children: ReactNode;
   className?: string;
-}) {
+}): JSX.Element {
   return (
     <motion.div
       variants={fadeSlideUp}
@@ -96,7 +97,7 @@ export function AnimatedCard({
 }: {
   children: ReactNode;
   className?: string;
-}) {
+}): JSX.Element {
   return (
     <motion.div
       variants={fadeSlideUp}
@@ -118,7 +119,7 @@ export function AnimatedCard({
 export function AnimatedTableBody({
   children,
   ...props
-}: HTMLMotionProps<'tbody'>) {
+}: HTMLMotionProps<'tbody'>): JSX.Element {
   return (
     <motion.tbody
       initial="hidden"
@@ -135,7 +136,7 @@ export function AnimatedTableRow({
   children,
   className,
   ...props
-}: HTMLMotionProps<'tr'>) {
+}: HTMLMotionProps<'tr'>): JSX.Element {
   return (
     <motion.tr
       variants={{
@@ -161,7 +162,7 @@ export function ContentTransition({
   isLoading: boolean;
   loadingContent: ReactNode;
   children: ReactNode;
-}) {
+}): JSX.Element {
   return (
     <AnimatePresence mode="wait">
       {isLoading ? (

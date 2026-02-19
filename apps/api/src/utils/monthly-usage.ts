@@ -35,7 +35,7 @@ export async function getMonthlyUsage(
     _sum: { quantity: true },
   });
 
-  return (agg._sum.quantity ?? 0n) as bigint;
+  return (agg._sum.quantity ?? 0n);
 }
 
 export async function recordMonthlyUsage(

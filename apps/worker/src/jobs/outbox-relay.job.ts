@@ -2,12 +2,13 @@
  * Outbox Relay Job
  * Publishes pending outbox events (placeholder relay)
  */
-import { Job } from 'bullmq';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { type PrismaClient, type Prisma } from '@prisma/client';
+import { type Job } from 'bullmq';
 import type { Redis } from 'ioredis';
-import { OutboxRelayPayload } from '@nexova/shared';
-import { EvolutionClient, InfobipClient } from '@nexova/integrations';
+
 import { decrypt } from '@nexova/core';
+import { EvolutionClient, InfobipClient } from '@nexova/integrations';
+import { type OutboxRelayPayload } from '@nexova/shared';
 
 interface OutboxRelayResult {
   processed: number;

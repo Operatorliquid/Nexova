@@ -2,23 +2,26 @@
  * Analytics Routes
  * Metrics endpoints for dashboards and quick actions
  */
-import { FastifyPluginAsync } from 'fastify';
+import { type FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { buildMetrics } from '../../services/analytics/metrics.service.js';
-import { generateBusinessInsights } from '../../services/analytics/insights.service.js';
-import { getWorkspacePlanContext } from '../../utils/commerce-plan.js';
-import { getEffectiveCommercePlanLimits } from '../../utils/commerce-plan-limits.js';
-import { getMonthlyUsage, recordMonthlyUsage } from '../../utils/monthly-usage.js';
+
 import { COMMERCE_USAGE_METRICS } from '@nexova/shared';
+
+import { generateBusinessInsights } from '../../services/analytics/insights.service.js';
+import { buildMetrics } from '../../services/analytics/metrics.service.js';
+import { getEffectiveCommercePlanLimits } from '../../utils/commerce-plan-limits.js';
+import { getWorkspacePlanContext } from '../../utils/commerce-plan.js';
+import { getMonthlyUsage, recordMonthlyUsage } from '../../utils/monthly-usage.js';
+
 
 const metricsQuerySchema = z.object({
   range: z.enum(['today', 'week', 'month', '30d', '90d', '12m', 'all']).optional(),
 });
 
-export const analyticsRoutes: FastifyPluginAsync = async (fastify) => {
+export const analyticsRoutes: FastifyPluginAsync = (fastify) => {
   fastify.get(
     '/metrics',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('analytics:read')] },
     async (request, reply) => {
       const workspaceId = request.headers['x-workspace-id'] as string;
       if (!workspaceId) {
@@ -33,7 +36,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (fastify) => {
 
   fastify.get(
     '/insights',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('analytics:read')] },
     async (request, reply) => {
       const workspaceId = request.headers['x-workspace-id'] as string;
       if (!workspaceId) {

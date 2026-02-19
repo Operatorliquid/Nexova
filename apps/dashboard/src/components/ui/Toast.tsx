@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react';
 import {
   AlertTriangle,
   Bell,
@@ -8,7 +7,10 @@ import {
   ShoppingCart,
   UserPlus,
   XCircle,
+  type LucideIcon,
 } from 'lucide-react';
+import { useEffect, useState } from 'react';
+
 import { useToastStore, type Toast, type ToastType } from '../../stores/toast.store';
 
 const icons = {
@@ -80,7 +82,14 @@ const notificationStyles = {
   },
 };
 
-const notificationTypeStyles: Record<string, { bg: string; accent: string; text: string; icon: string }> = {
+type NotificationToastStyle = {
+  bg: string;
+  accent: string;
+  text: string;
+  icon: string;
+};
+
+const notificationTypeStyles: Record<string, NotificationToastStyle> = {
   'order.new': {
     bg: 'bg-emerald-500/15 border-emerald-500/30',
     accent: 'bg-emerald-400',
@@ -125,7 +134,20 @@ const notificationTypeStyles: Record<string, { bg: string; accent: string; text:
   },
 };
 
-const resolveNotificationToastStyle = (notificationType?: string, toastType?: ToastType) => {
+const notificationIcons: Record<string, LucideIcon> = {
+  'order.new': ShoppingCart,
+  'order.cancelled': XCircle,
+  'order.edited': Pencil,
+  'customer.new': UserPlus,
+  'receipt.new': FileText,
+  'handoff.requested': AlertTriangle,
+  'stock.low': Package,
+};
+
+const resolveNotificationToastStyle = (
+  notificationType?: string,
+  toastType?: ToastType
+): NotificationToastStyle => {
   if (notificationType && notificationTypeStyles[notificationType]) {
     return notificationTypeStyles[notificationType];
   }
@@ -133,28 +155,7 @@ const resolveNotificationToastStyle = (notificationType?: string, toastType?: To
   return { ...fallback, icon: 'text-foreground' };
 };
 
-const resolveNotificationIcon = (notificationType?: string) => {
-  switch (notificationType) {
-    case 'order.new':
-      return ShoppingCart;
-    case 'order.cancelled':
-      return XCircle;
-    case 'order.edited':
-      return Pencil;
-    case 'customer.new':
-      return UserPlus;
-    case 'receipt.new':
-      return FileText;
-    case 'handoff.requested':
-      return AlertTriangle;
-    case 'stock.low':
-      return Package;
-    default:
-      return Bell;
-  }
-};
-
-function ToastItem({ toast, onRemove }: { toast: Toast; onRemove: () => void }) {
+function ToastItem({ toast, onRemove }: { toast: Toast; onRemove: () => void }): JSX.Element {
   const [isVisible, setIsVisible] = useState(false);
   const [isLeaving, setIsLeaving] = useState(false);
   const style = styles[toast.type];
@@ -199,11 +200,18 @@ function ToastItem({ toast, onRemove }: { toast: Toast; onRemove: () => void }) 
   );
 }
 
-function NotificationToastItem({ toast, onRemove }: { toast: Toast; onRemove: () => void }) {
+function NotificationToastItem({
+  toast,
+  onRemove,
+}: {
+  toast: Toast;
+  onRemove: () => void;
+}): JSX.Element {
   const [isVisible, setIsVisible] = useState(false);
   const [isLeaving, setIsLeaving] = useState(false);
   const style = resolveNotificationToastStyle(toast.notificationType, toast.type);
-  const Icon = resolveNotificationIcon(toast.notificationType);
+  const Icon: LucideIcon =
+    (toast.notificationType ? notificationIcons[toast.notificationType] : undefined) ?? Bell;
 
   useEffect(() => {
     requestAnimationFrame(() => {
@@ -247,7 +255,7 @@ function NotificationToastItem({ toast, onRemove }: { toast: Toast; onRemove: ()
   );
 }
 
-export function ToastContainer() {
+export function ToastContainer(): JSX.Element | null {
   const { toasts, removeToast } = useToastStore();
 
   const actionToasts = toasts.filter((toast) => toast.channel !== 'notification');

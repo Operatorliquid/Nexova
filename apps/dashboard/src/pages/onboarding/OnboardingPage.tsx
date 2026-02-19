@@ -1,20 +1,30 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+
 import { Button, Input } from '../../components/ui';
 import { useAuth } from '../../contexts/AuthContext';
 
 type Step = 'profile' | 'complete';
 
 const COMMERCE_TOOLS = ['products', 'stock', 'orders', 'customers', 'payments'];
-const API_URL = import.meta.env.VITE_API_URL || '';
+const API_URL: string =
+  typeof import.meta.env.VITE_API_URL === 'string' ? import.meta.env.VITE_API_URL : '';
 
-const fetchWithCredentials = (input: RequestInfo | URL, init?: RequestInit) =>
+const fetchWithCredentials = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>
   fetch(input, {
     ...init,
     credentials: 'include',
   });
 
-export default function OnboardingPage() {
+const readErrorMessage = (value: unknown): string | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  return typeof record.message === 'string' && record.message.trim().length > 0
+    ? record.message
+    : null;
+};
+
+export default function OnboardingPage(): JSX.Element {
   const navigate = useNavigate();
   const { user, workspace, refreshUser } = useAuth();
 
@@ -31,7 +41,7 @@ export default function OnboardingPage() {
     }
   }, [user]);
 
-  async function handleProfileSubmit() {
+  async function handleProfileSubmit(): Promise<void> {
     if (!profile.firstName.trim()) {
       setError('Completa tu nombre');
       return;
@@ -74,8 +84,10 @@ export default function OnboardingPage() {
       );
 
       if (!workspaceResponse.ok) {
-        const errorData = await workspaceResponse.json().catch(() => ({}));
-        throw new Error(errorData.message || `Error ${workspaceResponse.status}: No se pudo guardar`);
+        const errorData = (await workspaceResponse.json().catch(() => null)) as unknown;
+        throw new Error(
+          readErrorMessage(errorData) ?? `Error ${workspaceResponse.status}: No se pudo guardar`
+        );
       }
 
       await refreshUser();
@@ -87,7 +99,7 @@ export default function OnboardingPage() {
     }
   }
 
-  function handleComplete() {
+  function handleComplete(): void {
     navigate('/');
   }
 
@@ -143,7 +155,13 @@ export default function OnboardingPage() {
                   </div>
                 )}
 
-                <Button onClick={handleProfileSubmit} className="w-full" isLoading={isLoading}>
+                <Button
+                  onClick={() => {
+                    void handleProfileSubmit();
+                  }}
+                  className="w-full"
+                  isLoading={isLoading}
+                >
                   Continuar
                 </Button>
               </div>

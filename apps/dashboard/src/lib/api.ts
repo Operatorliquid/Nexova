@@ -7,7 +7,8 @@ import { authEvents } from './auth-events';
 
 // Default to same-origin so Vite's dev proxy (and Cloudflare tunnel -> Vite) can forward `/api/*` to the API.
 // Set `VITE_API_URL` to override (e.g. production).
-const API_URL = import.meta.env.VITE_API_URL || '';
+const API_URL: string =
+  typeof import.meta.env.VITE_API_URL === 'string' ? import.meta.env.VITE_API_URL : '';
 
 let refreshPromise: Promise<boolean> | null = null;
 
@@ -45,7 +46,7 @@ async function refreshToken(): Promise<boolean> {
 /**
  * Clear all auth tokens (called by AuthContext on session-expired)
  */
-export function clearTokens() {
+export function clearTokens(): void {
   localStorage.removeItem('accessToken');
   localStorage.removeItem('refreshToken');
   localStorage.removeItem('currentWorkspace');

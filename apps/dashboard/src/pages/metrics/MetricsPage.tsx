@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
-import { ResponsiveLine } from '@nivo/line';
 import { ResponsiveBar } from '@nivo/bar';
+import { ResponsiveLine } from '@nivo/line';
 import { ResponsivePie } from '@nivo/pie';
 import { DollarSign, ShoppingCart, TrendingUp, CreditCard, Users, Package, CalendarDays, BarChart3, Sparkles, ReceiptText } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+
 import {
   Button,
   Dialog,
@@ -21,10 +22,10 @@ import {
   AnimatedItem,
 } from '../../components/ui';
 import { ChartTooltip, TooltipLine } from '../../components/ui/chart-tooltip';
-import { getNivoTheme } from '../../lib/nivo-theme';
 import { useAuth } from '../../contexts/AuthContext';
 import { apiFetch } from '../../lib/api';
 import { getWorkspaceCommerceCapabilities } from '../../lib/commerce-plan';
+import { getNivoTheme } from '../../lib/nivo-theme';
 
 interface MetricsSummary {
   totalRevenue: number;
@@ -84,6 +85,9 @@ interface GeneratedInsights {
   actions: Array<{ title: string; detail: string; priority: 'alta' | 'media' | 'baja' }>;
 }
 
+const EMPTY_SERIES: MetricsSeriesPoint[] = [];
+const EMPTY_PAYMENTS: Array<{ method: string; total: number; count: number }> = [];
+
 const RANGE_OPTIONS = [
   { value: '30d', label: 'Últimos 30 días' },
   { value: '90d', label: 'Últimos 90 días' },
@@ -91,22 +95,36 @@ const RANGE_OPTIONS = [
   { value: 'all', label: 'Todo el historial' },
 ];
 
-const formatCurrency = (amount: number) => `$${(amount / 100).toLocaleString('es-AR')}`;
-const formatCompact = (amount: number) =>
+const PAYMENT_METHOD_LABELS: Record<string, string> = {
+  cash: 'Efectivo',
+  transfer: 'Transferencia',
+  link: 'Link de pago',
+  other: 'Otros',
+};
+
+const PAYMENT_METHOD_COLORS: Record<string, string> = {
+  cash: '#22c55e',
+  transfer: '#38bdf8',
+  link: 'hsl(var(--primary))',
+  other: '#94a3b8',
+};
+
+const formatCurrency = (amount: number): string => `$${(amount / 100).toLocaleString('es-AR')}`;
+const formatCompact = (amount: number): string =>
   amount >= 100000
     ? `$${(amount / 100 / 1000).toFixed(1).replace('.0', '')}k`
     : formatCurrency(amount);
-const getPriorityStyle = (priority: 'alta' | 'media' | 'baja') => {
+const getPriorityStyle = (priority: 'alta' | 'media' | 'baja'): string => {
   if (priority === 'alta') return 'border-red-500/30 bg-red-500/10 text-red-200';
   if (priority === 'media') return 'border-primary/30 bg-primary/10 text-primary/80';
   return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200';
 };
 
-function SkeletonPulse({ className }: { className?: string }) {
+function SkeletonPulse({ className }: { className?: string }): JSX.Element {
   return <div className={`animate-pulse rounded-lg bg-secondary ${className ?? ''}`} />;
 }
 
-function EmptyState({ icon: Icon, title, subtitle }: { icon: React.ElementType; title: string; subtitle: string }) {
+function EmptyState({ icon: Icon, title, subtitle }: { icon: React.ElementType; title: string; subtitle: string }): JSX.Element {
   return (
     <div className="h-full flex flex-col items-center justify-center py-6 text-center">
       <div className="w-12 h-12 rounded-2xl bg-secondary flex items-center justify-center mb-3">
@@ -118,7 +136,7 @@ function EmptyState({ icon: Icon, title, subtitle }: { icon: React.ElementType; 
   );
 }
 
-export default function MetricsPage() {
+export default function MetricsPage(): JSX.Element {
   const { workspace } = useAuth();
   const capabilities = getWorkspaceCommerceCapabilities(workspace);
   const [range, setRange] = useState('90d');
@@ -131,12 +149,12 @@ export default function MetricsPage() {
 
   useEffect(() => {
     if (!workspace?.id) return;
-    const loadMetrics = async () => {
+    const loadMetrics = async (): Promise<void> => {
       setIsLoading(true);
       try {
         const response = await apiFetch(`/api/v1/analytics/metrics?range=${range}`, {}, workspace.id);
         if (response.ok) {
-          const data = await response.json();
+          const data = (await response.json()) as unknown as MetricsResponse;
           setMetrics(data);
         }
       } catch (error) {
@@ -146,32 +164,18 @@ export default function MetricsPage() {
       }
     };
 
-    loadMetrics();
+    void loadMetrics();
   }, [workspace?.id, range]);
 
   const pendingRevenue = metrics?.summary.pendingRevenue ?? 0;
   const paidRate = metrics?.summary.paidRate ?? 0;
   const pendingRate = Math.max(0, 1 - paidRate);
 
-  const salesByDay = metrics?.salesByDay ?? [];
-  const salesByWeekday = metrics?.salesByWeekday ?? [];
-  const salesByMonth = metrics?.salesByMonth ?? [];
-  const stockPurchasesByMonth = metrics?.stockPurchasesByMonth ?? [];
-  const paymentsByMethod = metrics?.paymentsByMethod ?? [];
-
-  const paymentMethodLabels: Record<string, string> = {
-    cash: 'Efectivo',
-    transfer: 'Transferencia',
-    link: 'Link de pago',
-    other: 'Otros',
-  };
-
-  const paymentMethodColors: Record<string, string> = {
-    cash: '#22c55e',
-    transfer: '#38bdf8',
-    link: 'hsl(var(--primary))',
-    other: '#94a3b8',
-  };
+  const salesByDay = metrics?.salesByDay ?? EMPTY_SERIES;
+  const salesByWeekday = metrics?.salesByWeekday ?? EMPTY_SERIES;
+  const salesByMonth = metrics?.salesByMonth ?? EMPTY_SERIES;
+  const stockPurchasesByMonth = metrics?.stockPurchasesByMonth ?? EMPTY_SERIES;
+  const paymentsByMethod = metrics?.paymentsByMethod ?? EMPTY_PAYMENTS;
 
   const paymentMethodTotals = useMemo(() => {
     const total = paymentsByMethod.reduce((sum, entry) => sum + entry.total, 0);
@@ -179,8 +183,8 @@ export default function MetricsPage() {
       .filter((entry) => entry.total > 0)
       .map((entry) => ({
         ...entry,
-        label: paymentMethodLabels[entry.method] || entry.method,
-        color: paymentMethodColors[entry.method] || paymentMethodColors.other,
+        label: PAYMENT_METHOD_LABELS[entry.method] || entry.method,
+        color: PAYMENT_METHOD_COLORS[entry.method] || PAYMENT_METHOD_COLORS.other,
       }))
       .sort((a, b) => b.total - a.total);
     return { total, items };
@@ -223,7 +227,7 @@ export default function MetricsPage() {
 
   useEffect(() => {
     if (!capabilities.showMetricsAiInsights || !isInsightsOpen || !workspace?.id) return;
-    const loadInsights = async () => {
+    const loadInsights = async (): Promise<void> => {
       setInsightsError('');
       setIsInsightsLoading(true);
       try {
@@ -231,7 +235,7 @@ export default function MetricsPage() {
         if (!response.ok) {
           throw new Error('No se pudo generar el resumen');
         }
-        const data = await response.json();
+        const data = (await response.json()) as unknown as { insights?: GeneratedInsights };
         setInsights(data.insights);
       } catch (error) {
         setInsights(null);
@@ -241,7 +245,7 @@ export default function MetricsPage() {
       }
     };
 
-    loadInsights();
+    void loadInsights();
   }, [capabilities.showMetricsAiInsights, isInsightsOpen, range, workspace?.id]);
 
   return (
@@ -462,8 +466,8 @@ export default function MetricsPage() {
                     tooltip={({ data }) => (
                       <ChartTooltip>
                         <TooltipLine
-                          label={data.day as string}
-                          value={formatCurrency(data.total as number)}
+                          label={data.day}
+                          value={formatCurrency(data.total)}
                           sub={typeof data.orders === 'number' ? `${data.orders} pedidos` : undefined}
                         />
                       </ChartTooltip>
@@ -565,8 +569,8 @@ export default function MetricsPage() {
                     tooltip={({ data }) => (
                       <ChartTooltip>
                         <TooltipLine
-                          label={data.month as string}
-                          value={formatCurrency(data.total as number)}
+                          label={data.month}
+                          value={formatCurrency(data.total)}
                           sub={typeof data.orders === 'number' ? `${data.orders} pedidos` : undefined}
                         />
                       </ChartTooltip>

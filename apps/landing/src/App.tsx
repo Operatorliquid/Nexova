@@ -1,12 +1,13 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
-import IndexPage from './pages/IndexPage';
+
 import CartPage from './pages/CartPage';
-import RegisterPage from './pages/RegisterPage';
-import VerifyEmailPage from './pages/VerifyEmailPage';
 import CheckoutContinuePage from './pages/CheckoutContinuePage';
 import CheckoutSuccessPage from './pages/CheckoutSuccessPage';
+import IndexPage from './pages/IndexPage';
+import RegisterPage from './pages/RegisterPage';
+import VerifyEmailPage from './pages/VerifyEmailPage';
 
-export default function App() {
+export default function App(): JSX.Element {
   return (
     <Routes>
       <Route path="/" element={<IndexPage />} />

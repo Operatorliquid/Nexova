@@ -1,15 +1,16 @@
 import { useEffect, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
-import { Sidebar } from './Sidebar';
+
 import { Header } from './Header';
-import { QuickActionsFloat } from '../QuickActionsFloat';
+import { Sidebar } from './Sidebar';
 import { modules } from '../../config/modules';
-import { useTheme } from '../../contexts/ThemeContext';
 import { useAuth } from '../../contexts/AuthContext';
+import { useTheme } from '../../contexts/ThemeContext';
 import { getWorkspaceCommerceCapabilities } from '../../lib/commerce-plan';
+import { QuickActionsFloat } from '../QuickActionsFloat';
 import { AnimatePresence, motion } from '../ui/motion';
 
-export function DashboardLayout() {
+export function DashboardLayout(): JSX.Element {
   const location = useLocation();
   const { theme } = useTheme();
   const { workspace } = useAuth();
@@ -18,7 +19,12 @@ export function DashboardLayout() {
 
   // Close sidebar on route change
   useEffect(() => {
-    setSidebarOpen(false);
+    const timeoutId = setTimeout(() => {
+      setSidebarOpen(false);
+    }, 0);
+    return () => {
+      clearTimeout(timeoutId);
+    };
   }, [location.pathname]);
 
   // Get title from module config

@@ -1,5 +1,6 @@
-import type { Prisma, PrismaClient, StockPurchaseReceipt, StockPurchaseReceiptItem } from '@prisma/client';
 import { randomUUID } from 'crypto';
+
+import type { Prisma, PrismaClient, StockPurchaseReceipt, StockPurchaseReceiptItem } from '@prisma/client';
 
 export type StockPurchaseReceiptStatus = 'draft' | 'applied';
 
@@ -403,9 +404,9 @@ export class StockPurchaseReceiptService {
             safeString(suggested?.name) || '',
             item.rawDescription.slice(0, 255) || 'Producto'
           );
-          const unit = (safeString(suggested?.unit) as any) || 'unit';
+          const unit = safeString(suggested?.unit) || 'unit';
           const unitValue = safeString(suggested?.unitValue);
-          const secondaryUnit = safeString(suggested?.secondaryUnit) as any;
+          const secondaryUnit = safeString(suggested?.secondaryUnit);
           const secondaryUnitValue = safeString(suggested?.secondaryUnitValue);
 
           const skuBase = sanitizeSku(`${name}-${Date.now().toString(36)}-${randomUUID().slice(0, 6)}`);

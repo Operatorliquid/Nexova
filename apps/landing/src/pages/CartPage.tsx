@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+
 import { BILLING_MONTH_OPTIONS } from '@nexova/shared';
+
 import { apiFetch, readErrorMessage } from '../lib/api';
 
 type CatalogPlan = {
@@ -50,7 +52,7 @@ const MONTH_LABELS: Record<number, { label: string; save?: string }> = {
   48: { label: '48 meses', save: 'Ahorrá 12 meses' },
 };
 
-export default function CartPage() {
+export default function CartPage(): JSX.Element {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const queryFlowToken = searchParams.get('flowToken') || '';
@@ -64,7 +66,7 @@ export default function CartPage() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    const loadCatalog = async () => {
+    const loadCatalog = async (): Promise<void> => {
       setIsLoading(true);
       setError('');
       try {
@@ -80,7 +82,7 @@ export default function CartPage() {
         setIsLoading(false);
       }
     };
-    loadCatalog();
+    void loadCatalog();
   }, []);
 
   useEffect(() => {
@@ -93,7 +95,7 @@ export default function CartPage() {
   }, [months]);
 
   useEffect(() => {
-    const loadExistingIntent = async () => {
+    const loadExistingIntent = async (): Promise<void> => {
       if (!queryFlowToken) return;
       try {
         const res = await apiFetch(`/api/v1/billing/intents/${encodeURIComponent(queryFlowToken)}`);
@@ -108,7 +110,7 @@ export default function CartPage() {
         // noop
       }
     };
-    loadExistingIntent();
+    void loadExistingIntent();
   }, [queryFlowToken]);
 
   const activePlan = useMemo(
@@ -119,13 +121,13 @@ export default function CartPage() {
   const totalAmountCents = activePlan ? activePlan.monthlyAmountCents * months : 0;
   const currency = activePlan?.currency || 'USD';
 
-  const formatMoney = (amountCents: number) =>
+  const formatMoney = (amountCents: number): string =>
     new Intl.NumberFormat('en-US', {
       style: 'currency',
       currency,
     }).format(amountCents / 100);
 
-  const continueFlow = async () => {
+  const continueFlow = async (): Promise<void> => {
     if (!activePlan) return;
     setIsSubmitting(true);
     setError('');
@@ -394,7 +396,9 @@ export default function CartPage() {
                 <button
                   type="button"
                   disabled={!activePlan || isSubmitting}
-                  onClick={continueFlow}
+                  onClick={() => {
+                    void continueFlow();
+                  }}
                   className="group relative w-full rounded-xl bg-[#4D7CFF] hover:bg-[#3D6BEE] disabled:opacity-50 disabled:cursor-not-allowed px-4 py-3.5 font-medium text-sm transition-all duration-300 shadow-lg shadow-[#4D7CFF]/25 hover:shadow-xl hover:shadow-[#4D7CFF]/40 overflow-hidden"
                 >
                   {/* Shimmer */}

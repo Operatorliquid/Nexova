@@ -8,27 +8,32 @@
  * - DLQ for exhausted jobs
  * - Handoff after 2 consecutive failures
  */
-import { Worker, Job, Queue } from 'bullmq';
-import { PrismaClient, Prisma, type WebhookInbox } from '@prisma/client';
-import { Redis } from 'ioredis';
 import { scryptSync, timingSafeEqual } from 'crypto';
+
 import Anthropic from '@anthropic-ai/sdk';
-import { RetailAgent, createRetailAgent } from '../core/agent.js';
-import { MemoryService } from '../core/memory-service.js';
+import { type PrismaClient, type Prisma, type WebhookInbox } from '@prisma/client';
+import { Worker, type Job, Queue } from 'bullmq';
+import { Redis } from 'ioredis';
+
+
+
+import { decrypt, logger, runWithContext } from '@nexova/core';
 import {
   QUEUES,
-  AgentProcessPayload,
-  MessageSendPayload,
-  AudioTranscriptionPayload,
+  type AgentProcessPayload,
+  type MessageSendPayload,
+  type AudioTranscriptionPayload,
   getCommercePlanCapabilities,
   resolveCommercePlan,
 } from '@nexova/shared';
-import { decrypt, runWithContext } from '@nexova/core';
-import { LocalFileUploader } from '../utils/file-uploader.js';
+
 import {
   extractAudioTranscriptFromPayload,
   isAwaitingAudioTranscriptionPayload,
 } from './payload-audio.utils.js';
+import { type RetailAgent, createRetailAgent } from '../core/agent.js';
+import { MemoryService } from '../core/memory-service.js';
+import { LocalFileUploader } from '../utils/file-uploader.js';
 
 // Max consecutive failures before triggering handoff
 const MAX_FAILURES_BEFORE_HANDOFF = 2;
@@ -262,6 +267,58 @@ function normalizeUsageQuantity(quantity: number | bigint): bigint {
   return BigInt(normalized);
 }
 
+type UnknownRecord = Record<string, unknown>;
+
+function asRecord(value: unknown): UnknownRecord | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  return value as UnknownRecord;
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function firstRecord(value: unknown): UnknownRecord | null {
+  return asRecord(asArray(value)[0]);
+}
+
+function asString(value: unknown): string | null {
+  return typeof value === 'string' ? value : null;
+}
+
+function asTrimmedString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function asLowerTrimmedString(value: unknown): string {
+  return typeof value === 'string' ? value.toLowerCase().trim() : '';
+}
+
+function asUpperTrimmedString(value: unknown): string {
+  return typeof value === 'string' ? value.toUpperCase().trim() : '';
+}
+
+function unwrapNestedMessage(value: unknown): UnknownRecord | null {
+  const root = asRecord(value);
+  if (!root) return null;
+
+  const ephemeral = asRecord(root.ephemeralMessage);
+  const ephemeralMessage = asRecord(ephemeral?.message);
+  if (ephemeralMessage) return ephemeralMessage;
+
+  const viewOnce = asRecord(root.viewOnceMessage);
+  const viewOnceMessage = asRecord(viewOnce?.message);
+  if (viewOnceMessage) return viewOnceMessage;
+
+  const viewOnceV2 = asRecord(root.viewOnceMessageV2);
+  const viewOnceV2Message = asRecord(viewOnceV2?.message);
+  if (viewOnceV2Message) return viewOnceV2Message;
+
+  return root;
+}
+
 async function recordUsage(
   prisma: PrismaClient,
   params: {
@@ -307,7 +364,7 @@ async function recordUsage(
       },
     });
   } catch (error) {
-    console.error('[UsageRecord] Failed to record usage:', error);
+    logger.error({ error }, '[UsageRecord] Failed to record usage');
   }
 }
 
@@ -405,9 +462,9 @@ export class AgentWorker {
   /**
    * Start the worker
    */
-  async start(): Promise<void> {
+  start(): void {
     // Initialize agent
-    await this.agent.initialize();
+    this.agent.initialize();
 
     // Create DLQ queue for exhausted jobs
     this.dlqQueue = new Queue(QUEUES.DLQ.name, {
@@ -432,23 +489,33 @@ export class AgentWorker {
 
     // Event handlers
     this.worker.on('completed', (job) => {
-      console.log(`[AgentWorker] Job ${job.id} completed`);
+      logger.info(`[AgentWorker] Job ${job.id} completed`);
     });
 
-    this.worker.on('failed', async (job, error) => {
-      console.error(`[AgentWorker] Job ${job?.id} failed (attempt ${job?.attemptsMade}/${QUEUES.AGENT_PROCESS.attempts}):`, error.message);
+    this.worker.on('failed', (job, error) => {
+      logger.error(
+        {
+          jobId: job?.id,
+          attemptsMade: job?.attemptsMade,
+          maxAttempts: QUEUES.AGENT_PROCESS.attempts,
+          errorMessage: error.message,
+        },
+        '[AgentWorker] Job failed'
+      );
 
       // Check if job exhausted all attempts
       if (job && job.attemptsMade >= QUEUES.AGENT_PROCESS.attempts) {
-        await this.handleExhaustedJob(job, error);
+        const typedJob = job as Job<AgentProcessPayload>;
+        const normalizedError = error instanceof Error ? error : new Error(String(error));
+        void this.handleExhaustedJob(typedJob, normalizedError);
       }
     });
 
     this.worker.on('error', (error) => {
-      console.error('[AgentWorker] Worker error:', error);
+      logger.error({ error }, '[AgentWorker] Worker error');
     });
 
-    console.log('[AgentWorker] Started with DLQ support');
+    logger.info('[AgentWorker] Started with DLQ support');
   }
 
   /**
@@ -459,7 +526,7 @@ export class AgentWorker {
   private async handleExhaustedJob(job: Job<AgentProcessPayload>, error: Error): Promise<void> {
     const { workspaceId, correlationId, channelId } = job.data;
 
-    console.log(`[AgentWorker] Job ${job.id} exhausted, moving to DLQ and triggering handoff`);
+    logger.info(`[AgentWorker] Job ${job.id} exhausted, moving to DLQ and triggering handoff`);
 
     try {
       await runWithContext(
@@ -510,7 +577,7 @@ export class AgentWorker {
               },
             });
 
-            console.log(`[AgentWorker] Session ${session.id} marked for handoff due to processing failure`);
+            logger.info(`[AgentWorker] Session ${session.id} marked for handoff due to processing failure`);
 
             // Log audit entry
             await this.prisma.auditLog.create({
@@ -534,17 +601,17 @@ export class AgentWorker {
         }
       );
     } catch (dlqError) {
-      console.error('[AgentWorker] Failed to handle exhausted job:', dlqError);
+      logger.error({ error: dlqError }, '[AgentWorker] Failed to handle exhausted job');
     }
   }
 
   /**
    * Process a job
    */
-  private async processJob(job: Job<AgentProcessPayload>): Promise<any> {
+  private async processJob(job: Job<AgentProcessPayload>): Promise<unknown> {
     const { workspaceId, messageId, channelId, channelType, correlationId } = job.data;
 
-    console.log(`[AgentWorker] Processing message ${messageId} for workspace ${workspaceId} (attempt ${job.attemptsMade + 1})`);
+    logger.info(`[AgentWorker] Processing message ${messageId} for workspace ${workspaceId} (attempt ${job.attemptsMade + 1})`);
 
     try {
       return await runWithContext(
@@ -568,17 +635,17 @@ export class AgentWorker {
           });
 
           if (!webhookMessage) {
-            console.warn(`[AgentWorker] Webhook message not found or already processed: ${correlationId}`);
+            logger.warn(`[AgentWorker] Webhook message not found or already processed: ${correlationId}`);
             return { status: 'skipped', reason: 'message_not_found' };
           }
 
           // Parse message content from payload
-          const payload = webhookMessage.payload as any;
+          const payload: unknown = webhookMessage.payload;
           const messageContent = this.extractMessageContent(payload);
 
           if (!messageContent) {
             if (this.isAwaitingAudioTranscription(payload)) {
-              console.log(
+              logger.info(
                 `[AgentWorker] Audio message ${webhookMessage.externalId} awaiting transcription, skipping`
               );
               await this.prisma.webhookInbox.updateMany({
@@ -590,7 +657,7 @@ export class AgentWorker {
               });
               return { status: 'skipped', reason: 'awaiting_audio_transcription' };
             }
-            console.warn(`[AgentWorker] Could not extract message content from payload`);
+            logger.warn(`[AgentWorker] Could not extract message content from payload`);
             await this.prisma.webhookInbox.updateMany({
               where: { id: webhookMessage.id, workspaceId },
               data: {
@@ -736,7 +803,7 @@ export class AgentWorker {
           });
 
           if (!session?.agentActive && !isOwner) {
-            console.log(`[AgentWorker] Agent not active for session ${sessionId}, skipping`);
+            logger.info(`[AgentWorker] Agent not active for session ${sessionId}, skipping`);
             await this.prisma.agentSession.updateMany({
               where: { id: sessionId, workspaceId },
               data: { lastActivityAt: new Date() },
@@ -761,7 +828,7 @@ export class AgentWorker {
 
           // Check if session has too many consecutive failures - trigger handoff
           if (session && session.failureCount >= MAX_FAILURES_BEFORE_HANDOFF && !isOwner) {
-            console.log(`[AgentWorker] Session ${sessionId} exceeded failure threshold, triggering handoff`);
+            logger.info(`[AgentWorker] Session ${sessionId} exceeded failure threshold, triggering handoff`);
             await this.triggerHandoff(session.id, workspaceId, 'consecutive_failures', correlationId);
             await this.prisma.webhookInbox.updateMany({
               where: { id: { in: sortedBatch.map((b) => b.webhook.id) }, workspaceId },
@@ -781,7 +848,7 @@ export class AgentWorker {
           }
 
           if (!isOwner && !this.isWithinBusinessHours(runtimeSettings, new Date())) {
-            console.log(
+            logger.info(
               `[AgentWorker] Outside working hours for workspace ${workspaceId} ` +
               `(tz=${runtimeSettings.timezone}, continuous=${runtimeSettings.continuousHours}, ` +
               `days=${runtimeSettings.workingDays.join(',')}, ` +
@@ -866,7 +933,7 @@ export class AgentWorker {
               const split = (() => {
                 const normalized = combinedMessage.trim();
                 if (!normalized) return null;
-                const re = /(?:^|\b)(pin|clave)\s*[:\-]?\s*(\d{4,12})\b/i;
+                const re = /(?:^|\b)(pin|clave)\s*[:-]?\s*(\d{4,12})\b/i;
                 const match = normalized.match(re);
                 if (!match) {
                   // Convenience: allow sending the PIN as a bare numeric message (e.g. "4444").
@@ -1030,7 +1097,7 @@ export class AgentWorker {
 
           void this.memoryService.updateFromTurn({ sessionId, workspaceId })
             .catch((error) => {
-              console.error('[AgentWorker] Memory update failed:', error);
+              logger.error({ error }, '[AgentWorker] Memory update failed');
             });
 
           // Success! Reset failure count
@@ -1134,7 +1201,7 @@ export class AgentWorker {
         }
       );
     } catch (error) {
-      console.error(`[AgentWorker] Error processing job:`, error);
+      logger.error({ error }, '[AgentWorker] Error processing job');
 
       // Increment session failure count
       const normalizedChannelId = (channelType || 'whatsapp') === 'whatsapp'
@@ -1182,12 +1249,12 @@ export class AgentWorker {
 
         // If reached threshold, trigger handoff
         if (newFailureCount >= MAX_FAILURES_BEFORE_HANDOFF) {
-          console.log(`[AgentWorker] Session ${session.id} reached ${newFailureCount} failures, triggering handoff`);
+          logger.info(`[AgentWorker] Session ${session.id} reached ${newFailureCount} failures, triggering handoff`);
           await this.triggerHandoff(session.id, workspaceId, 'consecutive_failures', correlationId);
         }
       }
     } catch (err) {
-      console.error('[AgentWorker] Failed to increment failure count:', err);
+      logger.error({ error: err }, '[AgentWorker] Failed to increment failure count');
     }
   }
 
@@ -1226,7 +1293,7 @@ export class AgentWorker {
       },
     });
 
-    console.log(`[AgentWorker] Handoff triggered for session ${sessionId}: ${reason}`);
+    logger.info(`[AgentWorker] Handoff triggered for session ${sessionId}: ${reason}`);
   }
 
   private async storeInboundMessage(
@@ -1286,7 +1353,7 @@ export class AgentWorker {
   private extractOwnerPin(message: string): string | null {
     const normalized = (message || '').trim();
     if (!normalized) return null;
-    const match = normalized.match(/(?:^|\b)(pin|clave)\s*[:\-]?\s*(\d{4,12})\b/i);
+    const match = normalized.match(/(?:^|\b)(pin|clave)\s*[:-]?\s*(\d{4,12})\b/i);
     return match?.[2] || null;
   }
 
@@ -1322,7 +1389,7 @@ export class AgentWorker {
         Math.max(60, DEFAULT_INTERACTIVE_REPLY_TTL_SECONDS)
       );
     } catch (error) {
-      console.error('[AgentWorker] Failed to store interactive reply map:', error);
+      logger.error({ error }, '[AgentWorker] Failed to store interactive reply map');
     }
   }
 
@@ -1353,7 +1420,7 @@ export class AgentWorker {
       const mapped = (selected.id || selected.title || '').trim();
       return mapped || text;
     } catch (error) {
-      console.error('[AgentWorker] Failed to resolve interactive numeric reply:', error);
+      logger.error({ error }, '[AgentWorker] Failed to resolve interactive numeric reply');
       return text;
     }
   }
@@ -1375,7 +1442,7 @@ export class AgentWorker {
     try {
       await this.redis.eval(script, 1, lockKey, token);
     } catch (error) {
-      console.error('[AgentWorker] Failed to release session lock:', error);
+      logger.error({ error }, '[AgentWorker] Failed to release session lock');
     }
   }
 
@@ -1498,7 +1565,7 @@ export class AgentWorker {
       });
       return resolved;
     } catch (error) {
-      console.error('[AgentWorker] Failed to load workspace settings:', error);
+      logger.error({ error }, '[AgentWorker] Failed to load workspace settings');
     }
 
     this.settingsCache.set(workspaceId, {
@@ -1539,9 +1606,9 @@ export class AgentWorker {
     }
 
     const inMorning =
-      hasMorning && isWithinTimeWindow(local.minutesOfDay, morningStart as number, morningEnd as number);
+      hasMorning && isWithinTimeWindow(local.minutesOfDay, morningStart, morningEnd);
     const inAfternoon =
-      hasAfternoon && isWithinTimeWindow(local.minutesOfDay, afternoonStart as number, afternoonEnd as number);
+      hasAfternoon && isWithinTimeWindow(local.minutesOfDay, afternoonStart, afternoonEnd);
 
     return inMorning || inAfternoon;
   }
@@ -1590,7 +1657,7 @@ export class AgentWorker {
     const toFail: typeof candidates = [];
 
     for (const candidate of candidates) {
-      const payload = candidate.payload as any;
+      const payload: unknown = candidate.payload;
       const sender = this.extractSenderPhone(payload);
       const normalizedSender =
         params.channelType === 'whatsapp' ? this.normalizePhone(sender) : sender;
@@ -1655,15 +1722,16 @@ export class AgentWorker {
     return normalized.includes('cliente envió un sticker') || normalized.includes('cliente envio un sticker');
   }
 
-  private isAwaitingAudioTranscription(payload: any): boolean {
+  private isAwaitingAudioTranscription(payload: unknown): boolean {
     return isAwaitingAudioTranscriptionPayload(payload);
   }
 
   /**
    * Extract message content from provider payload (Infobip / Evolution)
    */
-  private extractMessageContent(payload: any): string | null {
-    const nexovaMeta = payload?.__nexova;
+  private extractMessageContent(payload: unknown): string | null {
+    const root = asRecord(payload);
+    const nexovaMeta = asRecord(root?.__nexova);
     if (nexovaMeta?.sticker === true) {
       return 'El cliente envió un sticker.';
     }
@@ -1673,80 +1741,62 @@ export class AgentWorker {
     }
 
     // Evolution (Baileys) webhook format (we store one message per webhook row under payload.data)
-    const evoEvent = typeof payload?.event === 'string' ? payload.event.toUpperCase() : '';
-    const evoMsg = payload?.data;
+    const evoEvent = asUpperTrimmedString(root?.event);
+    const evoMsg = asRecord(root?.data);
+    const evoMsgMessage = asRecord(evoMsg?.message);
+    const evoMsgKey = asRecord(evoMsg?.key);
     const looksEvolutionPayload =
-      !!evoMsg && (
-        !!evoMsg?.message
-        || !!evoMsg?.key?.remoteJid
-        || typeof evoMsg?.status === 'string'
-        || typeof evoMsg?.conversation === 'string'
-        || !!evoMsg?.extendedTextMessage
-        || !!evoMsg?.imageMessage
-        || !!evoMsg?.documentMessage
-      );
+      Boolean(evoMsg && (
+        evoMsgMessage
+        || asString(evoMsgKey?.remoteJid)
+        || asString(evoMsg?.status)
+        || asString(evoMsg?.conversation)
+        || asRecord(evoMsg?.extendedTextMessage)
+        || asRecord(evoMsg?.imageMessage)
+        || asRecord(evoMsg?.documentMessage)
+      ));
     if ((evoEvent === 'MESSAGES_UPSERT' || looksEvolutionPayload) && evoMsg) {
       const attachment = this.extractAttachment(payload);
       const attachmentText = attachment
         ? `El cliente envió un archivo adjunto (${attachment.fileType}). fileRef: ${attachment.fileRef}${attachment.caption ? `\nMensaje: ${attachment.caption}` : ''}`
         : null;
 
-      const unwrap = (msg: any): any =>
-        msg?.ephemeralMessage?.message
-        || msg?.viewOnceMessage?.message
-        || msg?.viewOnceMessageV2?.message
-        || msg;
+      const message = unwrapNestedMessage(evoMsgMessage ?? evoMsg);
+      if (message) {
+        const stickerMessage = asRecord(message.stickerMessage);
+        const imageMessage = asRecord(message.imageMessage);
+        const imageMime = asLowerTrimmedString(imageMessage?.mimetype);
+        const imageCaption = asTrimmedString(imageMessage?.caption);
+        const looksLikeStickerFromImage = Boolean(imageMessage && imageMime.includes('webp') && !imageCaption);
+        if (stickerMessage || looksLikeStickerFromImage) {
+          return 'El cliente envió un sticker.';
+        }
 
-      const message = unwrap(evoMsg?.message || evoMsg);
+        const listResponseMessage = asRecord(message.listResponseMessage);
+        const singleSelectReply = asRecord(listResponseMessage?.singleSelectReply);
+        const selectedRowId = asTrimmedString(singleSelectReply?.selectedRowId);
 
-      const stickerMessage = message?.stickerMessage;
-      const imageMime =
-        typeof message?.imageMessage?.mimetype === 'string'
-          ? message.imageMessage.mimetype.toLowerCase().trim()
-          : '';
-      const imageCaption =
-        typeof message?.imageMessage?.caption === 'string'
-          ? message.imageMessage.caption.trim()
-          : '';
-      const looksLikeStickerFromImage = !!message?.imageMessage && imageMime.includes('webp') && !imageCaption;
-      if (stickerMessage || looksLikeStickerFromImage) {
-        return 'El cliente envió un sticker.';
-      }
+        const buttonsResponseMessage = asRecord(message.buttonsResponseMessage);
+        const selectedButtonId = asTrimmedString(buttonsResponseMessage?.selectedButtonId);
+        const selectedDisplayText = asTrimmedString(buttonsResponseMessage?.selectedDisplayText);
+        const interactiveText = selectedRowId || selectedButtonId || selectedDisplayText || null;
 
-      const selectedRowId =
-        message?.listResponseMessage?.singleSelectReply?.selectedRowId
-        || message?.listResponseMessage?.singleSelectReply?.selectedRowId;
+        if (interactiveText) {
+          return attachmentText ? `${interactiveText}\n\n${attachmentText}` : interactiveText;
+        }
 
-      const selectedButtonId =
-        message?.buttonsResponseMessage?.selectedButtonId
-        || message?.buttonsResponseMessage?.selectedButtonId;
+        const extendedTextMessage = asRecord(message.extendedTextMessage);
+        const documentMessage = asRecord(message.documentMessage);
+        const text =
+          asTrimmedString(message.conversation)
+          || asTrimmedString(extendedTextMessage?.text)
+          || imageCaption
+          || asTrimmedString(documentMessage?.caption)
+          || null;
 
-      const interactiveText =
-        (typeof selectedRowId === 'string' && selectedRowId.trim())
-          ? selectedRowId.trim()
-          : (typeof selectedButtonId === 'string' && selectedButtonId.trim())
-            ? selectedButtonId.trim()
-            : (typeof message?.buttonsResponseMessage?.selectedDisplayText === 'string' && message.buttonsResponseMessage.selectedDisplayText.trim())
-              ? message.buttonsResponseMessage.selectedDisplayText.trim()
-              : null;
-
-      if (interactiveText) {
-        return attachmentText ? `${interactiveText}\n\n${attachmentText}` : interactiveText;
-      }
-
-      const text =
-        (typeof message?.conversation === 'string' && message.conversation.trim())
-          ? message.conversation.trim()
-          : (typeof message?.extendedTextMessage?.text === 'string' && message.extendedTextMessage.text.trim())
-            ? message.extendedTextMessage.text.trim()
-            : (typeof message?.imageMessage?.caption === 'string' && message.imageMessage.caption.trim())
-              ? message.imageMessage.caption.trim()
-              : (typeof message?.documentMessage?.caption === 'string' && message.documentMessage.caption.trim())
-                ? message.documentMessage.caption.trim()
-                : null;
-
-      if (text) {
-        return attachmentText ? `${text}\n\n${attachmentText}` : text;
+        if (text) {
+          return attachmentText ? `${text}\n\n${attachmentText}` : text;
+        }
       }
 
       if (attachmentText) {
@@ -1755,32 +1805,30 @@ export class AgentWorker {
     }
 
     // Infobip MO format
-    const result = payload?.results?.[0];
+    const result = firstRecord(root?.results);
     if (result) {
       const attachment = this.extractAttachment(payload);
       const attachmentText = attachment
         ? `El cliente envió un archivo adjunto (${attachment.fileType}). fileRef: ${attachment.fileRef}${attachment.caption ? `\nMensaje: ${attachment.caption}` : ''}`
         : null;
 
-      const contentType = typeof result.content?.[0]?.type === 'string'
-        ? result.content[0].type.toUpperCase()
-        : '';
-      const messageType = typeof result.message?.type === 'string'
-        ? result.message.type.toUpperCase()
-        : '';
+      const content = firstRecord(result.content);
+      const message = asRecord(result.message);
+      const contentType = asUpperTrimmedString(content?.type);
+      const messageType = asUpperTrimmedString(message?.type);
       const interactiveType = messageType || contentType;
 
       if (interactiveType.includes('INTERACTIVE') || interactiveType.includes('BUTTON_REPLY')) {
         const replyId =
-          result.message?.id ||
-          result.content?.[0]?.id ||
-          result.message?.payload ||
-          result.content?.[0]?.payload;
+          asString(message?.id) ||
+          asString(content?.id) ||
+          asString(message?.payload) ||
+          asString(content?.payload);
         const replyTitle =
-          result.message?.title ||
-          result.content?.[0]?.title ||
-          result.message?.text ||
-          result.content?.[0]?.text;
+          asString(message?.title) ||
+          asString(content?.title) ||
+          asString(message?.text) ||
+          asString(content?.text);
         const replyText = replyId || replyTitle;
         if (replyText) {
           return attachmentText ? `${replyText}\n\n${attachmentText}` : replyText;
@@ -1788,16 +1836,18 @@ export class AgentWorker {
       }
 
       // Text message
-      if (result.content?.[0]?.text) {
+      const contentText = asString(content?.text);
+      if (contentText) {
         return attachmentText
-          ? `${result.content[0].text}\n\n${attachmentText}`
-          : result.content[0].text;
+          ? `${contentText}\n\n${attachmentText}`
+          : contentText;
       }
       // Legacy format
-      if (result.message?.text) {
+      const messageText = asString(message?.text);
+      if (messageText) {
         return attachmentText
-          ? `${result.message.text}\n\n${attachmentText}`
-          : result.message.text;
+          ? `${messageText}\n\n${attachmentText}`
+          : messageText;
       }
       if (attachmentText) {
         return attachmentText;
@@ -1805,8 +1855,9 @@ export class AgentWorker {
     }
 
     // Direct text
-    if (payload?.text) {
-      return payload.text;
+    const directText = asString(root?.text);
+    if (directText) {
+      return directText;
     }
 
     const attachment = this.extractAttachment(payload);
@@ -1817,42 +1868,39 @@ export class AgentWorker {
     return null;
   }
 
-  private extractAttachment(payload: any): { fileRef: string; fileType: 'image' | 'pdf'; caption?: string } | null {
-    const pre = payload?.__nexova?.attachment;
-    if (payload?.__nexova?.sticker === true) {
+  private extractAttachment(payload: unknown): { fileRef: string; fileType: 'image' | 'pdf'; caption?: string } | null {
+    const root = asRecord(payload);
+    const nexovaMeta = asRecord(root?.__nexova);
+    const pre = asRecord(nexovaMeta?.attachment);
+    if (nexovaMeta?.sticker === true) {
       return null;
     }
-    if (pre && typeof pre === 'object') {
-      const fileRef = typeof (pre as any).fileRef === 'string' ? (pre as any).fileRef : '';
-      const fileTypeRaw = typeof (pre as any).fileType === 'string' ? (pre as any).fileType : '';
-      const caption = typeof (pre as any).caption === 'string' ? (pre as any).caption : undefined;
+    if (pre) {
+      const fileRef = asTrimmedString(pre.fileRef);
+      const fileTypeRaw = asLowerTrimmedString(pre.fileType);
+      const caption = asString(pre.caption) ?? undefined;
       const fileType = fileTypeRaw === 'pdf' ? 'pdf' : fileTypeRaw === 'image' ? 'image' : null;
       if (fileRef && fileType) {
         return { fileRef, fileType, ...(caption ? { caption } : {}) };
       }
     }
 
-    const result = payload?.results?.[0];
+    const result = firstRecord(root?.results);
     if (!result) return null;
 
-    const content = result.content?.[0];
+    const content = firstRecord(result.content);
+    const message = asRecord(result.message);
     const mediaUrl =
-      typeof content?.mediaUrl === 'string'
-        ? content.mediaUrl
-        : typeof content?.url === 'string'
-          ? content.url
-          : null;
-    const contentType = typeof content?.type === 'string' ? content.type.toLowerCase().trim() : '';
-    const messageType = typeof result?.message?.type === 'string' ? result.message.type.toLowerCase().trim() : '';
+      asTrimmedString(content?.mediaUrl)
+      || asTrimmedString(content?.url)
+      || '';
+    const contentType = asLowerTrimmedString(content?.type);
+    const messageType = asLowerTrimmedString(message?.type);
     const mediaMime =
-      typeof content?.mimetype === 'string'
-        ? content.mimetype.toLowerCase().trim()
-        : typeof content?.mimeType === 'string'
-          ? content.mimeType.toLowerCase().trim()
-          : typeof content?.mediaType === 'string'
-            ? content.mediaType.toLowerCase().trim()
-            : '';
-    const caption = typeof content?.caption === 'string' ? content.caption : undefined;
+      asLowerTrimmedString(content?.mimetype)
+      || asLowerTrimmedString(content?.mimeType)
+      || asLowerTrimmedString(content?.mediaType);
+    const caption = asString(content?.caption) ?? undefined;
     const looksLikeSticker =
       contentType.includes('sticker')
       || messageType.includes('sticker')
@@ -1863,36 +1911,39 @@ export class AgentWorker {
     if (mediaUrl) {
       const type = contentType;
       if (type === 'image') {
-        return { fileRef: mediaUrl, fileType: 'image', caption: content.caption };
+        return { fileRef: mediaUrl, fileType: 'image', ...(caption ? { caption } : {}) };
       }
       if (type === 'document') {
         return {
           fileRef: mediaUrl,
           fileType: this.inferFileType(mediaUrl),
-          caption: content.caption,
+          ...(caption ? { caption } : {}),
         };
       }
       // Fallback: infer from URL if type missing
       return {
         fileRef: mediaUrl,
         fileType: this.inferFileType(mediaUrl),
-        caption: content.caption,
+        ...(caption ? { caption } : {}),
       };
     }
 
-    if (result.message?.imageUrl) {
+    const imageUrl = asTrimmedString(message?.imageUrl);
+    const messageCaption = asString(message?.caption) ?? undefined;
+    if (imageUrl) {
       return {
-        fileRef: result.message.imageUrl,
+        fileRef: imageUrl,
         fileType: 'image',
-        caption: result.message.caption,
+        ...(messageCaption ? { caption: messageCaption } : {}),
       };
     }
 
-    if (result.message?.documentUrl) {
+    const documentUrl = asTrimmedString(message?.documentUrl);
+    if (documentUrl) {
       return {
-        fileRef: result.message.documentUrl,
-        fileType: this.inferFileType(result.message.documentUrl),
-        caption: result.message.caption,
+        fileRef: documentUrl,
+        fileType: this.inferFileType(documentUrl),
+        ...(messageCaption ? { caption: messageCaption } : {}),
       };
     }
 
@@ -1914,18 +1965,22 @@ export class AgentWorker {
   /**
    * Extract sender phone from Infobip payload
    */
-  private extractSenderPhone(payload: any): string {
-    const result = payload?.results?.[0];
+  private extractSenderPhone(payload: unknown): string {
+    const root = asRecord(payload);
+    const result = firstRecord(root?.results);
     if (result) {
-      return result?.sender || result?.from || payload?.from || 'unknown';
+      return asString(result.sender) || asString(result.from) || asString(root?.from) || 'unknown';
     }
 
     // Evolution payload (Baileys) - try remoteJid
+    const payloadData = asRecord(root?.data);
+    const payloadDataKey = asRecord(payloadData?.key);
+    const payloadKey = asRecord(root?.key);
     const remoteJid =
-      payload?.data?.key?.remoteJid
-      || payload?.data?.remoteJid
-      || payload?.key?.remoteJid
-      || payload?.remoteJid
+      asString(payloadDataKey?.remoteJid)
+      || asString(payloadData?.remoteJid)
+      || asString(payloadKey?.remoteJid)
+      || asString(root?.remoteJid)
       || null;
     if (typeof remoteJid === 'string') {
       const base = remoteJid.split('@')[0] || '';
@@ -1933,7 +1988,7 @@ export class AgentWorker {
       if (digits) return `+${digits}`;
     }
 
-    return payload?.from || 'unknown';
+    return asString(root?.from) || 'unknown';
   }
 
   private normalizePhone(phone: string): string {
@@ -1972,13 +2027,13 @@ export class AgentWorker {
       });
 
       if (!whatsappNumber) {
-        console.warn(`[AgentWorker] No active WhatsApp number for workspace ${workspaceId}`);
+        logger.warn(`[AgentWorker] No active WhatsApp number for workspace ${workspaceId}`);
         return;
       }
 
       const apiKey = resolveWhatsAppApiKey(whatsappNumber);
       if (!apiKey) {
-        console.error('[AgentWorker] WhatsApp API key not configured');
+        logger.error('[AgentWorker] WhatsApp API key not configured');
         return;
       }
 
@@ -1989,14 +2044,14 @@ export class AgentWorker {
         const baseUrl = resolveEvolutionBaseUrl(whatsappNumber.apiUrl);
         const instanceName = getEvolutionInstanceName(whatsappNumber.providerConfig);
         if (!baseUrl || !instanceName) {
-          console.error('[AgentWorker] Evolution not configured (baseUrl/instanceName missing)');
+          logger.error('[AgentWorker] Evolution not configured (baseUrl/instanceName missing)');
           return;
         }
 
         const { EvolutionClient } = await import('@nexova/integrations');
         const client = new EvolutionClient({ apiKey, baseUrl, instanceName });
         const result = await client.sendText(to, message);
-        console.log(`[AgentWorker] Sent message to ${to}`);
+        logger.info(`[AgentWorker] Sent message to ${to}`);
 
         await this.prisma.eventOutbox.create({
           data: {
@@ -2032,7 +2087,7 @@ export class AgentWorker {
       });
 
       const result = await client.sendText(to, message);
-      console.log(`[AgentWorker] Sent message to ${to}`);
+      logger.info(`[AgentWorker] Sent message to ${to}`);
 
       await this.prisma.eventOutbox.create({
         data: {
@@ -2057,7 +2112,7 @@ export class AgentWorker {
         metadata: { channelType: 'whatsapp', messageType: 'text' },
       });
     } catch (error) {
-      console.error(`[AgentWorker] Failed to send WhatsApp message:`, error);
+      logger.error({ error }, '[AgentWorker] Failed to send WhatsApp message');
     }
   }
 
@@ -2122,13 +2177,13 @@ export class AgentWorker {
       });
 
       if (!whatsappNumber) {
-        console.warn(`[AgentWorker] No active WhatsApp number for workspace ${workspaceId}`);
+        logger.warn(`[AgentWorker] No active WhatsApp number for workspace ${workspaceId}`);
         return;
       }
 
       const apiKey = resolveWhatsAppApiKey(whatsappNumber);
       if (!apiKey) {
-        console.error('[AgentWorker] WhatsApp API key not configured');
+        logger.error('[AgentWorker] WhatsApp API key not configured');
         return;
       }
 
@@ -2138,13 +2193,13 @@ export class AgentWorker {
         const baseUrl = resolveEvolutionBaseUrl(whatsappNumber.apiUrl);
         const instanceName = getEvolutionInstanceName(whatsappNumber.providerConfig);
         if (!baseUrl || !instanceName) {
-          console.error('[AgentWorker] Evolution not configured (baseUrl/instanceName missing)');
+          logger.error('[AgentWorker] Evolution not configured (baseUrl/instanceName missing)');
           return;
         }
         const { EvolutionClient } = await import('@nexova/integrations');
         const client = new EvolutionClient({ apiKey, baseUrl, instanceName });
         const result = await client.sendInteractiveList(to, sanitizedPayload);
-        console.log(`[AgentWorker] Sent interactive list to ${to}`);
+        logger.info(`[AgentWorker] Sent interactive list to ${to}`);
 
         await this.prisma.eventOutbox.create({
           data: {
@@ -2180,7 +2235,7 @@ export class AgentWorker {
       });
 
       const result = await client.sendInteractiveList(to, sanitizedPayload);
-      console.log(`[AgentWorker] Sent interactive list to ${to}`);
+      logger.info(`[AgentWorker] Sent interactive list to ${to}`);
 
       await this.prisma.eventOutbox.create({
         data: {
@@ -2205,7 +2260,7 @@ export class AgentWorker {
         metadata: { channelType: 'whatsapp', messageType: 'interactive-list' },
       });
     } catch (error) {
-      console.error(`[AgentWorker] Failed to send interactive list:`, error);
+      logger.error({ error }, '[AgentWorker] Failed to send interactive list');
       if (fallbackText) {
         await this.sendWhatsAppMessage(workspaceId, to, fallbackText, correlationId, sessionId);
       }
@@ -2262,13 +2317,13 @@ export class AgentWorker {
       });
 
       if (!whatsappNumber) {
-        console.warn(`[AgentWorker] No active WhatsApp number for workspace ${workspaceId}`);
+        logger.warn(`[AgentWorker] No active WhatsApp number for workspace ${workspaceId}`);
         return;
       }
 
       const apiKey = resolveWhatsAppApiKey(whatsappNumber);
       if (!apiKey) {
-        console.error('[AgentWorker] WhatsApp API key not configured');
+        logger.error('[AgentWorker] WhatsApp API key not configured');
         return;
       }
 
@@ -2278,13 +2333,13 @@ export class AgentWorker {
         const baseUrl = resolveEvolutionBaseUrl(whatsappNumber.apiUrl);
         const instanceName = getEvolutionInstanceName(whatsappNumber.providerConfig);
         if (!baseUrl || !instanceName) {
-          console.error('[AgentWorker] Evolution not configured (baseUrl/instanceName missing)');
+          logger.error('[AgentWorker] Evolution not configured (baseUrl/instanceName missing)');
           return;
         }
         const { EvolutionClient } = await import('@nexova/integrations');
         const client = new EvolutionClient({ apiKey, baseUrl, instanceName });
         const result = await client.sendInteractiveButtons(to, sanitizedPayload);
-        console.log(`[AgentWorker] Sent interactive buttons to ${to}`);
+        logger.info(`[AgentWorker] Sent interactive buttons to ${to}`);
 
         await this.prisma.eventOutbox.create({
           data: {
@@ -2320,7 +2375,7 @@ export class AgentWorker {
       });
 
       const result = await client.sendInteractiveButtons(to, sanitizedPayload);
-      console.log(`[AgentWorker] Sent interactive buttons to ${to}`);
+      logger.info(`[AgentWorker] Sent interactive buttons to ${to}`);
 
       await this.prisma.eventOutbox.create({
         data: {
@@ -2345,7 +2400,7 @@ export class AgentWorker {
         metadata: { channelType: 'whatsapp', messageType: 'interactive-buttons' },
       });
     } catch (error) {
-      console.error(`[AgentWorker] Failed to send interactive buttons:`, error);
+      logger.error({ error }, '[AgentWorker] Failed to send interactive buttons');
       if (fallbackText) {
         await this.sendWhatsAppMessage(workspaceId, to, fallbackText, correlationId, sessionId);
       }
@@ -2381,7 +2436,7 @@ export class AgentWorker {
       );
       return true;
     } catch (error) {
-      console.error('[AgentWorker] Failed to enqueue message:', error);
+      logger.error({ error }, '[AgentWorker] Failed to enqueue message');
       return false;
     }
   }
@@ -2414,18 +2469,18 @@ export class AgentWorker {
     }
 
     await this.redis.quit();
-    console.log('[AgentWorker] Stopped');
+    logger.info('[AgentWorker] Stopped');
   }
 }
 
 /**
  * Create and start an agent worker
  */
-export async function createAgentWorker(
+export function createAgentWorker(
   prisma: PrismaClient,
   config: WorkerConfig
-): Promise<AgentWorker> {
+): AgentWorker {
   const worker = new AgentWorker(prisma, config);
-  await worker.start();
+  worker.start();
   return worker;
 }

@@ -1,17 +1,25 @@
-import { useState, useEffect, useCallback } from 'react';
 import { AlertTriangle, FileText, Upload, Search, DollarSign, Users, Clock, Eye, MessageSquare, CreditCard, Send, Info } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
+
 import { AnimatedPage, AnimatedStagger, StatCard, Badge, Button, Input, Label, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Switch } from '../../components/ui';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../components/ui/dialog';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../stores/toast.store';
-import { useNavigate } from 'react-router-dom';
 
-const API_URL = import.meta.env.VITE_API_URL || '';
 
-const fetchWithCredentials = (input: RequestInfo | URL, init?: RequestInit) => fetch(input, {
-  ...init,
-  credentials: 'include',
-});
+type JsonRecord = Record<string, unknown>;
+type DebtStatusFilter = 'all' | 'normal' | 'seguimiento' | 'alerta' | 'severo';
+
+const envValues = import.meta.env as unknown as Record<string, unknown>;
+const apiUrlFromEnv = envValues['VITE_API_URL'];
+const API_URL = typeof apiUrlFromEnv === 'string' ? apiUrlFromEnv : '';
+
+const fetchWithCredentials = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>
+  fetch(input, {
+    ...init,
+    credentials: 'include',
+  });
 
 interface CustomerWithDebt {
   id: string;
@@ -45,7 +53,144 @@ interface Stats {
   totalCustomers: number;
 }
 
-export default function DebtsPage() {
+function asRecord(value: unknown): JsonRecord | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as JsonRecord)
+    : null;
+}
+
+function readString(record: JsonRecord | null, key: string): string | undefined {
+  if (!record) {
+    return undefined;
+  }
+  const value = record[key];
+  return typeof value === 'string' ? value : undefined;
+}
+
+function readNumber(record: JsonRecord | null, key: string): number | undefined {
+  if (!record) {
+    return undefined;
+  }
+  const value = record[key];
+  return typeof value === 'number' ? value : undefined;
+}
+
+function readBoolean(record: JsonRecord | null, key: string): boolean | undefined {
+  if (!record) {
+    return undefined;
+  }
+  const value = record[key];
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+function readRecord(record: JsonRecord | null, key: string): JsonRecord | null {
+  if (!record) {
+    return null;
+  }
+  return asRecord(record[key]);
+}
+
+function readArray(record: JsonRecord | null, key: string): unknown[] {
+  if (!record) {
+    return [];
+  }
+  const value = record[key];
+  return Array.isArray(value) ? value : [];
+}
+
+function readErrorMessage(record: JsonRecord | null, fallback: string): string {
+  return readString(record, 'message') ?? readString(record, 'error') ?? fallback;
+}
+
+async function readJsonRecord(response: Response): Promise<JsonRecord | null> {
+  try {
+    const payload: unknown = await response.json();
+    return asRecord(payload);
+  } catch {
+    return null;
+  }
+}
+
+function parseCustomerWithDebt(value: unknown): CustomerWithDebt | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  const id = readString(record, 'id');
+  const phone = readString(record, 'phone');
+  if (!id || !phone) {
+    return null;
+  }
+
+  const firstName = readString(record, 'firstName') ?? null;
+  const lastName = readString(record, 'lastName') ?? null;
+  const fullName = readString(record, 'fullName') ?? null;
+
+  return {
+    id,
+    phone,
+    firstName,
+    lastName,
+    fullName,
+    currentBalance: readNumber(record, 'currentBalance') ?? 0,
+    orderCount: readNumber(record, 'orderCount') ?? 0,
+    totalSpent: readNumber(record, 'totalSpent') ?? 0,
+    lastSeenAt: readString(record, 'lastSeenAt') ?? '',
+    debtReminderCount: readNumber(record, 'debtReminderCount'),
+    lastDebtReminderAt: readString(record, 'lastDebtReminderAt') ?? null,
+    debtDays: readNumber(record, 'debtDays'),
+  };
+}
+
+function parseUnpaidOrder(value: unknown): UnpaidOrder | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  const orderId = readString(record, 'orderId');
+  const orderNumber = readString(record, 'orderNumber');
+  if (!orderId || !orderNumber) {
+    return null;
+  }
+
+  return {
+    orderId,
+    orderNumber,
+    total: readNumber(record, 'total') ?? 0,
+    paidAmount: readNumber(record, 'paidAmount') ?? 0,
+    pendingAmount: readNumber(record, 'pendingAmount') ?? 0,
+    createdAt: readString(record, 'createdAt') ?? '',
+    daysOld: readNumber(record, 'daysOld') ?? 0,
+  };
+}
+
+function parseUnpaidOrders(record: JsonRecord | null): UnpaidOrder[] {
+  return readArray(record, 'orders')
+    .map(item => parseUnpaidOrder(item))
+    .filter((order): order is UnpaidOrder => order !== null);
+}
+
+function parseBulkResult(
+  record: JsonRecord | null
+): { sent: number; failed: number; total: number } {
+  return {
+    sent: readNumber(record, 'sent') ?? 0,
+    failed: readNumber(record, 'failed') ?? 0,
+    total: readNumber(record, 'total') ?? 0,
+  };
+}
+
+function revokeObjectUrl(url: string): void {
+  try {
+    URL.revokeObjectURL(url);
+  } catch {
+    // ignore
+  }
+}
+
+export default function DebtsPage(): JSX.Element {
   const { workspace } = useAuth();
   const toast = useToast();
   const navigate = useNavigate();
@@ -53,7 +198,7 @@ export default function DebtsPage() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'normal' | 'seguimiento' | 'alerta' | 'severo'>('all');
+  const [statusFilter, setStatusFilter] = useState<DebtStatusFilter>('all');
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerWithDebt | null>(null);
   const [isStatusInfoOpen, setIsStatusInfoOpen] = useState(false);
   const [isBulkReminderOpen, setIsBulkReminderOpen] = useState(false);
@@ -84,9 +229,11 @@ export default function DebtsPage() {
 
   // Fetch customers with debt
   useEffect(() => {
-    if (!workspace?.id) return;
+    if (!workspace?.id) {
+      return;
+    }
 
-    const fetchData = async () => {
+    const fetchData = async (): Promise<void> => {
       setIsLoading(true);
       try {
         const headers = {
@@ -100,29 +247,29 @@ export default function DebtsPage() {
         });
 
         const [customersRes, statsRes] = await Promise.all([
-          fetchWithCredentials(`${API_URL}/api/v1/customers?${queryParams}`, { headers }),
+          fetchWithCredentials(`${API_URL}/api/v1/customers?${queryParams.toString()}`, { headers }),
           fetchWithCredentials(`${API_URL}/api/v1/customers/stats`, { headers }),
         ]);
 
         let debtors: CustomerWithDebt[] = [];
         if (customersRes.ok) {
-          const data = await customersRes.json();
+          const data = await readJsonRecord(customersRes);
           // Filter customers with debt
-          debtors = (data.customers || []).filter(
-            (c: CustomerWithDebt) => c.currentBalance > 0
-          );
+          debtors = readArray(data, 'customers')
+            .map(customer => parseCustomerWithDebt(customer))
+            .filter((customer): customer is CustomerWithDebt => customer !== null && customer.currentBalance > 0);
           // Sort by debt amount (highest first)
           debtors.sort((a: CustomerWithDebt, b: CustomerWithDebt) => b.currentBalance - a.currentBalance);
           setCustomersWithDebt(debtors);
         }
 
         if (statsRes.ok) {
-          const data = await statsRes.json();
+          const data = await readJsonRecord(statsRes);
           setStats({
-            totalDebt: data.totalDebt || 0,
-            overdueDebt: data.overdueDebt || 0,
+            totalDebt: readNumber(data, 'totalDebt') ?? 0,
+            overdueDebt: readNumber(data, 'overdueDebt') ?? 0,
             customersWithDebt: debtors.length,
-            totalCustomers: data.totalCustomers || 0,
+            totalCustomers: readNumber(data, 'totalCustomers') ?? 0,
           });
         }
       } catch (error) {
@@ -132,14 +279,14 @@ export default function DebtsPage() {
       }
     };
 
-    fetchData();
+    void fetchData();
   }, [workspace?.id, search]);
 
   // Recalculate stats from loaded data
   useEffect(() => {
     if (customersWithDebt.length > 0 || !isLoading) {
       const totalDebt = customersWithDebt.reduce((sum, c) => sum + c.currentBalance, 0);
-      setStats((prev) => ({
+      setStats((prev): Stats => ({
         ...prev,
         totalDebt,
         customersWithDebt: customersWithDebt.length,
@@ -150,7 +297,7 @@ export default function DebtsPage() {
   }, [customersWithDebt, isLoading]);
 
   // Format currency
-  const formatCurrency = (amount: number) => {
+  const formatCurrency = (amount: number): string => {
     return `$${(amount / 100).toLocaleString('es-AR')}`;
   };
 
@@ -177,25 +324,21 @@ export default function DebtsPage() {
     return Math.round(amount * 100);
   };
 
-  const clearReceiptAttachment = useCallback(() => {
+  const clearReceiptAttachment = useCallback((): void => {
     setReceiptFile(null);
     setReceiptNeedsAmount(false);
     setPendingReceiptId(null);
     setReceiptDetectedAmount(null);
     setReceiptUploadError('');
     if (receiptPreviewUrl) {
-      try {
-        URL.revokeObjectURL(receiptPreviewUrl);
-      } catch {
-        // ignore
-      }
+      revokeObjectUrl(receiptPreviewUrl);
     }
     setReceiptPreviewUrl(null);
     setReceiptPreviewType(null);
     setReceiptFileInputKey((prev) => prev + 1);
   }, [receiptPreviewUrl]);
 
-  const resetReceiptUpload = () => {
+  const resetReceiptUpload = (): void => {
     clearReceiptAttachment();
     setReceiptAmount('');
     setReceiptAutoDetect(true);
@@ -211,50 +354,53 @@ export default function DebtsPage() {
 
   useEffect(() => {
     if (!receiptFile) {
-      if (receiptPreviewUrl) {
-        try {
-          URL.revokeObjectURL(receiptPreviewUrl);
-        } catch {
-          // ignore
+      setReceiptPreviewUrl((previousUrl) => {
+        if (previousUrl) {
+          revokeObjectUrl(previousUrl);
         }
-      }
-      setReceiptPreviewUrl(null);
+        return null;
+      });
       setReceiptPreviewType(null);
       return;
     }
 
     const url = URL.createObjectURL(receiptFile);
-    setReceiptPreviewUrl(url);
+    setReceiptPreviewUrl((previousUrl) => {
+      if (previousUrl) {
+        revokeObjectUrl(previousUrl);
+      }
+      return url;
+    });
     setReceiptPreviewType(receiptFile.type === 'application/pdf' ? 'pdf' : 'image');
 
-    return () => {
-      try {
-        URL.revokeObjectURL(url);
-      } catch {
-        // ignore
-      }
+    return (): void => {
+      revokeObjectUrl(url);
     };
   }, [receiptFile]);
 
-  const buildAuthHeaders = () => {
-    if (!workspace?.id) return null;
+  const buildAuthHeaders = (): Record<string, string> | null => {
+    if (!workspace?.id) {
+      return null;
+    }
     return {
       'X-Workspace-Id': workspace.id,
     };
   };
 
-  const fetchUnpaidOrders = async (customerId: string) => {
+  const fetchUnpaidOrders = async (customerId: string): Promise<UnpaidOrder[]> => {
     const headers = buildAuthHeaders();
-    if (!headers) return [];
+    if (!headers) {
+      return [];
+    }
     const res = await fetchWithCredentials(`${API_URL}/api/v1/customers/${customerId}/unpaid-orders`, { headers });
     if (!res.ok) {
       return [];
     }
-    const data = await res.json();
-    return (data.orders || []) as UnpaidOrder[];
+    const data = await readJsonRecord(res);
+    return parseUnpaidOrders(data);
   };
 
-  const openCustomerDetail = async (customer: CustomerWithDebt) => {
+  const openCustomerDetail = async (customer: CustomerWithDebt): Promise<void> => {
     setSelectedCustomer(customer);
     setIsDetailLoading(true);
     try {
@@ -265,13 +411,13 @@ export default function DebtsPage() {
     }
   };
 
-  const handleOpenOrder = (orderId: string) => {
+  const handleOpenOrder = (orderId: string): void => {
     setSelectedCustomer(null);
     setDetailOrders([]);
     navigate(`/orders?orderId=${orderId}`);
   };
 
-  const openReminderModal = async (customer: CustomerWithDebt) => {
+  const openReminderModal = async (customer: CustomerWithDebt): Promise<void> => {
     setSelectedCustomer(null);
     setReminderCustomer(customer);
     setIsReminderLoading(true);
@@ -283,8 +429,10 @@ export default function DebtsPage() {
     }
   };
 
-  const handleSendReminder = async () => {
-    if (!workspace?.id || !reminderCustomer) return;
+  const handleSendReminder = async (): Promise<void> => {
+    if (!workspace?.id || !reminderCustomer) {
+      return;
+    }
     setIsReminderSending(true);
     try {
       const headers = buildAuthHeaders();
@@ -294,8 +442,8 @@ export default function DebtsPage() {
         headers,
       });
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body?.message || body?.error || 'No se pudo enviar el recordatorio');
+        const body = await readJsonRecord(res);
+        throw new Error(readErrorMessage(body, 'No se pudo enviar el recordatorio'));
       }
       toast.success('Recordatorio enviado');
       setReminderCustomer(null);
@@ -307,8 +455,10 @@ export default function DebtsPage() {
     }
   };
 
-  const handleBulkReminder = async () => {
-    if (!workspace?.id) return;
+  const handleBulkReminder = async (): Promise<void> => {
+    if (!workspace?.id) {
+      return;
+    }
     setIsBulkSending(true);
     try {
       const headers = buildAuthHeaders();
@@ -318,11 +468,11 @@ export default function DebtsPage() {
         headers,
       });
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body?.message || body?.error || 'No se pudo enviar recordatorios');
+        const body = await readJsonRecord(res);
+        throw new Error(readErrorMessage(body, 'No se pudo enviar recordatorios'));
       }
-      const data = await res.json();
-      setBulkResult(data);
+      const data = await readJsonRecord(res);
+      setBulkResult(parseBulkResult(data));
       toast.success('Recordatorios enviados');
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'No se pudo enviar recordatorios');
@@ -331,7 +481,7 @@ export default function DebtsPage() {
     }
   };
 
-  const openPaymentModal = async (customer: CustomerWithDebt) => {
+  const openPaymentModal = async (customer: CustomerWithDebt): Promise<void> => {
     setSelectedCustomer(null);
     setPaymentCustomer(customer);
     setIsPaymentModalOpen(true);
@@ -342,8 +492,10 @@ export default function DebtsPage() {
     setSelectedPaymentOrderId(orders[0]?.orderId || '');
   };
 
-  const handleUploadReceipt = async () => {
-    if (!workspace?.id || !selectedPaymentOrderId) return;
+  const handleUploadReceipt = async (): Promise<void> => {
+    if (!workspace?.id || !selectedPaymentOrderId) {
+      return;
+    }
     const isCash = receiptPaymentMethod === 'cash';
     if (isCash && !receiptAmount.trim()) {
       setReceiptUploadError('Ingresá un monto');
@@ -393,21 +545,17 @@ export default function DebtsPage() {
 
       if (!response.ok) {
         let message = 'No se pudo subir el comprobante';
-        try {
-          const body = await response.json();
-          if (response.status === 409 || body?.error === 'DUPLICATE_RECEIPT') {
-            message = 'Este comprobante esta duplicado';
-          } else {
-            message = body?.message || body?.error || message;
-          }
-        } catch {
-          // ignore
+        const body = await readJsonRecord(response);
+        if (response.status === 409 || readString(body, 'error') === 'DUPLICATE_RECEIPT') {
+          message = 'Este comprobante esta duplicado';
+        } else {
+          message = readErrorMessage(body, message);
         }
         throw new Error(message);
       }
 
-      const data = await response.json();
-      if (data?.applied) {
+      const data = await readJsonRecord(response);
+      if (readBoolean(data, 'applied')) {
         toast.success('Pago registrado');
         setIsPaymentModalOpen(false);
         resetReceiptUpload();
@@ -415,11 +563,12 @@ export default function DebtsPage() {
       }
 
       if (!isCash) {
-        setPendingReceiptId(data?.receiptId || data?.receipt?.id || null);
+        setPendingReceiptId(readString(data, 'receiptId') ?? readString(readRecord(data, 'receipt'), 'id') ?? null);
         setReceiptNeedsAmount(true);
-        if (typeof data?.extractedAmount === 'number') {
-          setReceiptDetectedAmount(data.extractedAmount);
-          setReceiptAmount((data.extractedAmount / 100).toString());
+        const extractedAmount = readNumber(data, 'extractedAmount');
+        if (typeof extractedAmount === 'number') {
+          setReceiptDetectedAmount(extractedAmount);
+          setReceiptAmount((extractedAmount / 100).toString());
         } else {
           setReceiptDetectedAmount(null);
         }
@@ -432,8 +581,10 @@ export default function DebtsPage() {
     }
   };
 
-  const handleApplyReceiptAmount = async () => {
-    if (!workspace?.id || !selectedPaymentOrderId || !pendingReceiptId) return;
+  const handleApplyReceiptAmount = async (): Promise<void> => {
+    if (!workspace?.id || !selectedPaymentOrderId || !pendingReceiptId) {
+      return;
+    }
     const amountCents = parseMoneyInputToCents(receiptAmount);
     if (!amountCents) {
       setReceiptUploadError('Ingresá un monto válido');
@@ -456,12 +607,8 @@ export default function DebtsPage() {
 
       if (!response.ok) {
         let message = 'No se pudo aplicar el comprobante';
-        try {
-          const body = await response.json();
-          message = body?.message || body?.error || message;
-        } catch {
-          // ignore
-        }
+        const body = await readJsonRecord(response);
+        message = readErrorMessage(body, message);
         throw new Error(message);
       }
 
@@ -476,7 +623,7 @@ export default function DebtsPage() {
   };
 
   // Format date
-  const formatDate = (dateString: string) => {
+  const formatDate = (dateString: string): string => {
     return new Date(dateString).toLocaleDateString('es-AR', {
       day: '2-digit',
       month: 'short',
@@ -485,7 +632,7 @@ export default function DebtsPage() {
   };
 
   // Time ago
-  const timeAgo = (dateString: string) => {
+  const timeAgo = (dateString: string): string => {
     const date = new Date(dateString);
     const now = new Date();
     const diffMs = now.getTime() - date.getTime();
@@ -500,12 +647,14 @@ export default function DebtsPage() {
   };
 
   // Get debt severity color
-  const getDebtSeverity = (amount: number) => {
+  const getDebtSeverity = (amount: number): string => {
     if (amount > 0) return 'debt-warning-text';
     return 'text-foreground';
   };
 
-  const resolveDebtStatus = (days: number) => {
+  const resolveDebtStatus = (
+    days: number
+  ): { label: string; color: string } => {
     if (days < 5) {
       return { label: 'Normal', color: 'bg-emerald-500/20 text-emerald-400' };
     }
@@ -518,7 +667,7 @@ export default function DebtsPage() {
     return { label: 'Severo', color: 'bg-red-500/20 text-red-400' };
   };
 
-  const resolveDebtStatusKey = (days: number) => {
+  const resolveDebtStatusKey = (days: number): DebtStatusFilter => {
     if (days < 5) return 'normal';
     if (days < 15) return 'seguimiento';
     if (days < 30) return 'alerta';
@@ -554,7 +703,7 @@ export default function DebtsPage() {
             </div>
             <Select
               value={statusFilter}
-              onValueChange={(value) => setStatusFilter(value as 'all' | 'normal' | 'seguimiento' | 'alerta' | 'severo')}
+              onValueChange={(value) => setStatusFilter(value as DebtStatusFilter)}
             >
               <SelectTrigger className="w-full md:w-44">
                 <SelectValue placeholder="Estado deuda" />
@@ -628,7 +777,9 @@ export default function DebtsPage() {
                 return (
                   <button
                     key={customer.id}
-                    onClick={() => openCustomerDetail(customer)}
+                    onClick={() => {
+                      void openCustomerDetail(customer);
+                    }}
                     className="w-full text-left px-4 py-3.5 hover:bg-secondary/50 transition-colors active:bg-secondary"
                   >
                     <div className="flex items-center gap-3">
@@ -660,7 +811,7 @@ export default function DebtsPage() {
                       <button
                         onClick={(event) => {
                           event.stopPropagation();
-                          openReminderModal(customer);
+                          void openReminderModal(customer);
                         }}
                         className="p-2 rounded-lg hover:bg-secondary transition-colors text-muted-foreground hover:text-emerald-400"
                         title="Enviar recordatorio"
@@ -670,7 +821,7 @@ export default function DebtsPage() {
                       <button
                         onClick={(event) => {
                           event.stopPropagation();
-                          openPaymentModal(customer);
+                          void openPaymentModal(customer);
                         }}
                         className="p-2 rounded-lg hover:bg-secondary transition-colors text-muted-foreground hover:text-primary"
                         title="Registrar pago"
@@ -716,7 +867,9 @@ export default function DebtsPage() {
                     <tr
                       key={customer.id}
                       className="border-b border-border hover:bg-secondary transition-colors cursor-pointer"
-                      onClick={() => openCustomerDetail(customer)}
+                      onClick={() => {
+                        void openCustomerDetail(customer);
+                      }}
                     >
                       <td className="px-5 py-4">
                         <div className="flex items-center gap-3" title="Ver detalle de deuda">
@@ -766,7 +919,7 @@ export default function DebtsPage() {
                           <button
                             onClick={(event) => {
                               event.stopPropagation();
-                              openCustomerDetail(customer);
+                              void openCustomerDetail(customer);
                             }}
                             className="p-2 rounded-lg hover:bg-secondary transition-colors text-muted-foreground hover:text-foreground"
                             title="Ver detalles"
@@ -778,7 +931,7 @@ export default function DebtsPage() {
                             title="Enviar recordatorio"
                             onClick={(event) => {
                               event.stopPropagation();
-                              openReminderModal(customer);
+                              void openReminderModal(customer);
                             }}
                           >
                             <MessageSquare className="w-4 h-4" />
@@ -788,7 +941,7 @@ export default function DebtsPage() {
                             title="Registrar pago"
                             onClick={(event) => {
                               event.stopPropagation();
-                              openPaymentModal(customer);
+                              void openPaymentModal(customer);
                             }}
                           >
                             <CreditCard className="w-4 h-4" />
@@ -919,12 +1072,19 @@ export default function DebtsPage() {
                   <Button
                     variant="secondary"
                     className="flex-1"
-                    onClick={() => openReminderModal(selectedCustomer)}
+                    onClick={() => {
+                      void openReminderModal(selectedCustomer);
+                    }}
                   >
                     <MessageSquare className="w-4 h-4 mr-2" />
                     Enviar recordatorio
                   </Button>
-                  <Button className="flex-1" onClick={() => openPaymentModal(selectedCustomer)}>
+                  <Button
+                    className="flex-1"
+                    onClick={() => {
+                      void openPaymentModal(selectedCustomer);
+                    }}
+                  >
                     <CreditCard className="w-4 h-4 mr-2" />
                     Registrar pago
                   </Button>
@@ -996,7 +1156,13 @@ export default function DebtsPage() {
                 <Button variant="secondary" className="flex-1" onClick={() => setIsBulkReminderOpen(false)}>
                   Cancelar
                 </Button>
-                <Button className="flex-1" onClick={handleBulkReminder} isLoading={isBulkSending}>
+                <Button
+                  className="flex-1"
+                  onClick={() => {
+                    void handleBulkReminder();
+                  }}
+                  isLoading={isBulkSending}
+                >
                   Enviar
                 </Button>
               </div>
@@ -1062,7 +1228,9 @@ export default function DebtsPage() {
                     </Button>
                     <Button
                       className="flex-1"
-                      onClick={handleSendReminder}
+                      onClick={() => {
+                        void handleSendReminder();
+                      }}
                       isLoading={isReminderSending}
                       disabled={reminderOrders.length === 0}
                     >
@@ -1239,7 +1407,13 @@ export default function DebtsPage() {
               </Button>
               <Button
                 className="flex-1"
-                onClick={receiptNeedsAmount ? handleApplyReceiptAmount : handleUploadReceipt}
+                onClick={() => {
+                  if (receiptNeedsAmount) {
+                    void handleApplyReceiptAmount();
+                    return;
+                  }
+                  void handleUploadReceipt();
+                }}
                 isLoading={isReceiptUploading}
                 disabled={!selectedPaymentOrderId}
               >

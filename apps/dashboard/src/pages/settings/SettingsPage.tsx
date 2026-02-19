@@ -1,6 +1,7 @@
+import { User, Building2, Check, Ban, Info, FileText } from 'lucide-react';
 import { useState, useEffect, useRef, type ChangeEvent } from 'react';
 import { NavLink, Routes, Route, Navigate, useSearchParams } from 'react-router-dom';
-import { User, Building2, Check, Ban, Info, FileText } from 'lucide-react';
+
 import {
   Button,
   Input,
@@ -18,28 +19,91 @@ import {
   SelectValue,
   AnimatedPage,
 } from '../../components/ui';
-import { cn } from '../../lib/utils';
 import { useAuth } from '../../contexts/AuthContext';
-import { useToast } from '../../stores/toast.store';
-import { getWorkspaceCommerceCapabilities } from '../../lib/commerce-plan';
 import { apiFetch } from '../../lib/api';
+import { getWorkspaceCommerceCapabilities } from '../../lib/commerce-plan';
+import { cn } from '../../lib/utils';
+import { useToast } from '../../stores/toast.store';
 
-const API_URL = import.meta.env.VITE_API_URL || '';
+type JsonRecord = Record<string, unknown>;
+type SettingsNavItem = { name: string; href: string };
+
+const apiUrlRaw: unknown = import.meta.env.VITE_API_URL;
+const API_URL = typeof apiUrlRaw === 'string' ? apiUrlRaw : '';
 const DEFAULT_LOW_STOCK_THRESHOLD = 10;
 const MAX_LOW_STOCK_THRESHOLD = 1_000_000;
+const DEFAULT_WORKING_DAYS = ['lun', 'mar', 'mie', 'jue', 'vie'];
 
 // Use the shared API wrapper so Settings keeps working when the access token cookie expires
 // (it will refresh and retry automatically).
-const fetchWithCredentials = (input: RequestInfo | URL, init?: RequestInit) =>
+const fetchWithCredentials = (input: string | URL, init?: RequestInit): Promise<Response> =>
   apiFetch(typeof input === 'string' ? input : input.toString(), init);
+
+function asRecord(value: unknown): JsonRecord | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as JsonRecord;
+}
+
+function asRecordList(value: unknown): JsonRecord[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => asRecord(item))
+    .filter((item): item is JsonRecord => item !== null);
+}
+
+function readString(record: JsonRecord | null, key: string): string | undefined {
+  const value = record?.[key];
+  return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
+}
+
+function readNumber(record: JsonRecord | null, key: string): number | undefined {
+  const value = record?.[key];
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function readBoolean(record: JsonRecord | null, key: string, fallback: boolean): boolean {
+  const value = record?.[key];
+  return typeof value === 'boolean' ? value : fallback;
+}
+
+function readRecord(record: JsonRecord | null, key: string): JsonRecord | null {
+  return asRecord(record?.[key]);
+}
+
+function readStringList(record: JsonRecord | null, key: string, fallback: string[]): string[] {
+  const value = record?.[key];
+  if (!Array.isArray(value)) return fallback;
+  const list = value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+  return list.length > 0 ? list : fallback;
+}
+
+function readErrorMessage(data: JsonRecord, fallback: string): string {
+  return readString(data, 'message') ?? readString(data, 'error') ?? fallback;
+}
+
+async function readJsonRecord(response: Response): Promise<JsonRecord> {
+  try {
+    const parsed = (await response.json()) as unknown;
+    return asRecord(parsed) ?? {};
+  } catch {
+    return {};
+  }
+}
 
 // Navigation items - "Mi negocio" only shows for commerce business type
 const getSettingsNav = (
   businessType?: string,
   options?: { showNotifications?: boolean }
-) => {
+): SettingsNavItem[] => {
   const showNotifications = options?.showNotifications ?? true;
-  const nav = [
+  const nav: SettingsNavItem[] = [
     { name: 'Mi perfil', href: '/settings' },
   ];
 
@@ -57,7 +121,7 @@ const getSettingsNav = (
   return nav;
 };
 
-function ProfileSettings() {
+function ProfileSettings(): JSX.Element {
   const { user, refreshUser } = useAuth();
   const toast = useToast();
   const [isLoading, setIsLoading] = useState(false);
@@ -78,7 +142,7 @@ function ProfileSettings() {
     });
   }, [user?.firstName, user?.lastName, user?.avatarUrl]);
 
-  const handleAvatarUpload = async (file: File) => {
+  const handleAvatarUpload = (file: File): void => {
     setIsUploadingAvatar(true);
     setError('');
 
@@ -99,7 +163,7 @@ function ProfileSettings() {
     }
   };
 
-  const handleSave = async () => {
+  const handleSave = async (): Promise<void> => {
     setIsLoading(true);
     setError('');
     try {
@@ -115,8 +179,8 @@ function ProfileSettings() {
         await refreshUser();
         toast.success('Perfil actualizado correctamente');
       } else {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data.message || 'Error al actualizar el perfil');
+        const data = await readJsonRecord(response);
+        throw new Error(readErrorMessage(data, 'Error al actualizar el perfil'));
       }
     } catch (error) {
       console.error('Failed to update profile:', error);
@@ -232,7 +296,7 @@ function ProfileSettings() {
             </div>
           )}
 
-          <Button onClick={handleSave} isLoading={isLoading}>
+          <Button onClick={() => { void handleSave(); }} isLoading={isLoading}>
             Guardar cambios
           </Button>
         </div>
@@ -310,7 +374,7 @@ const MONOTRIBUTO_CATEGORIES = [
   { value: 'K', label: 'Categoría K' },
 ];
 
-function BusinessSettings() {
+function BusinessSettings(): JSX.Element {
   const { workspace, refreshUser } = useAuth();
   const capabilities = getWorkspaceCommerceCapabilities(workspace);
   const canUseOwnerWhatsappAgent = capabilities.showOwnerWhatsappAgentSettings;
@@ -338,7 +402,7 @@ function BusinessSettings() {
     monotributoCategory: '',
     monotributoActivity: 'services',
     availabilityStatus: 'available',
-    workingDays: ['lun', 'mar', 'mie', 'jue', 'vie'],
+    workingDays: [...DEFAULT_WORKING_DAYS],
     continuousHours: true,
     workingHoursStart: '09:00',
     workingHoursEnd: '18:00',
@@ -356,7 +420,7 @@ function BusinessSettings() {
   useEffect(() => {
     if (!workspace?.id) return;
 
-    const loadSettings = async () => {
+    const loadSettings = async (): Promise<void> => {
       try {
         const res = await fetchWithCredentials(`${API_URL}/api/v1/workspaces/${workspace.id}`, {
           headers: {
@@ -365,38 +429,42 @@ function BusinessSettings() {
         });
 
         if (res.ok) {
-          const data = await res.json();
-          const settings = data.workspace?.settings || {};
+          const data = await readJsonRecord(res);
+          const workspaceData = readRecord(data, 'workspace');
+          const settings = readRecord(workspaceData, 'settings');
+          const ownerAgentPinHash = readString(settings, 'ownerAgentPinHash');
+          const availabilityValue = readString(settings, 'availabilityStatus');
+          const availabilityStatus: BusinessProfile['availabilityStatus'] =
+            availabilityValue === 'unavailable' || availabilityValue === 'vacation'
+              ? availabilityValue
+              : 'available';
           setProfile((prev) => ({
             ...prev,
-            companyLogo: settings.companyLogo || null,
-            businessName: settings.businessName || '',
-            whatsappContact: settings.whatsappContact || '',
-            ownerAgentEnabled: settings.ownerAgentEnabled ?? false,
-            ownerAgentNumber: settings.ownerAgentNumber || '',
-            ownerAgentPinRequired: Boolean(settings.ownerAgentPinHash),
-            ownerAgentPinConfigured: Boolean(settings.ownerAgentPinHash),
+            companyLogo: readString(settings, 'companyLogo') ?? null,
+            businessName: readString(settings, 'businessName') ?? '',
+            whatsappContact: readString(settings, 'whatsappContact') ?? '',
+            ownerAgentEnabled: readBoolean(settings, 'ownerAgentEnabled', false),
+            ownerAgentNumber: readString(settings, 'ownerAgentNumber') ?? '',
+            ownerAgentPinRequired: ownerAgentPinHash !== undefined,
+            ownerAgentPinConfigured: ownerAgentPinHash !== undefined,
             ownerAgentPin: '',
-            paymentAlias: settings.paymentAlias || '',
-            paymentCbu: settings.paymentCbu || '',
-            businessAddress: settings.businessAddress || '',
-            vatConditionId: settings.vatConditionId || '',
-            monotributoCategory: settings.monotributoCategory || '',
+            paymentAlias: readString(settings, 'paymentAlias') ?? '',
+            paymentCbu: readString(settings, 'paymentCbu') ?? '',
+            businessAddress: readString(settings, 'businessAddress') ?? '',
+            vatConditionId: readString(settings, 'vatConditionId') ?? '',
+            monotributoCategory: readString(settings, 'monotributoCategory') ?? '',
             monotributoActivity:
-              settings.monotributoActivity === 'goods' ? 'goods' : 'services',
-            availabilityStatus:
-              settings.availabilityStatus === 'unavailable' || settings.availabilityStatus === 'vacation'
-                ? settings.availabilityStatus
-                : 'available',
-            workingDays: settings.workingDays || ['lun', 'mar', 'mie', 'jue', 'vie'],
-            continuousHours: settings.continuousHours ?? true,
-            workingHoursStart: settings.workingHoursStart || '09:00',
-            workingHoursEnd: settings.workingHoursEnd || '18:00',
-            morningShiftStart: settings.morningShiftStart || '09:00',
-            morningShiftEnd: settings.morningShiftEnd || '13:00',
-            afternoonShiftStart: settings.afternoonShiftStart || '14:00',
-            afternoonShiftEnd: settings.afternoonShiftEnd || '18:00',
-            assistantNotes: settings.assistantNotes || '',
+              readString(settings, 'monotributoActivity') === 'goods' ? 'goods' : 'services',
+            availabilityStatus,
+            workingDays: readStringList(settings, 'workingDays', DEFAULT_WORKING_DAYS),
+            continuousHours: readBoolean(settings, 'continuousHours', true),
+            workingHoursStart: readString(settings, 'workingHoursStart') ?? '09:00',
+            workingHoursEnd: readString(settings, 'workingHoursEnd') ?? '18:00',
+            morningShiftStart: readString(settings, 'morningShiftStart') ?? '09:00',
+            morningShiftEnd: readString(settings, 'morningShiftEnd') ?? '13:00',
+            afternoonShiftStart: readString(settings, 'afternoonShiftStart') ?? '14:00',
+            afternoonShiftEnd: readString(settings, 'afternoonShiftEnd') ?? '18:00',
+            assistantNotes: readString(settings, 'assistantNotes') ?? '',
           }));
         }
       } catch (err) {
@@ -406,7 +474,7 @@ function BusinessSettings() {
       }
     };
 
-    loadSettings();
+    void loadSettings();
   }, [workspace?.id]);
 
   useEffect(() => {
@@ -418,12 +486,12 @@ function BusinessSettings() {
         monotributoActivity: 'services',
       }));
     }
-  }, [isMonotributo]);
+  }, [isMonotributo, profile.monotributoActivity, profile.monotributoCategory]);
 
-  const handleImageUpload = async (
+  const handleImageUpload = (
     file: File,
     type: 'companyLogo'
-  ) => {
+  ): void => {
     setUploadingLogo(true);
     setError('');
 
@@ -445,7 +513,7 @@ function BusinessSettings() {
     }
   };
 
-  const toggleDay = (day: string) => {
+  const toggleDay = (day: string): void => {
     setProfile((prev) => ({
       ...prev,
       workingDays: prev.workingDays.includes(day)
@@ -454,7 +522,7 @@ function BusinessSettings() {
     }));
   };
 
-  const handleSave = async () => {
+  const handleSave = async (): Promise<void> => {
     if (!workspace?.id) return;
 
     setIsSaving(true);
@@ -508,8 +576,8 @@ function BusinessSettings() {
       });
 
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.message || 'Error al guardar');
+        const data = await readJsonRecord(res);
+        throw new Error(readErrorMessage(data, 'Error al guardar'));
       }
 
       setProfile((prev) => {
@@ -1052,7 +1120,7 @@ function BusinessSettings() {
             {error}
           </div>
         )}
-        <Button onClick={handleSave} isLoading={isSaving} className="w-full sm:w-auto sm:ml-auto">
+        <Button onClick={() => { void handleSave(); }} isLoading={isSaving} className="w-full sm:w-auto sm:ml-auto">
           Guardar cambios
         </Button>
       </div>
@@ -1101,7 +1169,67 @@ interface ArcaStatus {
   csrGeneratedAt?: string;
 }
 
-function ApplicationsSettings() {
+function parseWhatsAppNumberInfo(value: unknown): WhatsAppNumberInfo | null {
+  const record = asRecord(value);
+  if (!record) return null;
+
+  return {
+    id: readString(record, 'id') ?? '',
+    phoneNumber: readString(record, 'phoneNumber') ?? '',
+    displayName: readString(record, 'displayName') ?? '',
+    provider: readString(record, 'provider'),
+    status: readString(record, 'status'),
+    healthStatus: readString(record, 'healthStatus'),
+    isActive: readBoolean(record, 'isActive', false),
+  };
+}
+
+function parseMpStatus(value: unknown): MPStatus | null {
+  const record = asRecord(value);
+  if (!record) return null;
+
+  const statsRecord = readRecord(record, 'stats');
+  const linksGenerated = readNumber(statsRecord, 'linksGenerated');
+  const paymentsReceived = readNumber(statsRecord, 'paymentsReceived');
+  const amountCollected = readNumber(statsRecord, 'amountCollected');
+
+  return {
+    connected: readBoolean(record, 'connected', false),
+    status: readString(record, 'status') ?? 'disconnected',
+    externalUserId: readString(record, 'externalUserId'),
+    externalEmail: readString(record, 'externalEmail'),
+    connectedAt: readString(record, 'connectedAt'),
+    tokenExpiresAt: readString(record, 'tokenExpiresAt'),
+    stats:
+      linksGenerated !== undefined && paymentsReceived !== undefined && amountCollected !== undefined
+        ? {
+          linksGenerated,
+          paymentsReceived,
+          amountCollected,
+        }
+        : undefined,
+  };
+}
+
+function parseArcaStatus(value: unknown): ArcaStatus | null {
+  const record = asRecord(value);
+  if (!record) return null;
+
+  return {
+    connected: readBoolean(record, 'connected', false),
+    status: readString(record, 'status') ?? 'disconnected',
+    cuit: readString(record, 'cuit'),
+    environment: readString(record, 'environment'),
+    pointOfSale: readNumber(record, 'pointOfSale'),
+    connectedAt: readString(record, 'connectedAt'),
+    tokenExpiresAt: readString(record, 'tokenExpiresAt'),
+    lastError: readString(record, 'lastError'),
+    csr: readString(record, 'csr'),
+    csrGeneratedAt: readString(record, 'csrGeneratedAt'),
+  };
+}
+
+function ApplicationsSettings(): JSX.Element {
   const { workspace } = useAuth();
   const capabilities = getWorkspaceCommerceCapabilities(workspace);
   const canUseArca = capabilities.showArcaIntegration;
@@ -1173,7 +1301,7 @@ function ApplicationsSettings() {
   useEffect(() => {
     if (!workspace?.id) return;
 
-    const fetchWhatsApp = async () => {
+    const fetchWhatsApp = async (): Promise<void> => {
       setIsLoadingWA(true);
       try {
         const headers = {
@@ -1186,13 +1314,19 @@ function ApplicationsSettings() {
         ]);
 
         if (connectedRes.ok) {
-          const data = await connectedRes.json();
-          setConnectedNumber(data.number || null);
+          const data = await readJsonRecord(connectedRes);
+          setConnectedNumber(parseWhatsAppNumberInfo(data.number));
         }
         if (providersRes.ok) {
-          const data = await providersRes.json() as { providers?: Array<{ id?: string; enabled?: boolean }> };
-          const providers = Array.isArray(data?.providers) ? data.providers : [];
-          setIsEvolutionEnabled(providers.some((p) => (p?.id || '').toLowerCase() === 'evolution' && !!p?.enabled));
+          const data = await readJsonRecord(providersRes);
+          const providers = asRecordList(data.providers);
+          setIsEvolutionEnabled(
+            providers.some((provider) => {
+              const id = readString(provider, 'id') ?? '';
+              const enabled = readBoolean(provider, 'enabled', false);
+              return id.toLowerCase() === 'evolution' && enabled;
+            })
+          );
         }
       } catch (err) {
         console.error('Failed to fetch WhatsApp:', err);
@@ -1201,7 +1335,7 @@ function ApplicationsSettings() {
       }
     };
 
-    fetchWhatsApp();
+    void fetchWhatsApp();
   }, [workspace?.id]);
 
   // Fetch MercadoPago status
@@ -1212,7 +1346,7 @@ function ApplicationsSettings() {
       return;
     }
 
-    const fetchMPStatus = async () => {
+    const fetchMPStatus = async (): Promise<void> => {
       setIsLoadingMP(true);
       try {
         const res = await fetchWithCredentials(`${API_URL}/api/v1/integrations/mercadopago/status`, {
@@ -1221,8 +1355,8 @@ function ApplicationsSettings() {
           },
         });
         if (res.ok) {
-          const data = await res.json();
-          setMpStatus(data);
+          const data = await readJsonRecord(res);
+          setMpStatus(parseMpStatus(data));
         }
       } catch (err) {
         console.error('Failed to fetch MP status:', err);
@@ -1231,7 +1365,7 @@ function ApplicationsSettings() {
       }
     };
 
-    fetchMPStatus();
+    void fetchMPStatus();
   }, [canUseMercadoPago, workspace?.id]);
 
   // Fetch ARCA status
@@ -1241,7 +1375,7 @@ function ApplicationsSettings() {
       return;
     }
 
-    const fetchArcaStatus = async () => {
+    const fetchArcaStatus = async (): Promise<void> => {
       setIsLoadingArca(true);
       try {
         const res = await fetchWithCredentials(`${API_URL}/api/v1/integrations/arca/status`, {
@@ -1250,19 +1384,20 @@ function ApplicationsSettings() {
           },
         });
         if (res.ok) {
-          const data = await res.json();
-          setArcaStatus(data);
-          if (data?.csr) {
-            setArcaCsr(data.csr);
+          const data = await readJsonRecord(res);
+          const status = parseArcaStatus(data);
+          setArcaStatus(status);
+          if (status?.csr) {
+            setArcaCsr(status.csr);
           }
-          if (data?.cuit) {
-            setArcaForm((prev) => ({ ...prev, cuit: data.cuit }));
+          if (status?.cuit) {
+            setArcaForm((prev) => ({ ...prev, cuit: status.cuit ?? prev.cuit }));
           }
-          if (data?.pointOfSale) {
-            setArcaForm((prev) => ({ ...prev, pointOfSale: String(data.pointOfSale) }));
+          if (status?.pointOfSale !== undefined) {
+            setArcaForm((prev) => ({ ...prev, pointOfSale: String(status.pointOfSale) }));
           }
-          if (data?.environment) {
-            setArcaForm((prev) => ({ ...prev, environment: data.environment }));
+          if (status?.environment) {
+            setArcaForm((prev) => ({ ...prev, environment: status.environment }));
           }
         }
       } catch (err) {
@@ -1272,11 +1407,11 @@ function ApplicationsSettings() {
       }
     };
 
-    fetchArcaStatus();
+    void fetchArcaStatus();
   }, [canUseArca, workspace?.id]);
 
   // WhatsApp handlers
-  const handleDisconnectWA = async () => {
+  const handleDisconnectWA = async (): Promise<void> => {
     if (!connectedNumber || !workspace?.id) return;
     setIsConnectingWA(true);
     setWaError('');
@@ -1296,8 +1431,8 @@ function ApplicationsSettings() {
       });
 
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.message || 'Error al desconectar');
+        const data = await readJsonRecord(res);
+        throw new Error(readErrorMessage(data, 'Error al desconectar'));
       }
 
       setConnectedNumber(null);
@@ -1311,7 +1446,7 @@ function ApplicationsSettings() {
     }
   };
 
-  const stopEvolutionPolling = () => {
+  const stopEvolutionPolling = (): void => {
     if (evolutionPollRef.current) {
       window.clearInterval(evolutionPollRef.current);
       evolutionPollRef.current = null;
@@ -1328,7 +1463,7 @@ function ApplicationsSettings() {
     evolutionQrRef.current = evolutionQrDataUrl;
   }, [evolutionQrDataUrl]);
 
-  const handleConnectEvolution = async () => {
+  const handleConnectEvolution = async (): Promise<void> => {
     if (!workspace?.id) return;
     stopEvolutionPolling();
     setIsGeneratingEvolutionQr(true);
@@ -1350,14 +1485,14 @@ function ApplicationsSettings() {
       );
 
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.message || data.error || 'Error al conectar Evolution');
+        const data = await readJsonRecord(res);
+        throw new Error(readErrorMessage(data, 'Error al conectar Evolution'));
       }
 
-      const data = await res.json() as { qrCode?: string | null; qrDataUrl?: string | null; pairingCode?: string | null };
-      const qrCode = (data?.qrCode || '').trim();
-      const qrDataUrl = (data?.qrDataUrl || '').trim();
-      const pairingCode = (data?.pairingCode || '').trim();
+      const data = await readJsonRecord(res);
+      const qrCode = (readString(data, 'qrCode') ?? '').trim();
+      const qrDataUrl = (readString(data, 'qrDataUrl') ?? '').trim();
+      const pairingCode = (readString(data, 'pairingCode') ?? '').trim();
 
       setEvolutionPairingCode(pairingCode);
 
@@ -1369,7 +1504,7 @@ function ApplicationsSettings() {
         setEvolutionQrDataUrl(dataUrl);
       }
 
-      const poll = async () => {
+      const poll = async (): Promise<void> => {
         const statusRes = await fetchWithCredentials(
           `${API_URL}/api/v1/workspaces/${workspace.id}/whatsapp/evolution/status`,
           {
@@ -1378,27 +1513,20 @@ function ApplicationsSettings() {
         );
 
         if (!statusRes.ok) return;
-        const status = await statusRes.json() as {
-          state?: string;
-          connected?: boolean;
-          number?: WhatsAppNumberInfo | null;
-          qrCode?: string | null;
-          qrDataUrl?: string | null;
-          pairingCode?: string | null;
-        };
-        setEvolutionState((status?.state || '').toString());
+        const status = await readJsonRecord(statusRes);
+        setEvolutionState((readString(status, 'state') ?? '').trim());
 
-        const pairingCodeFromStatus = (status?.pairingCode || '').toString().trim();
+        const pairingCodeFromStatus = (readString(status, 'pairingCode') ?? '').trim();
         if (pairingCodeFromStatus) {
           setEvolutionPairingCode(pairingCodeFromStatus);
         }
 
-        const qrDataUrlFromStatus = (status?.qrDataUrl || '').toString().trim();
+        const qrDataUrlFromStatus = (readString(status, 'qrDataUrl') ?? '').trim();
         if (qrDataUrlFromStatus && qrDataUrlFromStatus !== evolutionQrRef.current) {
           setEvolutionQrDataUrl(qrDataUrlFromStatus);
         }
 
-        const qrCodeFromStatus = (status?.qrCode || '').toString().trim();
+        const qrCodeFromStatus = (readString(status, 'qrCode') ?? '').trim();
         if (qrCodeFromStatus && !qrDataUrlFromStatus) {
           try {
             const QRCode = await import('qrcode');
@@ -1410,8 +1538,10 @@ function ApplicationsSettings() {
             // ignore
           }
         }
-        if (status?.connected && status?.number) {
-          setConnectedNumber(status.number);
+        const connected = readBoolean(status, 'connected', false);
+        const number = parseWhatsAppNumberInfo(status.number);
+        if (connected && number) {
+          setConnectedNumber(number);
           setShowSelectModal(false);
           setEvolutionQrDataUrl('');
           setEvolutionPairingCode('');
@@ -1432,7 +1562,7 @@ function ApplicationsSettings() {
   };
 
   // MercadoPago handlers
-  const handleConnectMP = async () => {
+  const handleConnectMP = async (): Promise<void> => {
     if (!workspace?.id) {
       setMpError('No hay negocio seleccionado');
       return;
@@ -1449,11 +1579,15 @@ function ApplicationsSettings() {
       });
 
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || data.message || 'Error al obtener URL de autorización');
+        const data = await readJsonRecord(res);
+        throw new Error(readErrorMessage(data, 'Error al obtener URL de autorización'));
       }
 
-      const { url } = await res.json();
+      const data = await readJsonRecord(res);
+      const url = readString(data, 'url');
+      if (!url) {
+        throw new Error('No se recibió URL de autorización');
+      }
       window.location.href = url;
     } catch (err) {
       setMpError(err instanceof Error ? err.message : 'Error al conectar');
@@ -1461,7 +1595,7 @@ function ApplicationsSettings() {
     }
   };
 
-  const handleDisconnectMP = async () => {
+  const handleDisconnectMP = async (): Promise<void> => {
     if (!workspace?.id) return;
     setIsConnectingMP(true);
     setMpError('');
@@ -1484,7 +1618,7 @@ function ApplicationsSettings() {
     }
   };
 
-  const handleConnectArca = async () => {
+  const handleConnectArca = async (): Promise<void> => {
     if (!workspace?.id) return;
     setIsConnectingArca(true);
     setArcaError('');
@@ -1506,12 +1640,12 @@ function ApplicationsSettings() {
       });
 
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || data.message || 'Error al conectar ARCA');
+        const data = await readJsonRecord(res);
+        throw new Error(readErrorMessage(data, 'Error al conectar ARCA'));
       }
 
-      const data = await res.json();
-      setArcaStatus(data);
+      const data = await readJsonRecord(res);
+      setArcaStatus(parseArcaStatus(data));
       setShowArcaModal(false);
     } catch (err) {
       setArcaError(err instanceof Error ? err.message : 'Error al conectar ARCA');
@@ -1520,7 +1654,7 @@ function ApplicationsSettings() {
     }
   };
 
-  const handleGenerateArcaCsr = async () => {
+  const handleGenerateArcaCsr = async (): Promise<void> => {
     if (!workspace?.id) return;
     setIsGeneratingCsr(true);
     setArcaError('');
@@ -1540,12 +1674,12 @@ function ApplicationsSettings() {
       });
 
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || data.message || 'Error al generar CSR');
+        const data = await readJsonRecord(res);
+        throw new Error(readErrorMessage(data, 'Error al generar CSR'));
       }
 
-      const data = await res.json();
-      setArcaCsr(data.csr || '');
+      const data = await readJsonRecord(res);
+      setArcaCsr(readString(data, 'csr') ?? '');
       toast.success('CSR generado correctamente');
     } catch (err) {
       setArcaError(err instanceof Error ? err.message : 'Error al generar CSR');
@@ -1554,7 +1688,7 @@ function ApplicationsSettings() {
     }
   };
 
-  const handleCopyArcaCsr = async () => {
+  const handleCopyArcaCsr = async (): Promise<void> => {
     if (!arcaCsr) return;
     try {
       await navigator.clipboard.writeText(arcaCsr);
@@ -1565,7 +1699,7 @@ function ApplicationsSettings() {
     }
   };
 
-  const handleDownloadArcaCsr = () => {
+  const handleDownloadArcaCsr = (): void => {
     if (!arcaCsr) return;
     const blob = new Blob([arcaCsr], { type: 'application/pkcs10' });
     const url = URL.createObjectURL(blob);
@@ -1578,7 +1712,7 @@ function ApplicationsSettings() {
     URL.revokeObjectURL(url);
   };
 
-  const handleDisconnectArca = async () => {
+  const handleDisconnectArca = async (): Promise<void> => {
     if (!workspace?.id) return;
     setIsConnectingArca(true);
     setArcaError('');
@@ -1663,7 +1797,7 @@ function ApplicationsSettings() {
                     )}
                   </div>
                 </div>
-                <Button variant="destructive" size="sm" onClick={handleDisconnectWA} isLoading={isConnectingWA} className="w-full sm:w-auto">
+                <Button variant="destructive" size="sm" onClick={() => { void handleDisconnectWA(); }} isLoading={isConnectingWA} className="w-full sm:w-auto">
                   Desconectar
                 </Button>
               </div>
@@ -1695,7 +1829,7 @@ function ApplicationsSettings() {
                       Ver QR
                     </Button>
                   )}
-                  <Button variant="destructive" size="sm" onClick={handleDisconnectWA} isLoading={isConnectingWA} className="flex-1 sm:flex-none">
+                  <Button variant="destructive" size="sm" onClick={() => { void handleDisconnectWA(); }} isLoading={isConnectingWA} className="flex-1 sm:flex-none">
                     Desconectar
                   </Button>
                 </div>
@@ -1755,7 +1889,7 @@ function ApplicationsSettings() {
                       <p className="text-sm text-muted-foreground truncate">{mpStatus.externalEmail}</p>
                     </div>
                   </div>
-                  <Button variant="destructive" size="sm" onClick={handleDisconnectMP} isLoading={isConnectingMP} className="w-full sm:w-auto">
+                  <Button variant="destructive" size="sm" onClick={() => { void handleDisconnectMP(); }} isLoading={isConnectingMP} className="w-full sm:w-auto">
                     Desconectar
                   </Button>
                 </div>
@@ -1773,7 +1907,7 @@ function ApplicationsSettings() {
                     <p className="text-sm text-muted-foreground">Conecta MercadoPago para cobrar a clientes</p>
                   </div>
                 </div>
-                <Button onClick={handleConnectMP} isLoading={isConnectingMP} className="w-full sm:w-auto">
+                <Button onClick={() => { void handleConnectMP(); }} isLoading={isConnectingMP} className="w-full sm:w-auto">
                   Conectar
                 </Button>
               </div>
@@ -1816,7 +1950,7 @@ function ApplicationsSettings() {
                       </p>
                     </div>
                   </div>
-                  <Button variant="destructive" size="sm" onClick={handleDisconnectArca} isLoading={isConnectingArca} className="w-full sm:w-auto">
+                  <Button variant="destructive" size="sm" onClick={() => { void handleDisconnectArca(); }} isLoading={isConnectingArca} className="w-full sm:w-auto">
                     Desconectar
                   </Button>
                 </div>
@@ -1907,7 +2041,7 @@ function ApplicationsSettings() {
                 <div className="space-y-2">
                   <div className="flex items-center gap-2.5">
                     <div className="w-6 h-6 rounded-lg bg-primary/10 flex items-center justify-center text-xs font-semibold text-primary shrink-0">1</div>
-                    <p className="text-sm text-muted-foreground">Tocá <span className="text-foreground font-medium">"Generar QR"</span></p>
+                    <p className="text-sm text-muted-foreground">Tocá <span className="text-foreground font-medium">&quot;Generar QR&quot;</span></p>
                   </div>
                   <div className="flex items-center gap-2.5">
                     <div className="w-6 h-6 rounded-lg bg-primary/10 flex items-center justify-center text-xs font-semibold text-primary shrink-0">2</div>
@@ -1919,7 +2053,7 @@ function ApplicationsSettings() {
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <Button onClick={handleConnectEvolution} isLoading={isGeneratingEvolutionQr} disabled={!isEvolutionEnabled}>
+                  <Button onClick={() => { void handleConnectEvolution(); }} isLoading={isGeneratingEvolutionQr} disabled={!isEvolutionEnabled}>
                     Generar QR
                   </Button>
                   {!isEvolutionEnabled && (
@@ -2047,7 +2181,7 @@ function ApplicationsSettings() {
                 </div>
                 <Button
                   variant="outline"
-                  onClick={handleGenerateArcaCsr}
+                  onClick={() => { void handleGenerateArcaCsr(); }}
                   isLoading={isGeneratingCsr}
                   disabled={!arcaForm.cuit || arcaForm.cuit.length !== 11 || !arcaForm.pointOfSale}
                 >
@@ -2061,7 +2195,7 @@ function ApplicationsSettings() {
                       readOnly
                     />
                     <div className="flex flex-wrap items-center gap-2">
-                      <Button size="sm" variant="outline" onClick={handleCopyArcaCsr}>
+                      <Button size="sm" variant="outline" onClick={() => { void handleCopyArcaCsr(); }}>
                         {arcaCsrCopied ? 'Copiado' : 'Copiar CSR'}
                       </Button>
                       <Button size="sm" variant="outline" onClick={handleDownloadArcaCsr}>
@@ -2157,7 +2291,7 @@ function ApplicationsSettings() {
                 Cancelar
               </Button>
               <Button
-                onClick={handleConnectArca}
+                onClick={() => { void handleConnectArca(); }}
                 isLoading={isConnectingArca}
                 disabled={!arcaForm.cuit || arcaForm.cuit.length !== 11 || !arcaForm.certificate}
               >
@@ -2188,7 +2322,7 @@ const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
   customers: true,
 };
 
-function NotificationsSettings() {
+function NotificationsSettings(): JSX.Element {
   const { workspace } = useAuth();
   const toast = useToast();
   const [isLoading, setIsLoading] = useState(true);
@@ -2199,7 +2333,7 @@ function NotificationsSettings() {
   useEffect(() => {
     if (!workspace?.id) return;
 
-    const loadSettings = async () => {
+    const loadSettings = async (): Promise<void> => {
       setIsLoading(true);
       try {
         const res = await fetchWithCredentials(`${API_URL}/api/v1/workspaces/${workspace.id}`, {
@@ -2209,15 +2343,16 @@ function NotificationsSettings() {
         });
 
         if (res.ok) {
-          const data = await res.json();
-          const settings = data.workspace?.settings || {};
-          const prefs = settings.notificationPreferences || {};
+          const data = await readJsonRecord(res);
+          const workspaceData = readRecord(data, 'workspace');
+          const settings = readRecord(workspaceData, 'settings');
+          const prefs = readRecord(settings, 'notificationPreferences');
           setPreferences({
-            orders: prefs.orders ?? true,
-            handoffs: prefs.handoffs ?? true,
-            stock: prefs.stock ?? true,
-            payments: prefs.payments ?? true,
-            customers: prefs.customers ?? true,
+            orders: readBoolean(prefs, 'orders', true),
+            handoffs: readBoolean(prefs, 'handoffs', true),
+            stock: readBoolean(prefs, 'stock', true),
+            payments: readBoolean(prefs, 'payments', true),
+            customers: readBoolean(prefs, 'customers', true),
           });
         }
       } catch (err) {
@@ -2227,14 +2362,14 @@ function NotificationsSettings() {
       }
     };
 
-    loadSettings();
+    void loadSettings();
   }, [workspace?.id]);
 
-  const handleToggle = (key: keyof NotificationPreferences) => (event: ChangeEvent<HTMLInputElement>) => {
+  const handleToggle = (key: keyof NotificationPreferences) => (event: ChangeEvent<HTMLInputElement>): void => {
     setPreferences((prev) => ({ ...prev, [key]: event.target.checked }));
   };
 
-  const handleSave = async () => {
+  const handleSave = async (): Promise<void> => {
     if (!workspace?.id) return;
     setIsSaving(true);
     setError('');
@@ -2250,8 +2385,8 @@ function NotificationsSettings() {
       });
 
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.message || 'Error al guardar');
+        const data = await readJsonRecord(res);
+        throw new Error(readErrorMessage(data, 'Error al guardar'));
       }
 
       toast.success('Preferencias guardadas');
@@ -2310,7 +2445,7 @@ function NotificationsSettings() {
             onChange={handleToggle(item.key)}
           />
         ))}
-        <Button onClick={handleSave} isLoading={isSaving}>
+        <Button onClick={() => { void handleSave(); }} isLoading={isSaving}>
           Guardar preferencias
         </Button>
       </div>
@@ -2322,7 +2457,7 @@ function NotificationsSettings() {
 // STOCK SETTINGS (Commerce only)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function StockSettings() {
+function StockSettings(): JSX.Element {
   const { workspace } = useAuth();
   const toast = useToast();
   const [isLoading, setIsLoading] = useState(true);
@@ -2333,7 +2468,7 @@ function StockSettings() {
   useEffect(() => {
     if (!workspace?.id) return;
 
-    const loadSettings = async () => {
+    const loadSettings = async (): Promise<void> => {
       setIsLoading(true);
       setError('');
       try {
@@ -2344,13 +2479,14 @@ function StockSettings() {
         });
 
         if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          throw new Error(data.message || 'No se pudo cargar la configuración de stock');
+          const data = await readJsonRecord(res);
+          throw new Error(readErrorMessage(data, 'No se pudo cargar la configuración de stock'));
         }
 
-        const data = await res.json();
-        const settings = data.workspace?.settings || {};
-        const rawThreshold = settings.lowStockThreshold;
+        const data = await readJsonRecord(res);
+        const workspaceData = readRecord(data, 'workspace');
+        const settings = readRecord(workspaceData, 'settings');
+        const rawThreshold = settings?.lowStockThreshold;
         const parsedThreshold = Number.parseInt(String(rawThreshold ?? ''), 10);
         const safeThreshold = Number.isFinite(parsedThreshold) && parsedThreshold >= 0
           ? Math.min(parsedThreshold, MAX_LOW_STOCK_THRESHOLD)
@@ -2364,10 +2500,10 @@ function StockSettings() {
       }
     };
 
-    loadSettings();
+    void loadSettings();
   }, [workspace?.id]);
 
-  const handleSave = async () => {
+  const handleSave = async (): Promise<void> => {
     if (!workspace?.id) return;
     setIsSaving(true);
     setError('');
@@ -2391,8 +2527,8 @@ function StockSettings() {
       });
 
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.message || 'No se pudo guardar la configuración de stock');
+        const data = await readJsonRecord(res);
+        throw new Error(readErrorMessage(data, 'No se pudo guardar la configuración de stock'));
       }
 
       setThreshold(String(parsedThreshold));
@@ -2446,7 +2582,7 @@ function StockSettings() {
         <p className="text-xs text-muted-foreground">
           Este cambio se aplica a productos existentes y nuevos.
         </p>
-        <Button onClick={handleSave} isLoading={isSaving}>
+        <Button onClick={() => { void handleSave(); }} isLoading={isSaving}>
           Guardar configuración
         </Button>
       </div>
@@ -2464,7 +2600,7 @@ interface PaymentMethodsSettings {
   cash: boolean;
 }
 
-function PaymentSettings() {
+function PaymentSettings(): JSX.Element {
   const { workspace } = useAuth();
   const capabilities = getWorkspaceCommerceCapabilities(workspace);
   const canUseMercadoPago = capabilities.showMercadoPagoIntegration;
@@ -2481,7 +2617,7 @@ function PaymentSettings() {
   useEffect(() => {
     if (!workspace?.id) return;
 
-    const loadSettings = async () => {
+    const loadSettings = async (): Promise<void> => {
       try {
         const res = await fetchWithCredentials(`${API_URL}/api/v1/workspaces/${workspace.id}`, {
           headers: {
@@ -2490,13 +2626,14 @@ function PaymentSettings() {
         });
 
         if (res.ok) {
-          const data = await res.json();
-          const settings = data.workspace?.settings || {};
-          const enabled = settings.paymentMethodsEnabled || {};
+          const data = await readJsonRecord(res);
+          const workspaceData = readRecord(data, 'workspace');
+          const settings = readRecord(workspaceData, 'settings');
+          const enabled = readRecord(settings, 'paymentMethodsEnabled');
           setMethods({
-            mpLink: canUseMercadoPago ? (enabled.mpLink ?? true) : false,
-            transfer: enabled.transfer ?? true,
-            cash: enabled.cash ?? true,
+            mpLink: canUseMercadoPago ? readBoolean(enabled, 'mpLink', true) : false,
+            transfer: readBoolean(enabled, 'transfer', true),
+            cash: readBoolean(enabled, 'cash', true),
           });
         }
       } catch (err) {
@@ -2506,10 +2643,10 @@ function PaymentSettings() {
       }
     };
 
-    loadSettings();
+    void loadSettings();
   }, [canUseMercadoPago, workspace?.id]);
 
-  const handleSave = async () => {
+  const handleSave = async (): Promise<void> => {
     if (!workspace?.id) return;
 
     setIsSaving(true);
@@ -2531,8 +2668,8 @@ function PaymentSettings() {
       });
 
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.message || 'Error al guardar');
+        const data = await readJsonRecord(res);
+        throw new Error(readErrorMessage(data, 'Error al guardar'));
       }
 
       toast.success('Preferencias guardadas');
@@ -2607,7 +2744,7 @@ function PaymentSettings() {
           </div>
         )}
 
-        <Button onClick={handleSave} isLoading={isSaving}>
+        <Button onClick={() => { void handleSave(); }} isLoading={isSaving}>
           Guardar cambios
         </Button>
       </div>
@@ -2615,7 +2752,7 @@ function PaymentSettings() {
   );
 }
 
-export default function SettingsPage() {
+export default function SettingsPage(): JSX.Element {
   const { workspace } = useAuth();
   const capabilities = getWorkspaceCommerceCapabilities(workspace);
   const settingsNav = getSettingsNav(workspace?.businessType, {

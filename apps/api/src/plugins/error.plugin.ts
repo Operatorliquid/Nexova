@@ -1,10 +1,11 @@
 /**
  * Error Handling Plugin for Fastify
  */
-import { FastifyPluginAsync, FastifyError } from 'fastify';
+import { type FastifyPluginAsync, type FastifyError } from 'fastify';
 import fp from 'fastify-plugin';
-import { AuthError, WorkspaceError, logger } from '@nexova/core';
 import { ZodError } from 'zod';
+
+import { AuthError, WorkspaceError, logger } from '@nexova/core';
 
 interface ErrorResponse {
   error: string;
@@ -12,7 +13,7 @@ interface ErrorResponse {
   details?: unknown;
 }
 
-const errorPluginCallback: FastifyPluginAsync = async (fastify) => {
+const errorPluginCallback: FastifyPluginAsync = (fastify) => {
   fastify.setErrorHandler((error: FastifyError, request, reply) => {
     const requestId = request.id;
 
@@ -91,7 +92,7 @@ const errorPluginCallback: FastifyPluginAsync = async (fastify) => {
 
   // Not found handler
   fastify.setNotFoundHandler((request, reply) => {
-    reply.code(404).send({
+    return reply.code(404).send({
       error: 'NOT_FOUND',
       message: `Ruta ${request.method} ${request.url} no encontrada`,
     } as ErrorResponse);

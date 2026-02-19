@@ -8,11 +8,12 @@
  * - set_customer_identity (dni/full_name)
  * - get_customer_notes (for conversation start)
  */
+import { type PrismaClient, type Prisma } from '@prisma/client';
 import { z } from 'zod';
-import { PrismaClient, Prisma } from '@prisma/client';
-import { BaseTool } from '../base.js';
-import { ToolCategory, ToolContext, ToolResult, CustomerInfo } from '../../types/index.js';
+
+import { ToolCategory, type ToolContext, type ToolResult, type CustomerInfo } from '../../types/index.js';
 import { withVisibleOrders } from '../../utils/orders.js';
+import { BaseTool } from '../base.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // VALIDATION SCHEMAS
@@ -299,7 +300,7 @@ export class GetCustomerNotesTool extends BaseTool<typeof GetCustomerNotesInput>
     const preferences = (customer.preferences as Record<string, unknown>) || {};
 
     // Get score label
-    const getScoreLabel = (score: number) => {
+    const getScoreLabel = (score: number): string => {
       if (score >= 80) return 'excelente';
       if (score >= 60) return 'bueno';
       if (score >= 40) return 'regular';
@@ -474,7 +475,7 @@ export class GetCustomerInfoTool extends BaseTool<typeof GetCustomerInfoInput, C
     const dni = metadata.dni as string | undefined;
 
     // Get score label
-    const getScoreLabel = (score: number) => {
+    const getScoreLabel = (score: number): string => {
       if (score >= 80) return 'excelente';
       if (score >= 60) return 'bueno';
       if (score >= 40) return 'regular';
@@ -738,7 +739,7 @@ export class GetOrderHistoryTool extends BaseTool<typeof GetOrderHistoryInput> {
 /**
  * Create all customer tools
  */
-export function createCustomerTools(prisma: PrismaClient): BaseTool<any, any>[] {
+export function createCustomerTools(prisma: PrismaClient): Array<BaseTool<z.ZodSchema, unknown>> {
   return [
     new GetOrCreateCustomerByPhoneTool(prisma),
     new SetCustomerIdentityTool(prisma),

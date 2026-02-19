@@ -2,7 +2,8 @@
  * Notifications Routes
  * Provides workspace notifications for dashboard
  */
-import { FastifyPluginAsync } from 'fastify';
+import type { Prisma } from '@prisma/client';
+import { type FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 
 const listNotificationsSchema = z.object({
@@ -11,7 +12,7 @@ const listNotificationsSchema = z.object({
   unread: z.string().optional(),
 });
 
-const parseUnread = (value?: string) => {
+const parseUnread = (value?: string): boolean | undefined => {
   if (!value) return undefined;
   const normalized = value.toLowerCase();
   if (['true', '1', 'yes', 'y'].includes(normalized)) return true;
@@ -19,11 +20,11 @@ const parseUnread = (value?: string) => {
   return undefined;
 };
 
-export const notificationsRoutes: FastifyPluginAsync = async (fastify) => {
+export const notificationsRoutes: FastifyPluginAsync = (fastify) => {
   // Get notifications list
   fastify.get(
     '/',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('dashboard:read')] },
     async (request, reply) => {
       const workspaceId = request.headers['x-workspace-id'] as string | undefined;
       if (!workspaceId) {
@@ -34,7 +35,7 @@ export const notificationsRoutes: FastifyPluginAsync = async (fastify) => {
       const unreadFilter = parseUnread(query.unread);
       const readCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
-      const where: any = { workspaceId };
+      const where: Prisma.NotificationWhereInput = { workspaceId };
       if (unreadFilter === true) {
         where.readAt = null;
       } else if (unreadFilter === false) {
@@ -56,7 +57,7 @@ export const notificationsRoutes: FastifyPluginAsync = async (fastify) => {
         fastify.prisma.notification.count({ where }),
       ]);
 
-      reply.send({
+      return reply.send({
         notifications,
         unreadCount,
         pagination: {
@@ -72,7 +73,7 @@ export const notificationsRoutes: FastifyPluginAsync = async (fastify) => {
   // Mark notification as read
   fastify.patch<{ Params: { id: string } }>(
     '/:id/read',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('dashboard:read')] },
     async (request, reply) => {
       const workspaceId = request.headers['x-workspace-id'] as string | undefined;
       if (!workspaceId) {
@@ -85,14 +86,14 @@ export const notificationsRoutes: FastifyPluginAsync = async (fastify) => {
         data: { readAt: new Date() },
       });
 
-      reply.send({ success: true, updated: result.count > 0 });
+      return reply.send({ success: true, updated: result.count > 0 });
     }
   );
 
   // Mark all notifications as read
   fastify.post(
     '/read-all',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('dashboard:read')] },
     async (request, reply) => {
       const workspaceId = request.headers['x-workspace-id'] as string | undefined;
       if (!workspaceId) {
@@ -104,7 +105,7 @@ export const notificationsRoutes: FastifyPluginAsync = async (fastify) => {
         data: { readAt: new Date() },
       });
 
-      reply.send({ success: true, updated: result.count });
+      return reply.send({ success: true, updated: result.count });
     }
   );
 };

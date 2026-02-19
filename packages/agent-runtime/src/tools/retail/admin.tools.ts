@@ -5,22 +5,26 @@
  * NOTE: These tools MUST NOT be exposed to normal customer chats.
  * They can read or mutate business data, send messages, etc.
  */
-import { z } from 'zod';
-import { PrismaClient, Prisma } from '@prisma/client';
-import { Queue } from 'bullmq';
 import { createHash, randomUUID } from 'crypto';
 import { promises as fs, existsSync } from 'fs';
-import { BaseTool } from '../base.js';
+import path from 'path';
+
+import { type PrismaClient, Prisma } from '@prisma/client';
+import { type Queue } from 'bullmq';
+import { z } from 'zod';
+
 import { LedgerService, DEFAULT_DEBT_SETTINGS, StockPurchaseReceiptService, decrypt } from '@nexova/core';
-import { COMMERCE_USAGE_METRICS, getCommercePlanCapabilities, QUEUES, MessageSendPayload } from '@nexova/shared';
-import { ToolCategory, type ToolContext, type ToolResult } from '../../types/index.js';
-import { withVisibleOrders } from '../../utils/orders.js';
+import { COMMERCE_USAGE_METRICS, getCommercePlanCapabilities, QUEUES, type MessageSendPayload } from '@nexova/shared';
+
 import { buildProductDisplayName } from './product-utils.js';
-import { createNotificationIfEnabled } from '../../utils/notifications.js';
-import { extractStockReceiptWithClaude } from '../../utils/stock-receipt-claude.js';
+import { ToolCategory, type ToolContext, type ToolResult } from '../../types/index.js';
 import { getEffectivePlanLimits, resolveWorkspacePlan } from '../../utils/commerce-plan-limits.js';
 import { getMonthlyUsage, recordMonthlyUsage } from '../../utils/monthly-usage.js';
-import path from 'path';
+import { createNotificationIfEnabled } from '../../utils/notifications.js';
+import { withVisibleOrders } from '../../utils/orders.js';
+import { fetchBinaryWithGuards } from '../../utils/remote-fetch-guard.js';
+import { extractStockReceiptWithClaude } from '../../utils/stock-receipt-claude.js';
+import { BaseTool } from '../base.js';
 
 const OWNER_PERIOD = z
   .enum(['today', 'yesterday', 'last_7_days', 'last_30_days'])
@@ -255,7 +259,7 @@ function normalizeStatusToken(value: string): string {
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[\s\-]+/g, '_')
+    .replace(/[\s-]+/g, '_')
     .replace(/[^a-z0-9_]/g, '');
 }
 
@@ -286,19 +290,6 @@ function normalizePhoneE164(value: string): string {
 
 function toPhoneDigits(value: string): string {
   return (value || '').trim().replace(/\D/g, '');
-}
-
-function phonesMatch(a: string, b: string): boolean {
-  const aDigits = toPhoneDigits(a);
-  const bDigits = toPhoneDigits(b);
-  if (!aDigits || !bDigits) return false;
-  if (aDigits === bDigits) return true;
-
-  const MIN_SUFFIX_MATCH_DIGITS = 8;
-  if (aDigits.length < MIN_SUFFIX_MATCH_DIGITS || bDigits.length < MIN_SUFFIX_MATCH_DIGITS) {
-    return false;
-  }
-  return aDigits.endsWith(bDigits) || bDigits.endsWith(aDigits);
 }
 
 function getTimeZoneOffsetMinutes(date: Date, timeZone: string): number {
@@ -811,7 +802,7 @@ async function getOrCreateCustomerByPhone(
   created: boolean;
 }> {
   const normalizedPhone = normalizePhoneE164(input.phone);
-  let customer = await resolveCustomerByPhone(prisma, workspaceId, normalizedPhone);
+  const customer = await resolveCustomerByPhone(prisma, workspaceId, normalizedPhone);
 
   if (!customer) {
     const created = await prisma.customer.create({
@@ -873,42 +864,16 @@ async function getOrCreateCustomerByPhone(
   return { ...customer, created: false };
 }
 
-async function resolveOrderForAdmin(
-  prisma: PrismaClient,
-  workspaceId: string,
-  input: { orderId?: string; orderNumber?: string },
-  options?: { includeTrashed?: boolean }
-): Promise<{ id: string; orderNumber: string; status: string; customerId: string; total: number } | null> {
-  const baseWhere: Prisma.OrderWhereInput = {
-    workspaceId,
-    deletedAt: null,
-    ...(input.orderId ? { id: input.orderId } : {}),
-    ...(input.orderNumber ? { orderNumber: input.orderNumber } : {}),
-  };
-
-  const where = options?.includeTrashed ? baseWhere : withVisibleOrders(baseWhere);
-
-  return prisma.order.findFirst({
-    where,
-    select: {
-      id: true,
-      orderNumber: true,
-      status: true,
-      customerId: true,
-      total: true,
-    },
-  });
-}
-
 function generateCreateOrderIdempotencyKey(input: Record<string, unknown>): string {
   const customerId = typeof input.customerId === 'string' ? input.customerId : '';
   const customerPhone = typeof input.customerPhone === 'string' ? toPhoneDigits(input.customerPhone) : '';
   const items = Array.isArray(input.items) ? input.items : [];
   const normalizedItems = items
     .map((item) => {
-      const productId = item && typeof item.productId === 'string' ? item.productId : '';
-      const variantId = item && typeof item.variantId === 'string' ? item.variantId : '';
-      const quantity = item && typeof item.quantity === 'number' ? item.quantity : 0;
+      const itemRecord = item && typeof item === 'object' ? (item as Record<string, unknown>) : {};
+      const productId = typeof itemRecord.productId === 'string' ? itemRecord.productId : '';
+      const variantId = typeof itemRecord.variantId === 'string' ? itemRecord.variantId : '';
+      const quantity = typeof itemRecord.quantity === 'number' ? itemRecord.quantity : 0;
       return `${productId}:${variantId}:${quantity}`;
     })
     .sort()
@@ -1634,7 +1599,7 @@ export class AdminSendCustomerMessageTool extends BaseTool<typeof AdminSendCusto
 }
 
 function interpolateTemplate(template: string, vars: Record<string, string>): string {
-  return template.replace(/\{(\w+)\}/g, (_, key) => vars[key] || `{${key}}`);
+  return template.replace(/\{(\w+)\}/g, (_match: string, key: string) => vars[key] || `{${key}}`);
 }
 
 function formatMoneyNumber(cents: number): string {
@@ -1856,7 +1821,16 @@ export class AdminAdjustPricesPercentTool extends BaseTool<typeof AdminAdjustPri
       .trim();
   }
 
-  private buildSelect() {
+  private buildSelect(): {
+    id: true;
+    name: true;
+    sku: true;
+    price: true;
+    unit: true;
+    unitValue: true;
+    secondaryUnit: true;
+    secondaryUnitValue: true;
+  } {
     return {
       id: true,
       name: true,
@@ -2078,7 +2052,7 @@ export class AdminAdjustPricesPercentTool extends BaseTool<typeof AdminAdjustPri
       unitValue: string | null;
       secondaryUnit: string | null;
       secondaryUnitValue: string | null;
-    }>) => {
+    }>): void => {
       for (const product of products) {
         selected.set(product.id, product);
       }
@@ -2337,26 +2311,85 @@ export class AdminProcessStockReceiptTool extends BaseTool<typeof AdminProcessSt
     return path.join(repoRoot, 'apps', 'api', 'uploads');
   }
 
-  private async fetchBuffer(fileRef: string, apiKey?: string): Promise<{ buffer: Buffer; contentType?: string }> {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
+  private parseHost(value?: string | null): string | null {
+    const raw = (value || '').trim();
+    if (!raw) return null;
+    const candidate = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
     try {
-      const headers: Record<string, string> = {};
-      if (apiKey) {
-        headers.Authorization = `App ${apiKey}`;
-      }
-
-      const response = await fetch(fileRef, { headers, signal: controller.signal });
-      if (!response.ok) {
-        throw new Error(`No pude descargar la boleta (HTTP ${response.status})`);
-      }
-
-      const contentType = response.headers.get('content-type')?.split(';')[0]?.trim() || undefined;
-      const arrayBuffer = await response.arrayBuffer();
-      return { buffer: Buffer.from(arrayBuffer), contentType };
-    } finally {
-      clearTimeout(timeout);
+      return new URL(candidate).hostname.toLowerCase();
+    } catch {
+      return null;
     }
+  }
+
+  private isAllowedReceiptSource(fileRef: string, configuredApiUrl?: string | null): boolean {
+    try {
+      const url = new URL(fileRef);
+      const protocol = url.protocol.toLowerCase();
+      if (protocol !== 'https:' && protocol !== 'http:') return false;
+
+      const host = url.hostname.toLowerCase();
+      const configuredHost = this.parseHost(configuredApiUrl);
+      const envHosts = (process.env.RECEIPT_PROXY_ALLOWED_HOSTS || '')
+        .split(',')
+        .map((entry) => this.parseHost(entry))
+        .filter(Boolean);
+      const apiHosts = [
+        this.parseHost(process.env.API_BASE_URL),
+        this.parseHost(process.env.PUBLIC_BASE_URL),
+        this.parseHost(process.env.PUBLIC_API_URL),
+        this.parseHost(process.env.API_PUBLIC_URL),
+        this.parseHost(process.env.BASE_URL),
+        this.parseHost(process.env.API_URL),
+        configuredHost,
+        ...envHosts,
+      ]
+        .filter(Boolean) as string[];
+      const trustedUploadHosts = new Set(apiHosts);
+
+      if (
+        url.pathname.startsWith('/uploads/')
+        || url.pathname.startsWith('/api/v1/uploads/file/')
+      ) {
+        return trustedUploadHosts.has(host);
+      }
+
+      if (host === 'infobip.com' || host.endsWith('.infobip.com')) return true;
+      return trustedUploadHosts.has(host);
+    } catch {
+      return false;
+    }
+  }
+
+  private async fetchBuffer(
+    fileRef: string,
+    expectedFileType: 'image' | 'pdf',
+    apiKey?: string,
+    configuredApiUrl?: string | null
+  ): Promise<{ buffer: Buffer; contentType?: string }> {
+    if (!this.isAllowedReceiptSource(fileRef, configuredApiUrl)) {
+      throw new Error('No pude descargar la boleta: host no permitido');
+    }
+
+    const headers: Record<string, string> = {};
+    if (apiKey) {
+      headers.Authorization = `App ${apiKey}`;
+    }
+
+    const allowedContentTypes = expectedFileType === 'pdf'
+      ? ['application/pdf']
+      : ['image/*'];
+
+    const { buffer, contentType } = await fetchBinaryWithGuards({
+      url: fileRef,
+      headers,
+      isAllowedHost: (host) => this.isAllowedReceiptSource(`https://${host}/`, configuredApiUrl),
+      allowedContentTypes,
+      maxBytes: 10 * 1024 * 1024,
+      timeoutMs: 15000,
+    });
+
+    return { buffer, contentType };
   }
 
   private shouldAttachInfobipAuth(fileRef: string): boolean {
@@ -2389,7 +2422,7 @@ export class AdminProcessStockReceiptTool extends BaseTool<typeof AdminProcessSt
 
     const whatsappNumber = await this.prisma.whatsAppNumber.findFirst({
       where: { workspaceId: context.workspaceId, isActive: true },
-      select: { apiKeyEnc: true, apiKeyIv: true, provider: true },
+      select: { apiKeyEnc: true, apiKeyIv: true, provider: true, apiUrl: true },
     });
 
     const wantsInfobipAuth = this.shouldAttachInfobipAuth(fileRef);
@@ -2399,7 +2432,12 @@ export class AdminProcessStockReceiptTool extends BaseTool<typeof AdminProcessSt
         || '')
       : '';
 
-    const { buffer, contentType } = await this.fetchBuffer(fileRef, apiKey);
+    const { buffer, contentType } = await this.fetchBuffer(
+      fileRef,
+      input.fileType,
+      apiKey,
+      whatsappNumber?.apiUrl
+    );
     const mediaType = this.inferMediaType(fileRef, input.fileType, contentType);
     const fileHash = createHash('sha256').update(buffer).digest('hex');
 
@@ -2577,7 +2615,10 @@ export class AdminProcessStockReceiptTool extends BaseTool<typeof AdminProcessSt
   }
 }
 
-export function createAdminTools(prisma: PrismaClient, deps: AdminToolsDependencies = {}): BaseTool<any, any>[] {
+export function createAdminTools(
+  prisma: PrismaClient,
+  deps: AdminToolsDependencies = {}
+): Array<BaseTool<z.ZodSchema, unknown>> {
   return [
     new AdminGetOrdersKpisTool(prisma),
     new AdminListOrdersTool(prisma),

@@ -2,12 +2,13 @@
  * System Tools
  * Tools for agent control: handoff, state management
  */
+import { type Prisma, type PrismaClient } from '@prisma/client';
 import { z } from 'zod';
-import { PrismaClient } from '@prisma/client';
-import { BaseTool } from '../base.js';
-import { ToolCategory, ToolContext, ToolResult, AgentState } from '../../types/index.js';
+
+import { ToolCategory, type ToolContext, type ToolResult } from '../../types/index.js';
 import { createNotificationIfEnabled } from '../../utils/notifications.js';
 import { withVisibleOrders } from '../../utils/orders.js';
+import { BaseTool } from '../base.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // REQUEST HANDOFF
@@ -160,7 +161,7 @@ export class RepeatLastOrderTool extends BaseTool<typeof RepeatLastOrderInput> {
     const { orderNumber, orderId } = input;
 
     // Build query
-    const where: any = {
+    const where: Prisma.OrderWhereInput = {
       customerId: context.customerId,
       workspaceId: context.workspaceId,
       status: { notIn: ['cancelled', 'draft'] },
@@ -242,7 +243,7 @@ export class RepeatLastOrderTool extends BaseTool<typeof RepeatLastOrderInput> {
 /**
  * Create all system tools
  */
-export function createSystemTools(prisma: PrismaClient): BaseTool<any, any>[] {
+export function createSystemTools(prisma: PrismaClient): Array<BaseTool<z.ZodSchema, unknown>> {
   return [
     new RequestHandoffTool(prisma),
     new RepeatLastOrderTool(prisma),

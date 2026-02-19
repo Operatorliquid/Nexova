@@ -1,15 +1,19 @@
-import { FastifyPluginAsync } from 'fastify';
-import { Queue } from 'bullmq';
-import { Prisma, PrismaClient } from '@prisma/client';
-import { z } from 'zod';
 import { randomUUID } from 'crypto';
+
+import { type Prisma, type PrismaClient } from '@prisma/client';
+import { type Queue } from 'bullmq';
+import { type FastifyPluginAsync } from 'fastify';
+import { z } from 'zod';
+
+
 import {
-  AudioTranscriptionPayload,
+  type AudioTranscriptionPayload,
   COMMERCE_USAGE_METRICS,
   QUEUES,
 } from '@nexova/shared';
-import { getWorkspacePlanContext } from '../../utils/commerce-plan.js';
+
 import { getEffectiveCommercePlanLimits } from '../../utils/commerce-plan-limits.js';
+import { getWorkspacePlanContext } from '../../utils/commerce-plan.js';
 import { getMonthlyUsage } from '../../utils/monthly-usage.js';
 
 const enqueueTranscriptionSchema = z
@@ -33,6 +37,15 @@ function asObject(value: unknown): Record<string, unknown> {
   if (Array.isArray(value)) return {};
   return value as Record<string, unknown>;
 }
+
+type PlanValue = Awaited<ReturnType<typeof getWorkspacePlanContext>>['plan'];
+type PlanAccessDenied = {
+  ok: false;
+  statusCode: number;
+  payload: { error: string; message: string };
+};
+type PlanAccessResult = { ok: true; plan: PlanValue } | PlanAccessDenied;
+type PlanQuotaResult = { ok: true } | PlanAccessDenied;
 
 function toPositiveIntOrNull(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
@@ -83,7 +96,7 @@ async function getRoleNameForWorkspace(
   return membership?.role?.name || null;
 }
 
-function pickAudioMetaFromWebhook(payload: any): {
+function pickAudioMetaFromWebhook(payload: unknown): {
   channelId?: string;
   mimeType?: string;
   fileName?: string;
@@ -91,14 +104,23 @@ function pickAudioMetaFromWebhook(payload: any): {
   sizeBytes?: number;
   fileRef?: string;
 } {
-  const nexova = asObject(payload?.__nexova);
+  const payloadObject = asObject(payload);
+  const nexova = asObject(payloadObject.__nexova);
   const audio = asObject(nexova.audio);
-
-  const channelId =
-    (typeof payload?.results?.[0]?.from === 'string' && payload.results[0].from)
-      || (typeof payload?.data?.key?.remoteJid === 'string'
-        ? `+${(payload.data.key.remoteJid.split('@')[0] || '').replace(/\D/g, '')}`
-        : undefined);
+  let channelId: string | undefined;
+  const results = payloadObject.results;
+  if (Array.isArray(results) && results.length > 0) {
+    const firstResult = asObject(results[0]);
+    if (typeof firstResult.from === 'string') {
+      channelId = firstResult.from;
+    }
+  }
+  if (!channelId) {
+    const remoteJid = asObject(asObject(payloadObject.data).key).remoteJid;
+    if (typeof remoteJid === 'string') {
+      channelId = `+${(remoteJid.split('@')[0] || '').replace(/\D/g, '')}`;
+    }
+  }
 
   const mimeType = typeof audio.mimeType === 'string' ? audio.mimeType : undefined;
   const fileName = typeof audio.fileName === 'string' ? audio.fileName : undefined;
@@ -118,10 +140,10 @@ function pickAudioMetaFromWebhook(payload: any): {
 
 export const audioTranscriptionsRoutes: FastifyPluginAsync<{
   queue?: Queue<AudioTranscriptionPayload>;
-}> = async (fastify, opts): Promise<void> => {
+}> = (fastify, opts): void => {
   const audioQueue = opts.queue;
 
-  const enforcePlanAccess = async (workspaceId: string, userId: string) => {
+  const enforcePlanAccess = async (workspaceId: string, userId: string): Promise<PlanAccessResult> => {
     const roleName = await getRoleNameForWorkspace(fastify.prisma, workspaceId, userId);
     const planContext = await getWorkspacePlanContext(fastify.prisma, workspaceId, roleName);
     if (!planContext.capabilities.showWhatsappAudioTranscription) {
@@ -141,7 +163,7 @@ export const audioTranscriptionsRoutes: FastifyPluginAsync<{
     };
   };
 
-  const enforcePlanQuota = async (workspaceId: string, userId: string) => {
+  const enforcePlanQuota = async (workspaceId: string, userId: string): Promise<PlanQuotaResult> => {
     const planAccess = await enforcePlanAccess(workspaceId, userId);
     if (!planAccess.ok) return planAccess;
 
@@ -171,7 +193,7 @@ export const audioTranscriptionsRoutes: FastifyPluginAsync<{
     Params: { workspaceId: string };
     Body: z.infer<typeof enqueueTranscriptionSchema>;
   }>('/:workspaceId/audio/transcriptions', {
-    preHandler: [fastify.authenticate],
+    preHandler: [fastify.requirePermission('sessions:takeover')],
     handler: async (request, reply) => {
       const { workspaceId } = request.params;
       const access = ensureWorkspaceAccess(request, workspaceId);
@@ -225,7 +247,7 @@ export const audioTranscriptionsRoutes: FastifyPluginAsync<{
         });
       }
 
-      const webhookPayload = webhook.payload as any;
+      const webhookPayload: unknown = webhook.payload;
       const audioMeta = pickAudioMetaFromWebhook(webhookPayload);
 
       let transcription = await fastify.prisma.audioTranscription.findFirst({
@@ -314,7 +336,7 @@ export const audioTranscriptionsRoutes: FastifyPluginAsync<{
   fastify.get<{
     Params: { workspaceId: string; id: string };
   }>('/:workspaceId/audio/transcriptions/:id', {
-    preHandler: [fastify.authenticate],
+    preHandler: [fastify.requirePermission('sessions:read')],
     handler: async (request, reply) => {
       const { workspaceId, id } = request.params;
       const access = ensureWorkspaceAccess(request, workspaceId);
@@ -375,7 +397,7 @@ export const audioTranscriptionsRoutes: FastifyPluginAsync<{
     Params: { workspaceId: string; id: string };
     Body: z.infer<typeof retryTranscriptionSchema>;
   }>('/:workspaceId/audio/transcriptions/:id/retry', {
-    preHandler: [fastify.authenticate],
+    preHandler: [fastify.requirePermission('sessions:takeover')],
     handler: async (request, reply) => {
       const { workspaceId, id } = request.params;
       const access = ensureWorkspaceAccess(request, workspaceId);

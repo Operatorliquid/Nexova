@@ -1,7 +1,7 @@
 /**
  * Agent Runtime Types
  */
-import { z } from 'zod';
+import { type z } from 'zod';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // FSM STATES

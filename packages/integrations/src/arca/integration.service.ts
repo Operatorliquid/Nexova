@@ -1,5 +1,8 @@
-import { PrismaClient, Prisma, type WorkspaceIntegration } from '@prisma/client';
+import { type PrismaClient, type Prisma, type WorkspaceIntegration } from '@prisma/client';
+
 import { encrypt, decrypt } from '@nexova/core';
+
+import { wsaaLogin, wsfeDummy, wsfeCompUltimoAutorizado, wsfeCaeSolicitar, wsfeCompConsultar, wsfeParamGetPtosVenta } from './arca.client.js';
 import type {
   ArcaAccessTicket,
   ArcaConnectionInput,
@@ -10,7 +13,6 @@ import type {
   ArcaInvoiceLookup,
 } from './types.js';
 import { ArcaIntegrationError } from './types.js';
-import { wsaaLogin, wsfeDummy, wsfeCompUltimoAutorizado, wsfeCaeSolicitar, wsfeCompConsultar, wsfeParamGetPtosVenta } from './arca.client.js';
 
 const PROVIDER_NAME = 'arca';
 const SERVICE_NAME = 'wsfe';
@@ -269,7 +271,7 @@ export class ArcaIntegrationService {
   }
 
   async healthCheck(workspaceId: string): Promise<{ ok: boolean; detail?: string }> {
-    const { ticket, data } = await this.ensureAccessTicket(workspaceId);
+    const { data } = await this.ensureAccessTicket(workspaceId);
     try {
       const dummy = await wsfeDummy(data.environment);
       return {

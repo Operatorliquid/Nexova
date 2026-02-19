@@ -1,12 +1,12 @@
 /**
  * Health Check Routes
  */
-import { FastifyPluginAsync } from 'fastify';
+import { type FastifyPluginAsync } from 'fastify';
 
-export const healthRoutes: FastifyPluginAsync = async (fastify) => {
+export const healthRoutes: FastifyPluginAsync = (fastify) => {
   // Basic health check (liveness)
   fastify.get('/', async (request, reply) => {
-    reply.send({
+    return reply.send({
       status: 'ok',
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
@@ -19,7 +19,7 @@ export const healthRoutes: FastifyPluginAsync = async (fastify) => {
       // Check database connection
       await fastify.prisma.$queryRaw`SELECT 1`;
 
-      reply.send({
+      return reply.send({
         status: 'ready',
         timestamp: new Date().toISOString(),
         checks: {
@@ -27,7 +27,7 @@ export const healthRoutes: FastifyPluginAsync = async (fastify) => {
         },
       });
     } catch (error) {
-      reply.code(503).send({
+      return reply.code(503).send({
         status: 'not_ready',
         timestamp: new Date().toISOString(),
         checks: {
@@ -50,7 +50,7 @@ export const healthRoutes: FastifyPluginAsync = async (fastify) => {
       dbStatus = 'failed';
     }
 
-    reply.send({
+    return reply.send({
       status: dbStatus === 'ok' ? 'healthy' : 'degraded',
       timestamp: new Date().toISOString(),
       version: process.env.npm_package_version || '0.0.1',

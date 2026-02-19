@@ -2,25 +2,29 @@
  * Nexova Worker - Background processing
  * Uses new agent runtime and auxiliary queues
  */
-import { Worker, Job, Queue } from 'bullmq';
-import { PrismaClient, Prisma } from '@prisma/client';
+import { PrismaClient, type Prisma } from '@prisma/client';
+import { Worker, type Job, Queue } from 'bullmq';
 import { Redis } from 'ioredis';
+
+import { AgentWorker } from '@nexova/agent-runtime';
+import { applyTenantPrismaMiddleware, decrypt, logger } from '@nexova/core';
+import { EvolutionClient, InfobipClient } from '@nexova/integrations';
 import {
   QUEUES,
-  AgentProcessPayload,
-  MessageSendPayload,
-  AudioTranscriptionPayload,
-  OutboxRelayPayload,
-  WebhookRetryPayload,
+  type AgentProcessPayload,
+  type MessageSendPayload,
+  type DebtReminderPayload,
+  type AudioTranscriptionPayload,
+  type OutboxRelayPayload,
+  type ScheduledJobPayload,
+  type WebhookRetryPayload,
 } from '@nexova/shared';
-import { AgentWorker } from '@nexova/agent-runtime';
-import { EvolutionClient, InfobipClient } from '@nexova/integrations';
-import { decrypt, applyTenantPrismaMiddleware } from '@nexova/core';
+
+import { createAudioTranscriptionProcessor } from './jobs/audio-transcription.job.js';
 import { createDebtReminderProcessor } from './jobs/debt-reminder.job.js';
 import { createOutboxRelayProcessor } from './jobs/outbox-relay.job.js';
-import { createWebhookRetryProcessor } from './jobs/webhook-retry.job.js';
 import { createScheduledProcessor, scheduleDefaultJobs } from './jobs/scheduled.job.js';
-import { createAudioTranscriptionProcessor } from './jobs/audio-transcription.job.js';
+import { createWebhookRetryProcessor } from './jobs/webhook-retry.job.js';
 
 // Configuration
 const REDIS_HOST = process.env.REDIS_HOST || 'localhost';
@@ -224,7 +228,7 @@ function renderInteractiveFallbackText(content: MessageSendPayload['content']): 
 async function processSendJob(job: Job<MessageSendPayload>): Promise<void> {
   const { workspaceId, to, messageType, content, correlationId } = job.data;
   const normalizedTo = normalizePhone(to);
-  console.log(`[Worker] Processing send job to: ${normalizedTo}`);
+  logger.info(`[Worker] Processing send job to: ${normalizedTo}`);
 
   if (!normalizedTo || normalizedTo === 'unknown' || !/^\+\d+$/.test(normalizedTo)) {
     console.warn(`[Worker] Skipping send job with invalid destination: ${to}`);
@@ -347,7 +351,7 @@ async function processSendJob(job: Job<MessageSendPayload>): Promise<void> {
         usageMessageType = 'text';
       }
     } else {
-      throw new Error(`Unsupported message type: ${messageType}`);
+      throw new Error(`Unsupported message type: ${String(messageType)}`);
     }
 
     if (
@@ -357,7 +361,7 @@ async function processSendJob(job: Job<MessageSendPayload>): Promise<void> {
     ) {
       try {
         await client.sendText(normalizedTo, interactiveBackupText);
-        console.log(`[Worker] Evolution interactive backup text sent to ${normalizedTo}`);
+        logger.info(`[Worker] Evolution interactive backup text sent to ${normalizedTo}`);
       } catch (backupError) {
         console.warn(
           `[Worker] Evolution interactive backup text failed: ${
@@ -372,7 +376,7 @@ async function processSendJob(job: Job<MessageSendPayload>): Promise<void> {
       throw new Error(`Evolution rejected message: ${result.status}`);
     }
 
-    console.log(
+    logger.info(
       `[Worker] Evolution send accepted to ${normalizedTo} (type=${usageMessageType}, status=${result.status}, messageId=${result.messageId || 'n/a'})`
     );
   } else {
@@ -439,7 +443,7 @@ async function processSendJob(job: Job<MessageSendPayload>): Promise<void> {
         throw new Error('Interactive message requires buttons or listSections');
       }
     } else {
-      throw new Error(`Unsupported message type: ${messageType}`);
+      throw new Error(`Unsupported message type: ${String(messageType)}`);
     }
   }
 
@@ -466,21 +470,21 @@ async function processSendJob(job: Job<MessageSendPayload>): Promise<void> {
     metadata: { channelType: 'whatsapp', messageType: usageMessageType },
   });
 
-  console.log(`[Worker] Completed send job to: ${to}`);
+  logger.info(`[Worker] Completed send job to: ${to}`);
 }
 
 async function startWorkers(): Promise<void> {
-  console.log('[Worker] Starting workers...');
-  console.log(`[Worker] Redis: ${REDIS_HOST}:${REDIS_PORT}`);
+  logger.info('[Worker] Starting workers...');
+  logger.info(`[Worker] Redis: ${REDIS_HOST}:${REDIS_PORT}`);
 
   // Queues
   const agentQueue = new Queue<AgentProcessPayload>(QUEUES.AGENT_PROCESS.name, { connection });
-  const messageQueue = new Queue(QUEUES.MESSAGE_SEND.name, { connection });
-  const debtReminderQueue = new Queue(QUEUES.DEBT_REMINDER.name, { connection });
+  const messageQueue = new Queue<MessageSendPayload>(QUEUES.MESSAGE_SEND.name, { connection });
+  const debtReminderQueue = new Queue<DebtReminderPayload>(QUEUES.DEBT_REMINDER.name, { connection });
   const audioTranscriptionQueue = new Queue<AudioTranscriptionPayload>(QUEUES.AUDIO_TRANSCRIPTION.name, { connection });
   const outboxQueue = new Queue(QUEUES.OUTBOX_RELAY.name, { connection });
   const webhookRetryQueue = new Queue(QUEUES.WEBHOOK_RETRY.name, { connection });
-  const scheduledQueue = new Queue(QUEUES.SCHEDULED.name, { connection });
+  const scheduledQueue = new Queue<ScheduledJobPayload>(QUEUES.SCHEDULED.name, { connection });
 
   // New agent runtime worker
   const agentWorker = new AgentWorker(prisma, {
@@ -490,7 +494,7 @@ async function startWorkers(): Promise<void> {
     anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
     concurrency: QUEUES.AGENT_PROCESS.concurrency,
   });
-  await agentWorker.start();
+  agentWorker.start();
 
   // Message send worker
   const sendWorker = new Worker(
@@ -503,7 +507,7 @@ async function startWorkers(): Promise<void> {
   );
 
   sendWorker.on('completed', (job) => {
-    console.log(`[Worker] Send job ${job.id} completed`);
+    logger.info(`[Worker] Send job ${job.id} completed`);
   });
 
   sendWorker.on('failed', (job, err) => {
@@ -526,7 +530,7 @@ async function startWorkers(): Promise<void> {
   );
 
   debtReminderWorker.on('completed', (job) => {
-    console.log(`[Worker] Debt reminder job ${job.id} completed`);
+    logger.info(`[Worker] Debt reminder job ${job.id} completed`);
   });
 
   debtReminderWorker.on('failed', (job, err) => {
@@ -586,7 +590,7 @@ async function startWorkers(): Promise<void> {
   );
 
   audioTranscriptionWorker.on('completed', (job) => {
-    console.log(`[Worker] Audio transcription job ${job.id} completed`);
+    logger.info(`[Worker] Audio transcription job ${job.id} completed`);
   });
 
   audioTranscriptionWorker.on('failed', (job, err) => {
@@ -622,18 +626,18 @@ async function startWorkers(): Promise<void> {
     { repeat: { every: 60 * 1000 }, jobId: 'webhook-retry-scan' }
   );
 
-  await scheduleDefaultJobs(scheduledQueue as unknown as { add: Function });
+  await scheduleDefaultJobs(scheduledQueue);
 
-  console.log('[Worker] Workers started successfully');
-  console.log(`[Worker] Deploy stamp: ${DEPLOY_STAMP}`);
-  console.log(`[Worker] Agent worker concurrency: ${QUEUES.AGENT_PROCESS.concurrency}`);
-  console.log(`[Worker] Send worker concurrency: ${QUEUES.MESSAGE_SEND.concurrency}`);
-  console.log(`[Worker] Debt reminder worker concurrency: ${QUEUES.DEBT_REMINDER.concurrency}`);
-  console.log(`[Worker] Audio transcription worker concurrency: ${QUEUES.AUDIO_TRANSCRIPTION.concurrency}`);
+  logger.info('[Worker] Workers started successfully');
+  logger.info(`[Worker] Deploy stamp: ${DEPLOY_STAMP}`);
+  logger.info(`[Worker] Agent worker concurrency: ${QUEUES.AGENT_PROCESS.concurrency}`);
+  logger.info(`[Worker] Send worker concurrency: ${QUEUES.MESSAGE_SEND.concurrency}`);
+  logger.info(`[Worker] Debt reminder worker concurrency: ${QUEUES.DEBT_REMINDER.concurrency}`);
+  logger.info(`[Worker] Audio transcription worker concurrency: ${QUEUES.AUDIO_TRANSCRIPTION.concurrency}`);
 
   // Graceful shutdown
-  const shutdown = async (signal: string) => {
-    console.log(`[Worker] Received ${signal}, shutting down...`);
+  const shutdown = async (signal: string): Promise<void> => {
+    logger.info(`[Worker] Received ${signal}, shutting down...`);
 
     await agentWorker.stop();
     await sendWorker.close();
@@ -652,12 +656,16 @@ async function startWorkers(): Promise<void> {
     await realtimePublisher.quit();
     await prisma.$disconnect();
 
-    console.log('[Worker] Shutdown complete');
+    logger.info('[Worker] Shutdown complete');
     process.exit(0);
   };
 
-  process.on('SIGINT', () => shutdown('SIGINT'));
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => {
+    void shutdown('SIGINT');
+  });
+  process.on('SIGTERM', () => {
+    void shutdown('SIGTERM');
+  });
 }
 
 // Start

@@ -2,11 +2,12 @@
  * Cart Tools
  * Tools for managing the shopping cart in memory
  */
+import { type PrismaClient } from '@prisma/client';
 import { z } from 'zod';
-import { PrismaClient } from '@prisma/client';
+
+import { type MemoryManager } from '../../core/memory-manager.js';
+import { ToolCategory, type ToolContext, type ToolResult, type Cart, type CartItem, AgentState } from '../../types/index.js';
 import { BaseTool } from '../base.js';
-import { ToolCategory, ToolContext, ToolResult, Cart, CartItem, AgentState } from '../../types/index.js';
-import { MemoryManager } from '../../core/memory-manager.js';
 import { buildProductDisplayName } from './product-utils.js';
 
 const resolveOriginalOrderQuantity = async (
@@ -440,7 +441,7 @@ export class SetCartNotesTool extends BaseTool<typeof SetCartNotesInput> {
 export function createCartTools(
   prisma: PrismaClient,
   memoryManager: MemoryManager
-): BaseTool<any, any>[] {
+): Array<BaseTool<z.ZodSchema, unknown>> {
   return [
     new GetCartTool(memoryManager),
     new AddToCartTool(prisma, memoryManager),

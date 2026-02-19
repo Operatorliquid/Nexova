@@ -1,14 +1,60 @@
-import { useState, useEffect, useCallback } from 'react';
 import { Package, User, CreditCard, ShoppingCart, Plus, Minus, Search, Trash2, RotateCcw, AlertTriangle, FileText, Calendar, Printer, ChevronDown, Receipt, DollarSign, TrendingUp, Clock, Upload, Eye } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
+
+import { DeleteConfirmModal } from '../../components/stock';
 import { Badge, Button, Input, Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Switch, AnimatedPage, AnimatedStagger, StatCard, AnimatedTableBody, AnimatedTableRow } from '../../components/ui';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../../components/ui/dialog';
-import { DeleteConfirmModal } from '../../components/stock';
 import { useAuth } from '../../contexts/AuthContext';
-import { useToast } from '../../stores/toast.store';
 import { apiFetch, API_URL } from '../../lib/api';
-import { PENDING_INVOICING_BADGE } from '../../lib/statusStyles';
 import { getWorkspaceCommerceCapabilities } from '../../lib/commerce-plan';
-import { useSearchParams } from 'react-router-dom';
+import { PENDING_INVOICING_BADGE } from '../../lib/statusStyles';
+import { useToast } from '../../stores/toast.store';
+
+type JsonRecord = Record<string, unknown>;
+
+function asRecord(value: unknown): JsonRecord | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as JsonRecord;
+}
+
+function asRecordList(value: unknown): JsonRecord[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => asRecord(item))
+    .filter((item): item is JsonRecord => item !== null);
+}
+
+function readString(record: JsonRecord | null, key: string): string | undefined {
+  const value = record?.[key];
+  return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
+}
+
+function readNumber(record: JsonRecord | null, key: string): number | undefined {
+  const value = record?.[key];
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value !== 'string' || value.trim().length === 0) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function readRecord(record: JsonRecord | null, key: string): JsonRecord | null {
+  return asRecord(record?.[key]);
+}
+
+function readErrorMessage(record: JsonRecord, fallback: string): string {
+  return readString(record, 'message') ?? readString(record, 'error') ?? fallback;
+}
+
+async function readJsonRecord(response: Response): Promise<JsonRecord> {
+  try {
+    const parsed = (await response.json()) as unknown;
+    return asRecord(parsed) ?? {};
+  } catch {
+    return {};
+  }
+}
+
 
 interface OrderItem {
   id: string;
@@ -57,7 +103,7 @@ interface Order {
 }
 
 // Helper to get customer display name
-const getCustomerName = (customer: Order['customer']) => {
+const getCustomerName = (customer: Order['customer']): string => {
   if (customer.name) return customer.name;
   if (customer.firstName && customer.lastName) {
     return `${customer.firstName} ${customer.lastName}`;
@@ -89,6 +135,29 @@ interface ProductOption {
   price: number;
   stock: number;
   images?: string[];
+}
+
+function asOrder(value: unknown): Order | null {
+  return asRecord(value) as Order | null;
+}
+
+function asOrderArray(value: unknown): Order[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item) => asRecord(item) !== null) as Order[];
+}
+
+function asStats(value: unknown): Stats | null {
+  return asRecord(value) as Stats | null;
+}
+
+function asCustomerOptionArray(value: unknown): CustomerOption[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item) => asRecord(item) !== null) as CustomerOption[];
+}
+
+function asProductOptionArray(value: unknown): ProductOption[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item) => asRecord(item) !== null) as ProductOption[];
 }
 
 const DATE_FILTER_OPTIONS = [
@@ -148,8 +217,8 @@ const resolveDateRange = (filter: string): { from?: string; to?: string } => {
     return {};
   }
   const now = new Date();
-  const startOfDay = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
-  const endOfDay = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999);
+  const startOfDay = (date: Date): Date => new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
+  const endOfDay = (date: Date): Date => new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999);
 
   if (filter === 'today') {
     return { from: startOfDay(now).toISOString(), to: now.toISOString() };
@@ -177,7 +246,7 @@ const resolveDateRange = (filter: string): { from?: string; to?: string } => {
   return {};
 };
 
-export default function OrdersPage() {
+export default function OrdersPage(): JSX.Element {
   const { workspace } = useAuth();
   const capabilities = getWorkspaceCommerceCapabilities(workspace);
   const canAutoDetectManualReceiptAmount = capabilities.autoDetectManualReceiptAmount;
@@ -206,6 +275,7 @@ export default function OrdersPage() {
   const [isTrashing, setIsTrashing] = useState(false);
   const [restoreCandidate, setRestoreCandidate] = useState<Order | null>(null);
   const [receiptPreviews, setReceiptPreviews] = useState<Record<string, string>>({});
+  const receiptPreviewsRef = useRef<Record<string, string>>({});
   const [isRestoring, setIsRestoring] = useState(false);
   const [isEmptyTrashConfirm, setIsEmptyTrashConfirm] = useState(false);
   const [isEmptyingTrash, setIsEmptyingTrash] = useState(false);
@@ -251,7 +321,7 @@ export default function OrdersPage() {
         ordersMonthlyUsedForLimit >= ordersMonthlyLimit)
   );
 
-  const fetchOrdersAndStats = async () => {
+  const fetchOrdersAndStats = useCallback(async (): Promise<void> => {
     if (!workspace?.id) return;
     setIsLoading(true);
     try {
@@ -265,31 +335,51 @@ export default function OrdersPage() {
       });
 
       const [ordersRes, statsRes] = await Promise.all([
-        apiFetch(`/api/v1/orders?${queryParams}`, {}, workspace.id),
+        apiFetch(`/api/v1/orders?${queryParams.toString()}`, {}, workspace.id),
         apiFetch('/api/v1/orders/stats', {}, workspace.id),
       ]);
 
       if (ordersRes.ok) {
-        const data = await ordersRes.json();
-        setOrders(data.orders || []);
+        const data = await readJsonRecord(ordersRes);
+        setOrders(asOrderArray(data.orders));
       }
 
       if (statsRes.ok) {
-        const data = await statsRes.json();
-        setStats(data);
+        const data = await readJsonRecord(statsRes);
+        setStats(asStats(data));
       }
     } catch (error) {
       console.error('Failed to fetch orders:', error);
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [dateFilter, search, statusFilter, workspace?.id]);
+
+  const fetchOrderDetail = useCallback(async (orderId: string, options?: { silent?: boolean }): Promise<void> => {
+    if (!workspace?.id) return;
+    if (!options?.silent) {
+      setIsLoadingDetail(true);
+    }
+    try {
+      const response = await apiFetch(`/api/v1/orders/${orderId}`, {}, workspace.id);
+      if (response.ok) {
+        const data = await readJsonRecord(response);
+        setSelectedOrder(asOrder(data.order));
+      }
+    } catch (error) {
+      console.error('Failed to fetch order detail:', error);
+    } finally {
+      if (!options?.silent) {
+        setIsLoadingDetail(false);
+      }
+    }
+  }, [workspace?.id]);
 
   // Fetch orders and stats
   useEffect(() => {
     if (!workspace?.id) return;
-    fetchOrdersAndStats();
-  }, [workspace?.id, search, statusFilter, dateFilter]);
+    void fetchOrdersAndStats();
+  }, [fetchOrdersAndStats, workspace?.id]);
 
   const orderIdParam = searchParams.get('orderId');
   const orderNumberParam = searchParams.get('orderNumber');
@@ -298,14 +388,14 @@ export default function OrdersPage() {
     if (!workspace?.id) return;
     if (!orderIdParam) return;
     setActiveOrderTab('details');
-    fetchOrderDetail(orderIdParam);
-  }, [workspace?.id, orderIdParam]);
+    void fetchOrderDetail(orderIdParam);
+  }, [fetchOrderDetail, orderIdParam, workspace?.id]);
 
   useEffect(() => {
     if (!workspace?.id) return;
     if (orderIdParam || !orderNumberParam) return;
 
-    const resolveOrderByNumber = async () => {
+    const resolveOrderByNumber = async (): Promise<void> => {
       try {
         const params = new URLSearchParams({
           search: orderNumberParam,
@@ -314,11 +404,11 @@ export default function OrdersPage() {
         });
         const response = await apiFetch(`/api/v1/orders?${params.toString()}`, {}, workspace.id);
         if (!response.ok) return;
-        const data = await response.json();
-        const match = data.orders?.[0];
+        const data = await readJsonRecord(response);
+        const match = asOrderArray(data.orders)[0];
         if (match?.id) {
           setActiveOrderTab('details');
-          fetchOrderDetail(match.id);
+          void fetchOrderDetail(match.id);
           const nextParams = new URLSearchParams(searchParams);
           nextParams.delete('orderNumber');
           nextParams.set('orderId', match.id);
@@ -329,8 +419,8 @@ export default function OrdersPage() {
       }
     };
 
-    resolveOrderByNumber();
-  }, [workspace?.id, orderIdParam, orderNumberParam, searchParams, setSearchParams]);
+    void resolveOrderByNumber();
+  }, [fetchOrderDetail, orderIdParam, orderNumberParam, searchParams, setSearchParams, workspace?.id]);
 
   useEffect(() => {
     if (!canAutoDetectManualReceiptAmount) {
@@ -338,28 +428,7 @@ export default function OrdersPage() {
     }
   }, [canAutoDetectManualReceiptAmount]);
 
-  // Fetch order detail
-  const fetchOrderDetail = async (orderId: string, options?: { silent?: boolean }) => {
-    if (!workspace?.id) return;
-    if (!options?.silent) {
-      setIsLoadingDetail(true);
-    }
-    try {
-      const response = await apiFetch(`/api/v1/orders/${orderId}`, {}, workspace.id);
-      if (response.ok) {
-        const data = await response.json();
-        setSelectedOrder(data.order);
-      }
-    } catch (error) {
-      console.error('Failed to fetch order detail:', error);
-    } finally {
-      if (!options?.silent) {
-        setIsLoadingDetail(false);
-      }
-    }
-  };
-
-  const applyOrderUpdate = (orderUpdate: Partial<Order> & { id: string }) => {
+  const applyOrderUpdate = (orderUpdate: Partial<Order> & { id: string }): void => {
     if (!orderUpdate?.id) return;
     setSelectedOrder((prev) =>
       prev && prev.id === orderUpdate.id ? { ...prev, ...orderUpdate } : prev
@@ -369,7 +438,7 @@ export default function OrdersPage() {
     );
   };
 
-  const removeReceiptPreview = (receiptId: string) => {
+  const removeReceiptPreview = (receiptId: string): void => {
     setReceiptPreviews((prev) => {
       const next = { ...prev };
       const url = next[receiptId];
@@ -386,16 +455,20 @@ export default function OrdersPage() {
   };
 
   // Handle order selection
-  const handleSelectOrder = (order: Order) => {
+  const handleSelectOrder = (order: Order): void => {
     setSelectedOrder(order);
     setIsProductsExpanded(false);
     setActiveOrderTab('details');
-    fetchOrderDetail(order.id);
+    void fetchOrderDetail(order.id);
   };
 
   useEffect(() => {
+    receiptPreviewsRef.current = receiptPreviews;
+  }, [receiptPreviews]);
+
+  useEffect(() => {
     return () => {
-      Object.values(receiptPreviews).forEach((url) => {
+      Object.values(receiptPreviewsRef.current).forEach((url) => {
         try {
           URL.revokeObjectURL(url);
         } catch {
@@ -403,22 +476,33 @@ export default function OrdersPage() {
         }
       });
     };
-  }, [selectedOrder?.id]);
+  }, []);
 
   useEffect(() => {
-    setReceiptPreviews({});
+    setReceiptPreviews((previousPreviews) => {
+      Object.values(previousPreviews).forEach((url) => {
+        try {
+          URL.revokeObjectURL(url);
+        } catch {
+          // ignore
+        }
+      });
+      return {};
+    });
   }, [selectedOrder?.id]);
 
   useEffect(() => {
     if (!receiptFile) {
-      if (receiptPreviewUrl) {
-        try {
-          URL.revokeObjectURL(receiptPreviewUrl);
-        } catch {
-          // ignore
+      setReceiptPreviewUrl((previousPreviewUrl) => {
+        if (previousPreviewUrl) {
+          try {
+            URL.revokeObjectURL(previousPreviewUrl);
+          } catch {
+            // ignore
+          }
         }
-      }
-      setReceiptPreviewUrl(null);
+        return null;
+      });
       setReceiptPreviewType(null);
       return;
     }
@@ -438,28 +522,31 @@ export default function OrdersPage() {
 
   useEffect(() => {
     if (!selectedOrder || activeOrderTab !== 'receipts' || !workspace?.id) return;
-    const receipts = selectedOrder.receipts || [];
-    receipts.forEach(async (receipt) => {
-      if (receipt.fileType !== 'image') return;
-      if (receiptPreviews[receipt.id]) return;
-      try {
-        const response = await apiFetch(
-          `/api/v1/integrations/receipts/${receipt.id}/file`,
-          {},
-          workspace.id
-        );
-        if (!response.ok) return;
-        const blob = await response.blob();
-        const url = window.URL.createObjectURL(blob);
-        setReceiptPreviews((prev) => ({ ...prev, [receipt.id]: url }));
-      } catch (error) {
-        console.error('Failed to load receipt preview:', error);
+    const loadReceiptPreviews = async (): Promise<void> => {
+      const receipts = selectedOrder.receipts || [];
+      for (const receipt of receipts) {
+        if (receipt.fileType !== 'image') continue;
+        if (receiptPreviews[receipt.id]) continue;
+        try {
+          const response = await apiFetch(
+            `/api/v1/integrations/receipts/${receipt.id}/file`,
+            {},
+            workspace.id
+          );
+          if (!response.ok) continue;
+          const blob = await response.blob();
+          const url = window.URL.createObjectURL(blob);
+          setReceiptPreviews((prev) => ({ ...prev, [receipt.id]: url }));
+        } catch (error) {
+          console.error('Failed to load receipt preview:', error);
+        }
       }
-    });
-  }, [selectedOrder?.id, activeOrderTab, workspace?.id, receiptPreviews]);
+    };
+    void loadReceiptPreviews();
+  }, [activeOrderTab, receiptPreviews, selectedOrder, workspace?.id]);
 
   // Format currency
-  const formatCurrency = (amount: number) => {
+  const formatCurrency = (amount: number): string => {
     return `$${(amount / 100).toLocaleString('es-AR')}`;
   };
 
@@ -504,7 +591,7 @@ export default function OrdersPage() {
     setReceiptFileInputKey((prev) => prev + 1);
   }, [receiptPreviewUrl]);
 
-  const resetReceiptUpload = () => {
+  const resetReceiptUpload = (): void => {
     clearReceiptAttachment();
     setReceiptAmount('');
     setReceiptAutoDetect(true);
@@ -524,7 +611,7 @@ export default function OrdersPage() {
     }
   }, [canUsePaymentLinks, receiptPaymentMethod]);
 
-  const resetReceiptAction = () => {
+  const resetReceiptAction = (): void => {
     setReceiptActionTarget(null);
     setReceiptActionType(null);
     setReceiptActionAmount('');
@@ -533,7 +620,7 @@ export default function OrdersPage() {
     setIsReceiptActionLoading(false);
   };
 
-  const openReceiptAction = (receipt: ReceiptItem, type: 'accept' | 'reject') => {
+  const openReceiptAction = (receipt: ReceiptItem, type: 'accept' | 'reject'): void => {
     setReceiptActionTarget(receipt);
     setReceiptActionType(type);
     const amount =
@@ -544,7 +631,7 @@ export default function OrdersPage() {
     setIsReceiptActionOpen(true);
   };
 
-  const handleUploadReceipt = async () => {
+  const handleUploadReceipt = async (): Promise<void> => {
     if (!workspace?.id || !selectedOrder) return;
     const effectivePaymentMethod =
       canUsePaymentLinks || receiptPaymentMethod !== 'link'
@@ -609,24 +696,21 @@ export default function OrdersPage() {
 
       if (!response.ok) {
         let message = 'No se pudo subir el comprobante';
-        try {
-          const body = await response.json();
-          if (response.status === 409 || body?.error === 'DUPLICATE_RECEIPT') {
-            message = 'Este comprobante esta duplicado';
-          } else {
-            message = body?.message || body?.error || message;
-          }
-        } catch {
-          // ignore
+        const body = await readJsonRecord(response);
+        if (response.status === 409 || readString(body, 'error') === 'DUPLICATE_RECEIPT') {
+          message = 'Este comprobante esta duplicado';
+        } else {
+          message = readErrorMessage(body, message);
         }
         throw new Error(message);
       }
 
-      const data = await response.json();
-      if (data?.order?.id) {
-        applyOrderUpdate(data.order);
+      const data = await readJsonRecord(response);
+      const updatedOrder = asOrder(data.order);
+      if (updatedOrder?.id) {
+        applyOrderUpdate(updatedOrder);
       }
-      if (data?.applied) {
+      if (data.applied === true) {
         toast.success('Comprobante aplicado');
         setIsReceiptUploadOpen(false);
         resetReceiptUpload();
@@ -635,11 +719,14 @@ export default function OrdersPage() {
       }
 
       if (!isCash) {
-        setPendingReceiptId(data?.receiptId || data?.receipt?.id || null);
+        const receipt = readRecord(data, 'receipt');
+        const receiptId = readString(data, 'receiptId') ?? readString(receipt, 'id') ?? null;
+        setPendingReceiptId(receiptId);
         setReceiptNeedsAmount(true);
-        if (typeof data?.extractedAmount === 'number') {
-          setReceiptDetectedAmount(data.extractedAmount);
-          setReceiptAmount((data.extractedAmount / 100).toString());
+        const extractedAmount = readNumber(data, 'extractedAmount');
+        if (extractedAmount !== undefined) {
+          setReceiptDetectedAmount(extractedAmount);
+          setReceiptAmount((extractedAmount / 100).toString());
         } else {
           setReceiptDetectedAmount(null);
         }
@@ -653,7 +740,7 @@ export default function OrdersPage() {
     }
   };
 
-  const handleApplyReceiptAmount = async () => {
+  const handleApplyReceiptAmount = async (): Promise<void> => {
     if (!workspace?.id || !selectedOrder || !pendingReceiptId) return;
     const amountCents = parseMoneyInputToCents(receiptAmount);
     if (!amountCents) {
@@ -678,18 +765,15 @@ export default function OrdersPage() {
 
       if (!response.ok) {
         let message = 'No se pudo aplicar el comprobante';
-        try {
-          const body = await response.json();
-          message = body?.message || body?.error || message;
-        } catch {
-          // ignore
-        }
+        const body = await readJsonRecord(response);
+        message = readErrorMessage(body, message);
         throw new Error(message);
       }
 
-      const data = await response.json();
-      if (data?.order?.id) {
-        applyOrderUpdate(data.order);
+      const data = await readJsonRecord(response);
+      const updatedOrder = asOrder(data.order);
+      if (updatedOrder?.id) {
+        applyOrderUpdate(updatedOrder);
       }
       toast.success('Comprobante aplicado');
       setIsReceiptUploadOpen(false);
@@ -703,7 +787,7 @@ export default function OrdersPage() {
     }
   };
 
-  const handleDeleteReceipt = async () => {
+  const handleDeleteReceipt = async (): Promise<void> => {
     if (!workspace?.id || !receiptToDelete) return;
     setIsDeletingReceipt(true);
     try {
@@ -715,29 +799,29 @@ export default function OrdersPage() {
 
       if (!response.ok) {
         let message = 'No se pudo eliminar el comprobante';
-        try {
-          const body = await response.json();
-          message = body?.message || body?.error || message;
-        } catch {
-          // ignore
-        }
+        const body = await readJsonRecord(response);
+        message = readErrorMessage(body, message);
         throw new Error(message);
       }
 
-      const data = await response.json();
-      if (data?.order?.id) {
-        applyOrderUpdate(data.order);
+      const data = await readJsonRecord(response);
+      const updatedOrder = asOrder(data.order);
+      if (updatedOrder?.id) {
+        applyOrderUpdate(updatedOrder);
       }
+      const updatedOrderRecord = readRecord(data, 'order');
+      const paidAmount = readNumber(updatedOrderRecord, 'paidAmount');
+      const pendingAmount = readNumber(updatedOrderRecord, 'pendingAmount');
 
       setSelectedOrder((prev) =>
         prev
           ? {
               ...prev,
               receipts: prev.receipts?.filter((r) => r.id !== receiptToDelete.id) || [],
-              ...(data?.order
+              ...(updatedOrderRecord
                 ? {
-                    paidAmount: data.order.paidAmount ?? prev.paidAmount,
-                    pendingAmount: data.order.pendingAmount ?? prev.pendingAmount,
+                    paidAmount: paidAmount ?? prev.paidAmount,
+                    pendingAmount: pendingAmount ?? prev.pendingAmount,
                   }
                 : {}),
             }
@@ -756,7 +840,7 @@ export default function OrdersPage() {
     }
   };
 
-  const handleReceiptAction = async () => {
+  const handleReceiptAction = async (): Promise<void> => {
     if (!workspace?.id || !selectedOrder || !receiptActionTarget || !receiptActionType) return;
     setIsReceiptActionLoading(true);
     setReceiptActionError('');
@@ -784,18 +868,15 @@ export default function OrdersPage() {
 
         if (!response.ok) {
           let message = 'No se pudo aplicar el comprobante';
-          try {
-            const body = await response.json();
-            message = body?.message || body?.error || message;
-          } catch {
-            // ignore
-          }
+          const body = await readJsonRecord(response);
+          message = readErrorMessage(body, message);
           throw new Error(message);
         }
 
-        const data = await response.json();
-        if (data?.order?.id) {
-          applyOrderUpdate(data.order);
+        const data = await readJsonRecord(response);
+        const updatedOrder = asOrder(data.order);
+        if (updatedOrder?.id) {
+          applyOrderUpdate(updatedOrder);
         }
 
         toast.success('Comprobante aprobado');
@@ -813,12 +894,8 @@ export default function OrdersPage() {
 
         if (!response.ok) {
           let message = 'No se pudo rechazar el comprobante';
-          try {
-            const body = await response.json();
-            message = body?.message || body?.error || message;
-          } catch {
-            // ignore
-          }
+          const body = await readJsonRecord(response);
+          message = readErrorMessage(body, message);
           throw new Error(message);
         }
 
@@ -837,7 +914,7 @@ export default function OrdersPage() {
   };
 
   // Format date
-  const formatDate = (dateString: string) => {
+  const formatDate = (dateString: string): string => {
     return new Date(dateString).toLocaleDateString('es-AR', {
       day: '2-digit',
       month: 'short',
@@ -848,7 +925,7 @@ export default function OrdersPage() {
   };
 
   // Time ago
-  const timeAgo = (dateString: string) => {
+  const timeAgo = (dateString: string): string => {
     const date = new Date(dateString);
     const now = new Date();
     const diffMs = now.getTime() - date.getTime();
@@ -863,7 +940,7 @@ export default function OrdersPage() {
   };
 
   // Format date long
-  const formatDateLong = (dateString: string) => {
+  const formatDateLong = (dateString: string): string => {
     return new Date(dateString).toLocaleDateString('es-AR', {
       weekday: 'long',
       day: '2-digit',
@@ -873,7 +950,7 @@ export default function OrdersPage() {
   };
 
   // Format time
-  const formatTime = (dateString: string) => {
+  const formatTime = (dateString: string): string => {
     return new Date(dateString).toLocaleTimeString('es-AR', {
       hour: '2-digit',
       minute: '2-digit',
@@ -881,7 +958,7 @@ export default function OrdersPage() {
   };
 
   // Get status badges
-  const getStatusBadges = (order: Order) => {
+  const getStatusBadges = (order: Order): JSX.Element => {
     const acceptanceKey = resolveAcceptanceStatus(order);
     const paymentKey = resolvePaymentStatus(order);
     const acceptance = ACCEPTANCE_STATUS_CONFIG[acceptanceKey];
@@ -904,7 +981,7 @@ export default function OrdersPage() {
     );
   };
 
-  const resetCreateForm = () => {
+  const resetCreateForm = (): void => {
     setProductSearch('');
     setCustomerSearch('');
     setSelectedCustomerId('');
@@ -916,7 +993,7 @@ export default function OrdersPage() {
   useEffect(() => {
     if (!isCreateOpen || !workspace?.id) return;
 
-    const loadCreateData = async () => {
+    const loadCreateData = async (): Promise<void> => {
       setIsCreateLoading(true);
       try {
         const [customersRes, productsRes] = await Promise.all([
@@ -925,15 +1002,15 @@ export default function OrdersPage() {
         ]);
 
         if (customersRes.ok) {
-          const data = await customersRes.json();
-          setCustomers(data.customers || []);
+          const data = await readJsonRecord(customersRes);
+          setCustomers(asCustomerOptionArray(data.customers));
         } else {
           toast.error('No se pudieron cargar los clientes');
         }
 
         if (productsRes.ok) {
-          const data = await productsRes.json();
-          setProducts(data.products || []);
+          const data = await readJsonRecord(productsRes);
+          setProducts(asProductOptionArray(data.products));
         } else {
           toast.error('No se pudieron cargar los productos');
         }
@@ -945,19 +1022,19 @@ export default function OrdersPage() {
       }
     };
 
-    loadCreateData();
-  }, [isCreateOpen, workspace?.id]);
+    void loadCreateData();
+  }, [isCreateOpen, toast, workspace?.id]);
 
   useEffect(() => {
     if (!isTrashOpen || !workspace?.id) return;
 
-    const loadTrashed = async () => {
+    const loadTrashed = async (): Promise<void> => {
       setIsTrashLoading(true);
       try {
         const res = await apiFetch('/api/v1/orders?status=trashed&limit=100', {}, workspace.id);
         if (res.ok) {
-          const data = await res.json();
-          setTrashedOrders(data.orders || []);
+          const data = await readJsonRecord(res);
+          setTrashedOrders(asOrderArray(data.orders));
         } else {
           toast.error('No se pudieron cargar los pedidos en papelera');
         }
@@ -969,8 +1046,8 @@ export default function OrdersPage() {
       }
     };
 
-    loadTrashed();
-  }, [isTrashOpen, workspace?.id]);
+    void loadTrashed();
+  }, [isTrashOpen, toast, workspace?.id]);
 
   const selectedItems = products
     .map((p) => ({ ...p, quantity: itemQuantities[p.id] || 0 }))
@@ -978,13 +1055,15 @@ export default function OrdersPage() {
 
   const subtotalCents = selectedItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
-  const paymentAmountCents = (() => {
-    if (paymentStatus === 'paid') return subtotalCents;
-    if (paymentStatus === 'pending') return 0;
+  let paymentAmountCents = 0;
+  if (paymentStatus === 'paid') {
+    paymentAmountCents = subtotalCents;
+  } else if (paymentStatus === 'partial') {
     const parsed = Number(partialPaid.replace(',', '.'));
-    if (Number.isNaN(parsed) || parsed <= 0) return 0;
-    return Math.round(parsed * 100);
-  })();
+    if (!Number.isNaN(parsed) && parsed > 0) {
+      paymentAmountCents = Math.round(parsed * 100);
+    }
+  }
 
   const canCreate =
     selectedCustomerId &&
@@ -1001,7 +1080,7 @@ export default function OrdersPage() {
     return target.includes(customerSearch.toLowerCase());
   });
 
-  const openPdfFromResponse = async (response: Response, fallbackName: string) => {
+  const openPdfFromResponse = async (response: Response, fallbackName: string): Promise<void> => {
     const blob = await response.blob();
     const url = window.URL.createObjectURL(blob);
     const opened = window.open(url, '_blank');
@@ -1016,7 +1095,7 @@ export default function OrdersPage() {
     setTimeout(() => window.URL.revokeObjectURL(url), 10000);
   };
 
-  const openReceiptFile = async (receiptId: string) => {
+  const openReceiptFile = async (receiptId: string): Promise<void> => {
     if (!workspace?.id) return;
     const response = await apiFetch(
       `/api/v1/integrations/receipts/${receiptId}/file`,
@@ -1030,7 +1109,7 @@ export default function OrdersPage() {
     await openPdfFromResponse(response, `comprobante_${receiptId}.pdf`);
   };
 
-  const handleAcceptAndPrint = async () => {
+  const handleAcceptAndPrint = async (): Promise<void> => {
     if (!workspace?.id || !selectedOrder) return;
     setIsAccepting(true);
     try {
@@ -1048,29 +1127,32 @@ export default function OrdersPage() {
           throw new Error('No se pudo aceptar el pedido');
         }
 
-        const data = await res.json();
-        const completedPayments = Array.isArray(data.order?.payments)
-          ? data.order.payments.filter((p: { status?: string }) => p.status === 'completed')
-          : [];
+        const data = await readJsonRecord(res);
+        const orderData = readRecord(data, 'order');
+        const completedPayments = asRecordList(orderData?.payments).filter((payment) => readString(payment, 'status') === 'completed');
         const paymentsSum = completedPayments.reduce(
-          (sum: number, p: { amount: number }) => sum + p.amount,
+          (sum: number, payment) => sum + (readNumber(payment, 'amount') ?? 0),
           0
         );
+        const nextStatus = readString(orderData, 'status') ?? selectedOrder.status;
         const updatedPaidAmount = Math.max(
-          typeof data.order?.paidAmount === 'number' ? data.order.paidAmount : selectedOrder.paidAmount,
+          readNumber(orderData, 'paidAmount') ?? selectedOrder.paidAmount,
           paymentsSum
         );
         setSelectedOrder((prev) =>
           prev
             ? {
                 ...prev,
-                status: data.order.status,
+                status: nextStatus,
                 paidAmount: updatedPaidAmount,
                 pendingAmount: Math.max(prev.total - updatedPaidAmount, 0),
               }
             : prev
         );
-        setOrders((prev) => prev.map((o) => (o.id === data.order.id ? { ...o, status: data.order.status } : o)));
+        const orderId = readString(orderData, 'id');
+        if (orderId) {
+          setOrders((prev) => prev.map((order) => (order.id === orderId ? { ...order, status: nextStatus } : order)));
+        }
         await fetchOrderDetail(selectedOrder.id, { silent: true });
       }
 
@@ -1093,7 +1175,7 @@ export default function OrdersPage() {
     }
   };
 
-  const handleCreateOrder = async () => {
+  const handleCreateOrder = async (): Promise<void> => {
     if (!workspace?.id) return;
     if (!canCreate) {
       toast.error('Completá cliente, productos y estado de pago');
@@ -1127,12 +1209,8 @@ export default function OrdersPage() {
 
       if (!response.ok) {
         let message = 'No se pudo crear el pedido';
-        try {
-          const errorBody = await response.json();
-          message = errorBody?.message || errorBody?.error || message;
-        } catch {
-          // ignore parse errors
-        }
+        const errorBody = await readJsonRecord(response);
+        message = readErrorMessage(errorBody, message);
         throw new Error(message);
       }
 
@@ -1148,7 +1226,7 @@ export default function OrdersPage() {
     }
   };
 
-  const handleMoveToTrash = async () => {
+  const handleMoveToTrash = async (): Promise<void> => {
     if (!workspace?.id || !trashCandidate) return;
     setIsTrashing(true);
     try {
@@ -1180,7 +1258,7 @@ export default function OrdersPage() {
     }
   };
 
-  const handleRestoreFromTrash = async () => {
+  const handleRestoreFromTrash = async (): Promise<void> => {
     if (!workspace?.id || !restoreCandidate) return;
     setIsRestoring(true);
     try {
@@ -1206,7 +1284,7 @@ export default function OrdersPage() {
     }
   };
 
-  const handleEmptyTrash = async () => {
+  const handleEmptyTrash = async (): Promise<void> => {
     if (!workspace?.id) return;
     setIsEmptyingTrash(true);
     try {
@@ -1652,7 +1730,7 @@ export default function OrdersPage() {
                         <Button
                           className={`w-full h-12 text-base${isAccepted ? ' bg-blue-600 text-white hover:bg-blue-500 shadow-md shadow-blue-600/20 hover:shadow-blue-600/30' : ''}`}
                           variant="default"
-                          onClick={handleAcceptAndPrint}
+                          onClick={() => { void handleAcceptAndPrint(); }}
                           disabled={isAccepting}
                         >
                           <Printer className="w-5 h-5 mr-2" />
@@ -1779,7 +1857,7 @@ export default function OrdersPage() {
                                     <Button
                                       size="sm"
                                       variant="secondary"
-                                      onClick={() => openReceiptFile(receipt.id)}
+                                      onClick={() => { void openReceiptFile(receipt.id); }}
                                     >
                                       <Eye className="w-4 h-4 mr-1" />
                                       Ver comprobante
@@ -1973,7 +2051,13 @@ export default function OrdersPage() {
               </Button>
               <Button
                 className="flex-1"
-                onClick={receiptNeedsAmount ? handleApplyReceiptAmount : handleUploadReceipt}
+                onClick={() => {
+                  if (receiptNeedsAmount) {
+                    void handleApplyReceiptAmount();
+                    return;
+                  }
+                  void handleUploadReceipt();
+                }}
                 disabled={isReceiptUploading}
               >
                 {isReceiptUploading
@@ -2282,7 +2366,7 @@ export default function OrdersPage() {
                 <Button variant="secondary" className="flex-1" onClick={() => setIsCreateOpen(false)}>
                   Cancelar
                 </Button>
-                <Button className="flex-1" onClick={handleCreateOrder} disabled={!canCreate || isCreating}>
+                <Button className="flex-1" onClick={() => { void handleCreateOrder(); }} disabled={!canCreate || isCreating}>
                   {isCreating ? 'Creando...' : 'Crear pedido'}
                 </Button>
               </div>
@@ -2328,7 +2412,7 @@ export default function OrdersPage() {
               </Button>
               <Button
                 className="flex-1 bg-red-600 text-white hover:bg-red-500"
-                onClick={handleMoveToTrash}
+                onClick={() => { void handleMoveToTrash(); }}
                 disabled={isTrashing}
               >
                 <Trash2 className="w-4 h-4 mr-2" />
@@ -2460,7 +2544,7 @@ export default function OrdersPage() {
               </Button>
               <Button
                 className="flex-1 bg-blue-600 text-white hover:bg-blue-500"
-                onClick={handleRestoreFromTrash}
+                onClick={() => { void handleRestoreFromTrash(); }}
                 disabled={isRestoring}
               >
                 <RotateCcw className="w-4 h-4 mr-2" />
@@ -2491,7 +2575,7 @@ export default function OrdersPage() {
               </Button>
               <Button
                 className="flex-1 bg-red-600 text-white hover:bg-red-500"
-                onClick={handleEmptyTrash}
+                onClick={() => { void handleEmptyTrash(); }}
                 disabled={isEmptyingTrash}
               >
                 <Trash2 className="w-4 h-4 mr-2" />
@@ -2570,7 +2654,7 @@ export default function OrdersPage() {
                 </Button>
                 <Button
                   className="flex-1 bg-emerald-600 text-white hover:bg-emerald-500 shadow-lg shadow-emerald-600/25 hover:shadow-xl hover:shadow-emerald-600/30"
-                  onClick={handleReceiptAction}
+                  onClick={() => { void handleReceiptAction(); }}
                   isLoading={isReceiptActionLoading}
                 >
                   Aprobar
@@ -2616,7 +2700,7 @@ export default function OrdersPage() {
                 <Button
                   variant="destructive"
                   className="flex-1"
-                  onClick={handleReceiptAction}
+                  onClick={() => { void handleReceiptAction(); }}
                   isLoading={isReceiptActionLoading}
                 >
                   Rechazar

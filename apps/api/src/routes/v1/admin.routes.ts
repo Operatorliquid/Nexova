@@ -2,10 +2,12 @@
  * Super Admin Routes
  * Requires isSuperAdmin = true
  */
-import { FastifyPluginAsync } from 'fastify';
-import { z } from 'zod';
-import { decrypt, encrypt } from '@nexova/core';
+import { type Prisma } from '@prisma/client';
+import { type FastifyPluginAsync } from 'fastify';
 import { Redis } from 'ioredis';
+import { z } from 'zod';
+
+import { decrypt, encrypt } from '@nexova/core';
 import { EvolutionAdminClient, EvolutionClient, EvolutionError } from '@nexova/integrations';
 import { COMMERCE_USAGE_METRICS } from '@nexova/shared';
 
@@ -16,6 +18,21 @@ function hasGlobalInfobipApiKey(): boolean {
 function hasGlobalEvolutionApiKey(): boolean {
   return (process.env.EVOLUTION_API_KEY || '').trim().length > 0;
 }
+
+type UnknownRecord = Record<string, unknown>;
+
+const isRecord = (value: unknown): value is UnknownRecord => typeof value === 'object' && value !== null;
+
+const readArrayField = (value: unknown, key: string): unknown[] | null => {
+  if (!isRecord(value)) return null;
+  const candidate = value[key];
+  return Array.isArray(candidate) ? candidate : null;
+};
+
+const extractEvolutionInstances = (value: unknown): unknown[] => {
+  if (Array.isArray(value)) return value;
+  return readArrayField(value, 'response') ?? readArrayField(value, 'message') ?? [];
+};
 
 function getWhatsAppCredentialsStatus(number: { provider?: string | null; apiKeyEnc?: string | null; apiKeyIv?: string | null }): {
   hasCredentials: boolean;
@@ -131,7 +148,7 @@ const updateSystemSettingsSchema = z.object({
     .optional(),
 });
 
-export const adminRoutes: FastifyPluginAsync = async (fastify) => {
+export const adminRoutes: FastifyPluginAsync = (fastify) => {
   // All routes require super admin
   fastify.addHook('preHandler', fastify.requireSuperAdmin);
 
@@ -208,7 +225,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       fastify.prisma.user.count({ where }),
     ]);
 
-    reply.send({
+    return reply.send({
       users,
       pagination: {
         page: parseInt(page),
@@ -228,7 +245,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       fastify.prisma.user.count({ where: { isSuperAdmin: true } }),
     ]);
 
-    reply.send({
+    return reply.send({
       stats: {
         total,
         active,
@@ -263,7 +280,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       },
     });
 
-    reply.send({ user });
+    return reply.send({ user });
   });
 
   // Delete user (hard delete). Cascades memberships/tokens; keeps billing/audit rows with userId set null.
@@ -353,14 +370,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     try {
       const admin = new EvolutionAdminClient({ apiKey, baseUrl });
       const res = await admin.fetchInstances();
-      const list =
-        Array.isArray(res)
-          ? res
-          : Array.isArray((res as any)?.response)
-            ? (res as any).response
-            : Array.isArray((res as any)?.message)
-              ? (res as any).message
-              : [];
+      const list = extractEvolutionInstances(res);
 
       return reply.send({
         configured: true,
@@ -405,7 +415,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       ...getWhatsAppCredentialsStatus({ provider: n.provider, apiKeyEnc, apiKeyIv }),
     }));
 
-    reply.send({ numbers: sanitized });
+    return reply.send({ numbers: sanitized });
   });
 
   // Create WhatsApp number
@@ -442,9 +452,11 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     });
 
     // Don't expose API key in response
-    const { apiKeyEnc: _, apiKeyIv: __, ...sanitized } = number;
+    const sanitized = { ...number };
+    delete sanitized.apiKeyEnc;
+    delete sanitized.apiKeyIv;
 
-    reply.code(201).send({
+    return reply.code(201).send({
       number: {
         ...sanitized,
         ...getWhatsAppCredentialsStatus(number),
@@ -483,9 +495,11 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     });
 
     // Don't expose API key in response
-    const { apiKeyEnc: _, apiKeyIv: __, ...sanitized } = number;
+    const sanitized = { ...number };
+    delete sanitized.apiKeyEnc;
+    delete sanitized.apiKeyIv;
 
-    reply.send({
+    return reply.send({
       number: {
         ...sanitized,
         ...getWhatsAppCredentialsStatus(number),
@@ -501,7 +515,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       where: { id },
     });
 
-    reply.send({ success: true });
+    return reply.send({ success: true });
   });
 
   // Assign number to workspace (admin only - direct assignment)
@@ -518,9 +532,11 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       },
     });
 
-    const { apiKeyEnc: _, apiKeyIv: __, ...sanitized } = number;
+    const sanitized = { ...number };
+    delete sanitized.apiKeyEnc;
+    delete sanitized.apiKeyIv;
 
-    reply.send({ number: sanitized });
+    return reply.send({ number: sanitized });
   });
 
   // Unassign number from workspace
@@ -536,9 +552,11 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       },
     });
 
-    const { apiKeyEnc: _, apiKeyIv: __, ...sanitized } = number;
+    const sanitized = { ...number };
+    delete sanitized.apiKeyEnc;
+    delete sanitized.apiKeyIv;
 
-    reply.send({ number: sanitized });
+    return reply.send({ number: sanitized });
   });
 
   // Test WhatsApp number connection
@@ -624,7 +642,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       },
     });
 
-    reply.send({
+    return reply.send({
       success: true,
       message: 'Connection test successful',
     });
@@ -674,7 +692,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       fastify.prisma.workspace.count({ where }),
     ]);
 
-    reply.send({
+    return reply.send({
       workspaces,
       pagination: {
         page: parseInt(page),
@@ -836,9 +854,12 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     }
 
     // Don't expose encrypted keys
-    const { anthropicKeyEnc, anthropicKeyIv, ...sanitized } = settings;
+    const sanitized = { ...settings };
+    const anthropicKeyEnc = sanitized.anthropicKeyEnc;
+    delete sanitized.anthropicKeyEnc;
+    delete sanitized.anthropicKeyIv;
 
-    reply.send({
+    return reply.send({
       settings: {
         ...sanitized,
         hasAnthropicKey: !!anthropicKeyEnc,
@@ -850,7 +871,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.patch('/settings', async (request, reply) => {
     const body = updateSystemSettingsSchema.parse(request.body);
 
-    const updateData: any = {};
+    const updateData: Prisma.SystemSettingsUpdateInput = {};
 
     if (body.anthropicKey) {
       const { encrypted, iv } = encrypt(body.anthropicKey);
@@ -869,7 +890,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         return value as Record<string, unknown>;
       };
 
-      const mergeByPlan = (current: Record<string, unknown>, patch: Record<string, unknown>) => {
+      const mergeByPlan = (current: Record<string, unknown>, patch: Record<string, unknown>): Record<string, unknown> => {
         const out: Record<string, unknown> = { ...current };
         for (const planKey of Object.keys(patch)) {
           const next = asObject(patch[planKey]);
@@ -882,7 +903,8 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: 'system' },
         select: { featureFlags: true },
       });
-      const featureFlags = asObject(existing?.featureFlags);
+      const existingRecord = isRecord(existing) ? existing : null;
+      const featureFlags = asObject(existingRecord?.featureFlags);
       const currentLimits = asObject(featureFlags.commercePlanLimits);
       const mergedLimits = mergeByPlan(currentLimits, asObject(body.commercePlanLimits));
 
@@ -898,9 +920,12 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       update: updateData,
     });
 
-    const { anthropicKeyEnc, anthropicKeyIv, ...sanitized } = settings;
+    const sanitized = { ...settings };
+    const anthropicKeyEnc = sanitized.anthropicKeyEnc;
+    delete sanitized.anthropicKeyEnc;
+    delete sanitized.anthropicKeyIv;
 
-    reply.send({
+    return reply.send({
       settings: {
         ...sanitized,
         hasAnthropicKey: !!anthropicKeyEnc,
@@ -1061,7 +1086,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       fastify.prisma.whatsAppNumber.count(),
     ]);
 
-    reply.send({
+    return reply.send({
       stats: {
         users: { total: totalUsers, active: activeUsers },
         workspaces: { total: totalWorkspaces, active: activeWorkspaces },

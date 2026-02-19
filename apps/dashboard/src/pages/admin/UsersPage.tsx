@@ -1,17 +1,20 @@
-import { useCallback, useEffect, useState } from 'react';
 import {
   Users, UserCheck, Shield, UserX, RefreshCw, Trash2,
   ChevronRight, Building2, Calendar, Mail, Clock, ShieldCheck, ShieldOff,
 } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+
+import { normalizeCommercePlan, type CommercePlan } from '@nexova/shared';
+
+import { DeleteConfirmModal } from '../../components/stock';
 import { Badge, Button, Input, AnimatedPage, AnimatedStagger, StatCard } from '../../components/ui';
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription,
 } from '../../components/ui/sheet';
+import { useAuth } from '../../contexts/AuthContext';
 import { apiFetch } from '../../lib/api';
 import { useToastStore } from '../../stores/toast.store';
-import { useAuth } from '../../contexts/AuthContext';
-import { normalizeCommercePlan, type CommercePlan } from '@nexova/shared';
-import { DeleteConfirmModal } from '../../components/stock';
+
 
 interface AdminUser {
   id: string;
@@ -59,7 +62,9 @@ interface ApiErrorBody {
   error?: string;
 }
 
-const readApiError = async (response: Response, fallback: string) => {
+type BadgeVariant = 'default' | 'secondary' | 'warning' | 'success' | 'info' | 'outline';
+
+const readApiError = async (response: Response, fallback: string): Promise<string> => {
   try {
     const body = (await response.json()) as ApiErrorBody;
     if (typeof body.message === 'string' && body.message.trim()) return body.message;
@@ -70,12 +75,12 @@ const readApiError = async (response: Response, fallback: string) => {
   return fallback;
 };
 
-const formatUserName = (user: AdminUser) => {
+const formatUserName = (user: AdminUser): string => {
   const fullName = `${user.firstName || ''} ${user.lastName || ''}`.trim();
   return fullName || user.email;
 };
 
-const formatDate = (value?: string | null) => {
+const formatDate = (value?: string | null): string => {
   if (!value) return 'Nunca';
   return new Intl.DateTimeFormat('es-AR', {
     day: '2-digit',
@@ -86,13 +91,13 @@ const formatDate = (value?: string | null) => {
   }).format(new Date(value));
 };
 
-const getUserStatusBadge = (status: AdminUser['status']) => {
+const getUserStatusBadge = (status: AdminUser['status']): JSX.Element => {
   if (status === 'active') return <Badge variant="success">Activo</Badge>;
   if (status === 'suspended') return <Badge variant="warning">Suspendido</Badge>;
   return <Badge variant="secondary">Inactivo</Badge>;
 };
 
-const getRoleVariant = (roleName: string) => {
+const getRoleVariant = (roleName: string): BadgeVariant => {
   const normalized = roleName.trim().toLowerCase();
   if (normalized === 'owner') return 'default' as const;
   if (normalized === 'admin') return 'warning' as const;
@@ -101,19 +106,21 @@ const getRoleVariant = (roleName: string) => {
   return 'secondary' as const;
 };
 
-const formatPlanLabel = (plan: CommercePlan) => {
+const formatPlanLabel = (plan: CommercePlan): string => {
   if (plan === 'basic') return 'Basic';
   if (plan === 'standard') return 'Standard';
   return 'Pro';
 };
 
-const getPlanVariant = (plan: CommercePlan) => {
+const getPlanVariant = (plan: CommercePlan): BadgeVariant => {
   if (plan === 'basic') return 'secondary' as const;
   if (plan === 'standard') return 'info' as const;
   return 'success' as const;
 };
 
-const getUserPrimaryPlanBadge = (user: AdminUser) => {
+const getUserPrimaryPlanBadge = (
+  user: AdminUser
+): { label: string; variant: BadgeVariant } | null => {
   const rawPlans = user.memberships
     .map((m) => m.workspace?.plan?.trim())
     .filter((plan): plan is string => Boolean(plan));
@@ -129,7 +136,9 @@ const getUserPrimaryPlanBadge = (user: AdminUser) => {
   return { label: formatPlanLabel(best), variant: getPlanVariant(best) };
 };
 
-const getUserPlanBadges = (user: AdminUser) => {
+const getUserPlanBadges = (
+  user: AdminUser
+): Array<{ key: string; label: string; variant: BadgeVariant }> => {
   const rawPlans = user.memberships
     .map((membership) => membership.workspace?.plan?.trim())
     .filter((plan): plan is string => Boolean(plan));
@@ -152,14 +161,14 @@ const getUserPlanBadges = (user: AdminUser) => {
   });
 };
 
-const getMembershipStatusVariant = (status: string) => {
+const getMembershipStatusVariant = (status: string): BadgeVariant => {
   const s = status.toLowerCase();
   if (s === 'active') return 'success' as const;
   if (s === 'suspended' || s === 'inactive') return 'warning' as const;
   return 'secondary' as const;
 };
 
-const getMembershipStatusLabel = (status: string) => {
+const getMembershipStatusLabel = (status: string): string => {
   const s = status.toLowerCase();
   if (s === 'active') return 'Activo';
   if (s === 'suspended') return 'Suspendido';
@@ -169,7 +178,7 @@ const getMembershipStatusLabel = (status: string) => {
 
 type SheetTab = 'info' | 'memberships';
 
-export default function UsersPage() {
+export default function UsersPage(): JSX.Element {
   const toastSuccess = useToastStore((state) => state.success);
   const toastError = useToastStore((state) => state.error);
   const { user: currentUser } = useAuth();
@@ -203,7 +212,7 @@ export default function UsersPage() {
     setPagination((prev) => ({ ...prev, page: 1 }));
   }, [search]);
 
-  const loadUsers = useCallback(async (silent = false) => {
+  const loadUsers = useCallback(async (silent = false): Promise<void> => {
     if (silent) setIsRefreshing(true);
     else setIsLoading(true);
 
@@ -237,10 +246,10 @@ export default function UsersPage() {
   }, [pagination.page, pagination.limit, search, toastError]);
 
   useEffect(() => {
-    loadUsers();
+    void loadUsers();
   }, [loadUsers]);
 
-  const handleToggleSuperAdmin = async (target: AdminUser) => {
+  const handleToggleSuperAdmin = async (target: AdminUser): Promise<void> => {
     if (target.id === currentUser?.id && target.isSuperAdmin) {
       toastError('No podés quitarte permisos de super admin a vos mismo');
       return;
@@ -282,7 +291,7 @@ export default function UsersPage() {
     }
   };
 
-  const handleDeleteUser = async () => {
+  const handleDeleteUser = async (): Promise<void> => {
     if (!userToDelete) return;
     if (userToDelete.id === currentUser?.id) {
       toastError('No podés eliminar tu propio usuario');
@@ -312,7 +321,7 @@ export default function UsersPage() {
     }
   };
 
-  const openUserSheet = (user: AdminUser) => {
+  const openUserSheet = (user: AdminUser): void => {
     setSelectedUser(user);
     setActiveTab('info');
   };
@@ -340,7 +349,13 @@ export default function UsersPage() {
               onChange={(e) => setSearchInput(e.target.value)}
             />
           </div>
-          <Button variant="secondary" onClick={() => loadUsers(true)} isLoading={isRefreshing}>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              void loadUsers(true);
+            }}
+            isLoading={isRefreshing}
+          >
             <RefreshCw className="w-4 h-4 mr-2" />
             Actualizar
           </Button>
@@ -589,7 +604,9 @@ export default function UsersPage() {
                       <div className="flex flex-col gap-2">
                         <Button
                           variant={selectedUser.isSuperAdmin ? 'secondary' : 'default'}
-                          onClick={() => handleToggleSuperAdmin(selectedUser)}
+                          onClick={() => {
+                            void handleToggleSuperAdmin(selectedUser);
+                          }}
                           isLoading={togglingUserId === selectedUser.id}
                           className="w-full justify-center"
                         >

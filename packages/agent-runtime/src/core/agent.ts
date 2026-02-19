@@ -2,12 +2,13 @@
  * Retail Agent Core
  * Main orchestrator for the AI retail assistant
  */
-import { PrismaClient, Prisma } from '@prisma/client';
-import type { Redis } from 'ioredis';
 import Anthropic from '@anthropic-ai/sdk';
+import { type PrismaClient, Prisma } from '@prisma/client';
+import type { Queue } from 'bullmq';
+import type { Redis } from 'ioredis';
+
 import { LedgerService } from '@nexova/core';
 import { MercadoPagoIntegrationService, type MercadoPagoConfig } from '@nexova/integrations';
-import type { Queue } from 'bullmq';
 import {
   getCommercePlanCapabilities,
   resolveCommercePlan,
@@ -15,31 +16,31 @@ import {
   type MessageSendPayload,
 } from '@nexova/shared';
 
+import { classifyMessage } from './conversation-router.js';
+import { type MemoryManager, createMemoryManager } from './memory-manager.js';
+import { MemoryService } from './memory-service.js';
+import { StateMachine } from './state-machine.js';
+import { buildRetailOwnerSystemPrompt } from '../prompts/retail-owner-system.js';
+import { buildRetailSystemPrompt } from '../prompts/retail-system.js';
+import { ToolRegistry, toolRegistry, initializeRetailTools } from '../tools/index.js';
+import { createAdminTools } from '../tools/retail/admin.tools.js';
+import type { FileUploader } from '../tools/retail/catalog.tools.js';
+import { buildProductDisplayName } from '../tools/retail/product-utils.js';
 import {
-  InteractiveButtonsPayload,
-  InteractiveListPayload,
-  ProcessMessageInput,
-  ProcessMessageOutput,
-  ToolContext,
-  ToolExecution,
+  type InteractiveButtonsPayload,
+  type InteractiveListPayload,
+  type ProcessMessageInput,
+  type ProcessMessageOutput,
+  type ToolContext,
+  type ToolExecution,
   AgentState,
   ToolCategory,
   MessageThread,
-  Cart,
-  SessionMemory,
-  PendingConfirmation,
-  AuditEntry,
+  type Cart,
+  type SessionMemory,
+  type PendingConfirmation,
+  type AuditEntry,
 } from '../types/index.js';
-import { StateMachine } from './state-machine.js';
-import { MemoryManager, createMemoryManager } from './memory-manager.js';
-import { MemoryService } from './memory-service.js';
-import { ToolRegistry, toolRegistry, initializeRetailTools } from '../tools/index.js';
-import { classifyMessage } from './conversation-router.js';
-import type { FileUploader } from '../tools/retail/catalog.tools.js';
-import { buildRetailSystemPrompt } from '../prompts/retail-system.js';
-import { buildRetailOwnerSystemPrompt } from '../prompts/retail-owner-system.js';
-import { createAdminTools } from '../tools/retail/admin.tools.js';
-import { buildProductDisplayName } from '../tools/retail/product-utils.js';
 import { createNotificationIfEnabled } from '../utils/notifications.js';
 import { withVisibleOrders } from '../utils/orders.js';
 
@@ -112,7 +113,7 @@ const NEGATIVE_SENTIMENT_HANDOFF_ENABLED =
   (process.env.AGENT_NEGATIVE_SENTIMENT_HANDOFF || 'true').toLowerCase() === 'true';
 
 if ((process.env.AGENT_AVAILABILITY_DEBUG || '') === '1') {
-  console.log('[Agent] Loaded RetailAgent module from', import.meta.url);
+  console.warn('[Agent] Loaded RetailAgent module from', import.meta.url);
 }
 
 const getMercadoPagoConfig = (): MercadoPagoConfig => ({
@@ -198,6 +199,57 @@ const PAYMENT_INTENT_KEYWORDS = [
 ];
 
 const DEFAULT_SUBAGENTS_ENABLED = (process.env.AGENT_SUBAGENTS_ENABLED || 'true').toLowerCase() === 'true';
+type CommercePromptProfile = NonNullable<Parameters<typeof buildRetailSystemPrompt>[1]>;
+
+function toRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function toTrimmedString(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function toStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const items = value
+    .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
+    .filter((entry) => entry.length > 0);
+  return items.length > 0 ? items : undefined;
+}
+
+function toOptionalBoolean(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+function extractToolMessage(data: unknown): string | undefined {
+  const payload = toRecord(data);
+  return payload ? toTrimmedString(payload.message) : undefined;
+}
+
+function normalizeCommercePromptProfile(input: unknown): CommercePromptProfile {
+  const settings = toRecord(input) ?? {};
+
+  return {
+    businessAddress: toTrimmedString(settings.businessAddress) ?? toTrimmedString(settings.address),
+    whatsappContact: toTrimmedString(settings.whatsappContact),
+    paymentAlias: toTrimmedString(settings.paymentAlias),
+    paymentCbu: toTrimmedString(settings.paymentCbu),
+    workingDays: toStringArray(settings.workingDays),
+    continuousHours: toOptionalBoolean(settings.continuousHours),
+    workingHoursStart: toTrimmedString(settings.workingHoursStart),
+    workingHoursEnd: toTrimmedString(settings.workingHoursEnd),
+    morningShiftStart: toTrimmedString(settings.morningShiftStart),
+    morningShiftEnd: toTrimmedString(settings.morningShiftEnd),
+    afternoonShiftStart: toTrimmedString(settings.afternoonShiftStart),
+    afternoonShiftEnd: toTrimmedString(settings.afternoonShiftEnd),
+    assistantNotes: toTrimmedString(settings.assistantNotes),
+  };
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // AGENT CLASS
@@ -234,7 +286,7 @@ export class RetailAgent {
   /**
    * Initialize tools and registry
    */
-  async initialize(): Promise<void> {
+  initialize(): void {
     if (this.initialized) return;
 
     const ledgerService = new LedgerService(this.prisma);
@@ -266,7 +318,7 @@ export class RetailAgent {
 
     this.initialized = true;
 
-    console.log('[RetailAgent] Initialized');
+    console.warn('[RetailAgent] Initialized');
   }
 
   private async enrichConfirmationInput(
@@ -350,7 +402,7 @@ export class RetailAgent {
     const focus = memory.context.ownerFocus;
     if (!focus) return input;
 
-    const hasAny = (keys: string[]) =>
+    const hasAny = (keys: string[]): boolean =>
       keys.some((k) => typeof input[k] === 'string' && String(input[k]).trim().length > 0);
 
     if (toolName === 'admin_send_debt_reminder') {
@@ -401,78 +453,101 @@ export class RetailAgent {
     const { toolName, toolInput, toolResult, memory } = params;
     if (!toolResult?.success) return;
 
-    const data = (toolResult as { data?: any }).data;
+    const data = toRecord(toolResult.data);
     const patch: NonNullable<SessionMemory['context']['ownerFocus']> = {};
 
-    const buildCustomerName = (customer: any): string | undefined => {
-      if (!customer || typeof customer !== 'object') return undefined;
-      const firstName = typeof customer.firstName === 'string' ? customer.firstName.trim() : '';
-      const lastName = typeof customer.lastName === 'string' ? customer.lastName.trim() : '';
-      const businessName = typeof customer.businessName === 'string' ? customer.businessName.trim() : '';
+    const buildCustomerName = (customerValue: unknown): string | undefined => {
+      const customer = toRecord(customerValue);
+      if (!customer) return undefined;
+      const firstName = toTrimmedString(customer.firstName) ?? '';
+      const lastName = toTrimmedString(customer.lastName) ?? '';
+      const businessName = toTrimmedString(customer.businessName) ?? '';
       const full = [firstName, lastName].filter(Boolean).join(' ').trim();
       return full || businessName || undefined;
     };
 
-    if (toolName === 'admin_get_or_create_customer') {
-      if (typeof data?.customerId === 'string') patch.customerId = data.customerId;
-      if (typeof data?.phone === 'string') patch.customerPhone = data.phone;
+    if (toolName === 'admin_get_or_create_customer' && data) {
+      const customerId = toTrimmedString(data.customerId);
+      if (customerId) patch.customerId = customerId;
+      const phone = toTrimmedString(data.phone);
+      if (phone) patch.customerPhone = phone;
       const name = buildCustomerName(data);
       if (name) patch.customerName = name;
     }
 
-    if (toolName === 'admin_list_orders') {
-      const orders = Array.isArray(data?.orders) ? data.orders : [];
+    if (toolName === 'admin_list_orders' && data) {
+      const orders = Array.isArray(data.orders) ? data.orders : [];
       if (orders.length > 0) {
         const customerIds = new Set<string>();
-        for (const o of orders) {
-          if (o?.customer?.id) customerIds.add(String(o.customer.id));
+        for (const orderValue of orders) {
+          const order = toRecord(orderValue);
+          const customer = order ? toRecord(order.customer) : null;
+          const customerId = customer ? toTrimmedString(customer.id) : undefined;
+          if (customerId) customerIds.add(customerId);
         }
 
         // Only set focus automatically if the result is unambiguous (single customer).
         if (customerIds.size === 1) {
-          const first = orders[0];
-          if (first?.id) patch.orderId = String(first.id);
-          if (first?.orderNumber) patch.orderNumber = String(first.orderNumber);
-          if (first?.customer?.id) patch.customerId = String(first.customer.id);
-          if (first?.customer?.phone) patch.customerPhone = String(first.customer.phone);
-          const name = buildCustomerName(first.customer);
+          const first = toRecord(orders[0]);
+          const firstCustomer = first ? toRecord(first.customer) : null;
+          const orderId = first ? toTrimmedString(first.id) : undefined;
+          if (orderId) patch.orderId = orderId;
+          const orderNumber = first ? toTrimmedString(first.orderNumber) : undefined;
+          if (orderNumber) patch.orderNumber = orderNumber;
+          const customerId = firstCustomer ? toTrimmedString(firstCustomer.id) : undefined;
+          if (customerId) patch.customerId = customerId;
+          const customerPhone = firstCustomer ? toTrimmedString(firstCustomer.phone) : undefined;
+          if (customerPhone) patch.customerPhone = customerPhone;
+          const name = buildCustomerName(firstCustomer);
           if (name) patch.customerName = name;
         }
       }
     }
 
-    if (toolName === 'admin_get_order_details') {
-      if (typeof data?.id === 'string') patch.orderId = data.id;
-      if (typeof data?.orderNumber === 'string') patch.orderNumber = data.orderNumber;
-      if (data?.customer) {
-        if (typeof data.customer.id === 'string') patch.customerId = data.customer.id;
-        if (typeof data.customer.phone === 'string') patch.customerPhone = data.customer.phone;
-        const name = buildCustomerName(data.customer);
+    if (toolName === 'admin_get_order_details' && data) {
+      const orderId = toTrimmedString(data.id);
+      if (orderId) patch.orderId = orderId;
+      const orderNumber = toTrimmedString(data.orderNumber);
+      if (orderNumber) patch.orderNumber = orderNumber;
+      const customer = toRecord(data.customer);
+      if (customer) {
+        const customerId = toTrimmedString(customer.id);
+        if (customerId) patch.customerId = customerId;
+        const customerPhone = toTrimmedString(customer.phone);
+        if (customerPhone) patch.customerPhone = customerPhone;
+        const name = buildCustomerName(customer);
         if (name) patch.customerName = name;
       }
     }
 
-    if (toolName === 'admin_update_order_status' || toolName === 'admin_cancel_order') {
-      if (typeof data?.orderId === 'string') patch.orderId = data.orderId;
-      if (typeof data?.orderNumber === 'string') patch.orderNumber = data.orderNumber;
+    if ((toolName === 'admin_update_order_status' || toolName === 'admin_cancel_order') && data) {
+      const orderId = toTrimmedString(data.orderId);
+      if (orderId) patch.orderId = orderId;
+      const orderNumber = toTrimmedString(data.orderNumber);
+      if (orderNumber) patch.orderNumber = orderNumber;
     }
 
-    if (toolName === 'admin_create_order') {
-      if (typeof data?.orderId === 'string') patch.orderId = data.orderId;
-      if (typeof data?.orderNumber === 'string') patch.orderNumber = data.orderNumber;
-      if (typeof data?.customerId === 'string') patch.customerId = data.customerId;
+    if (toolName === 'admin_create_order' && data) {
+      const orderId = toTrimmedString(data.orderId);
+      if (orderId) patch.orderId = orderId;
+      const orderNumber = toTrimmedString(data.orderNumber);
+      if (orderNumber) patch.orderNumber = orderNumber;
+      const customerId = toTrimmedString(data.customerId);
+      if (customerId) patch.customerId = customerId;
     }
 
-    if (toolName === 'admin_send_debt_reminder') {
-      if (typeof data?.customerId === 'string') patch.customerId = data.customerId;
-      if (typeof data?.phone === 'string') patch.customerPhone = data.phone;
+    if (toolName === 'admin_send_debt_reminder' && data) {
+      const customerId = toTrimmedString(data.customerId);
+      if (customerId) patch.customerId = customerId;
+      const customerPhone = toTrimmedString(data.phone);
+      if (customerPhone) patch.customerPhone = customerPhone;
     }
 
     if (toolName === 'admin_send_customer_message') {
       // Tool doesn't return customerId; use the input as a fallback to keep focus consistent.
-      const inputCustomerId = typeof toolInput.customerId === 'string' ? toolInput.customerId : '';
-      const inputPhone = typeof toolInput.phone === 'string' ? toolInput.phone : '';
-      const inputOrderNumber = typeof toolInput.orderNumber === 'string' ? toolInput.orderNumber : '';
+      const inputCustomerId = toTrimmedString(toolInput.customerId) ?? '';
+      const inputPhone = toTrimmedString(toolInput.phone) ?? '';
+      const inputOrderNumber = toTrimmedString(toolInput.orderNumber) ?? '';
       if (inputCustomerId) patch.customerId = inputCustomerId;
       if (inputPhone) patch.customerPhone = inputPhone;
       if (inputOrderNumber) patch.orderNumber = inputOrderNumber;
@@ -493,7 +568,7 @@ export class RetailAgent {
     const { workspaceId, sessionId, customerId, channelId, channelType, message, messageId, correlationId } = input;
     const normalizedChannelType = channelType || 'whatsapp';
 
-    await this.initialize();
+    this.initialize();
 
     const toolsUsed: ToolExecution[] = [];
     let totalTokens = 0;
@@ -695,7 +770,7 @@ export class RetailAgent {
           temperature: this.config.temperature,
         };
 
-        console.log(
+        console.warn(
           `[RetailAgent] Owner Claude request (iter ${iterations}, model ${modelConfig.model}, msgLen ${message.length}, history ${recentHistory.length}, tools ${tools.length})`
         );
         const llmStart = Date.now();
@@ -713,7 +788,7 @@ export class RetailAgent {
           )
         );
         const llmDuration = Date.now() - llmStart;
-        console.log(`[RetailAgent] Owner Claude response in ${llmDuration}ms (iter ${iterations})`);
+        console.warn(`[RetailAgent] Owner Claude response in ${llmDuration}ms (iter ${iterations})`);
 
         totalTokens += llmResponse.usage.input_tokens + llmResponse.usage.output_tokens;
 
@@ -853,7 +928,7 @@ export class RetailAgent {
     const { workspaceId, sessionId, customerId, channelId, channelType, message, messageId, correlationId, isOwner } = input;
     const normalizedChannelType = channelType || 'whatsapp';
 
-    await this.initialize();
+    this.initialize();
 
     if (isOwner) {
       return this.processOwnerMessage(input);
@@ -901,7 +976,7 @@ export class RetailAgent {
           memory.cart.updatedAt || memory.cart.createdAt || memory.lastActivityAt;
         const staleMs = CART_STALE_MINUTES * 60 * 1000;
         if (Date.now() - lastCartActivity.getTime() > staleMs) {
-          console.log(
+          console.warn(
             `[Agent] Clearing stale cart for session ${sessionId} (last activity ${lastCartActivity.toISOString()})`
           );
           memory.cart = null;
@@ -918,7 +993,7 @@ export class RetailAgent {
 
       const availabilityStatus = await this.resolveWorkspaceAvailability(workspaceId);
       if ((process.env.AGENT_AVAILABILITY_DEBUG || '') === '1') {
-        console.log(`[Agent] Availability status for ${workspaceId}: ${availabilityStatus ?? 'null'}`);
+        console.warn(`[Agent] Availability status for ${workspaceId}: ${availabilityStatus ?? 'null'}`);
       }
       if (availabilityStatus === 'unavailable' || availabilityStatus === 'vacation') {
         const response =
@@ -973,10 +1048,7 @@ export class RetailAgent {
         );
         toolsUsed.push(execution);
 
-        const toolMessage =
-          execution.result.data && typeof (execution.result.data as any).message === 'string'
-            ? (execution.result.data as any).message
-            : undefined;
+        const toolMessage = extractToolMessage(execution.result.data);
         const response = toolMessage || 'Te voy a comunicar con un operador. En breve te atienden.';
 
         await this.storeMessage(sessionId, 'user', message, messageId);
@@ -1010,10 +1082,7 @@ export class RetailAgent {
         );
         toolsUsed.push(execution);
 
-        const toolMessage =
-          execution.result.data && typeof (execution.result.data as any).message === 'string'
-            ? (execution.result.data as any).message
-            : undefined;
+        const toolMessage = extractToolMessage(execution.result.data);
         const response = toolMessage || 'Te voy a comunicar con un operador. En breve te atienden.';
 
         await this.storeMessage(sessionId, 'user', message, messageId);
@@ -1447,8 +1516,9 @@ export class RetailAgent {
         const history = await this.getConversationHistory(sessionId, contextStartAt);
         const recentHistory = HISTORY_LIMIT > 0 ? history.slice(-HISTORY_LIMIT) : history;
 
-        const commerceProfile = memory.context.commerceProfile ||
-          await this.loadCommerceProfile(workspaceId);
+        const commerceProfile = memory.context.commerceProfile
+          ? normalizeCommercePromptProfile(memory.context.commerceProfile)
+          : await this.loadCommerceProfile(workspaceId);
 
         const workspace = await this.prisma.workspace.findUnique({
           where: { id: workspaceId },
@@ -1534,7 +1604,7 @@ export class RetailAgent {
             temperature: this.config.temperature,
           };
 
-          console.log(
+          console.warn(
             `[RetailAgent] Claude request (iter ${iterations}, model ${modelConfig.model}, msgLen ${message.length}, history ${recentHistory.length}, tools ${tools.length}, state ${fsm.getState()})`
           );
           const llmStart = Date.now();
@@ -1549,7 +1619,7 @@ export class RetailAgent {
             }, { timeout: LLM_TIMEOUT_MS })
           );
           const llmDuration = Date.now() - llmStart;
-          console.log(
+          console.warn(
             `[RetailAgent] Claude response in ${llmDuration}ms (iter ${iterations}, msgLen ${message.length}, history ${recentHistory.length})`
           );
 
@@ -1761,7 +1831,7 @@ export class RetailAgent {
           response: string;
           responseType?: 'interactive-buttons' | 'interactive-list';
           responsePayload?: InteractiveButtonsPayload | InteractiveListPayload;
-        }) => {
+        }): Promise<ProcessMessageOutput> => {
           await this.storeMessage(sessionId, 'user', message, messageId);
           await this.storeMessage(sessionId, 'assistant', params.response);
 
@@ -1781,7 +1851,7 @@ export class RetailAgent {
           };
         };
 
-        const shouldCancelInvoiceCollection = (input: string) => {
+        const shouldCancelInvoiceCollection = (input: string): boolean => {
           const normalized = normalizeSimpleText(input);
           if (!normalized) return false;
           const keywords = [
@@ -1810,7 +1880,10 @@ export class RetailAgent {
           });
         }
 
-        const handleFieldValue = (field: InvoiceFieldKey, value: string) => {
+        const handleFieldValue = (
+          field: InvoiceFieldKey,
+          value: string
+        ): { error?: string; value?: string } => {
           const trimmed = value.trim();
           if (!trimmed) {
             return { error: 'Ese dato no puede estar vacío. Probá de nuevo.' };
@@ -6300,8 +6373,9 @@ export class RetailAgent {
       const recentHistory = HISTORY_LIMIT > 0 ? history.slice(-HISTORY_LIMIT) : history;
 
       // Build system prompt with commerce context
-      const commerceProfile = memory.context.commerceProfile ||
-        await this.loadCommerceProfile(workspaceId);
+      const commerceProfile = memory.context.commerceProfile
+        ? normalizeCommercePromptProfile(memory.context.commerceProfile)
+        : await this.loadCommerceProfile(workspaceId);
 
       const subagentsEnabled = this.isSubagentsEnabled(workspaceSettings);
       const agentMode = this.resolveAgentMode(message, memory, fsm, subagentsEnabled);
@@ -6382,7 +6456,7 @@ export class RetailAgent {
           temperature: this.config.temperature,
         };
         // Call Claude
-        console.log(
+        console.warn(
           `[RetailAgent] Claude request (iter ${iterations}, model ${modelConfig.model}, msgLen ${message.length}, history ${recentHistory.length}, tools ${tools.length}, state ${fsm.getState()})`
         );
         const llmStart = Date.now();
@@ -6397,7 +6471,7 @@ export class RetailAgent {
           }, { timeout: LLM_TIMEOUT_MS })
         );
         const llmDuration = Date.now() - llmStart;
-        console.log(
+        console.warn(
           `[RetailAgent] Claude response in ${llmDuration}ms (iter ${iterations}, msgLen ${message.length}, history ${recentHistory.length})`
         );
 
@@ -6784,13 +6858,13 @@ export class RetailAgent {
   /**
    * Load commerce profile
    */
-  private async loadCommerceProfile(workspaceId: string): Promise<any> {
+  private async loadCommerceProfile(workspaceId: string): Promise<CommercePromptProfile> {
     const workspace = await this.prisma.workspace.findUnique({
       where: { id: workspaceId },
       select: { settings: true },
     });
 
-    return workspace?.settings || {};
+    return normalizeCommercePromptProfile(workspace?.settings);
   }
 
   private shouldClassifyOrderIntent(
@@ -7158,7 +7232,7 @@ export class RetailAgent {
     const shortages: InsufficientStockDetail[] = [];
 
     for (let index = 0; index < segments.length; index += 1) {
-      const segment = segments[index]!;
+      const segment = segments[index];
       const requestedSecondaryUnit = extractRequestedSecondaryUnit(segment.name);
       const matchResult = matchSegmentToProduct(segment, candidates);
       if (matchResult.type === 'none') {
@@ -7406,7 +7480,7 @@ export class RetailAgent {
     const shortages = [...carryOver.shortages];
 
     for (let index = 0; index < segments.length; index += 1) {
-      const segment = segments[index]!;
+      const segment = segments[index];
       const requestedSecondaryUnit = extractRequestedSecondaryUnit(segment.name);
       const matchResult = matchSegmentToProduct(segment, candidates);
       if (matchResult.type === 'none') {
@@ -8646,21 +8720,6 @@ function buildTransferPaymentContent(
   };
 }
 
-function buildReceiptConfirmationContent(orderNumber: string, amountCents: number): { text: string; interactive: InteractiveButtonsPayload } {
-  const text = `Detecté $${formatMoneyCents(amountCents)} para el pedido ${orderNumber}. ¿Confirmás que lo aplique?`;
-
-  return {
-    text,
-    interactive: {
-      body: text,
-      buttons: [
-        { id: 'payment_receipt_confirm', title: '✅ Confirmar' },
-        { id: 'payment_receipt_cancel', title: '❌ Cancelar' },
-      ],
-    },
-  };
-}
-
 function resolvePaymentMethodsEnabled(settings?: Record<string, unknown>): {
   mpLink: boolean;
   transfer: boolean;
@@ -8784,7 +8843,7 @@ function buildStartOrderMessage(
     lines.push('');
   }
   lines.push('¡Perfecto! Decime los productos que querés agregar a tu pedido.');
-  lines.push(`Ejemplo: \"${example}\".`);
+  lines.push(`Ejemplo: "${example}".`);
   return lines.join('\n');
 }
 
@@ -9305,12 +9364,18 @@ function extractInsufficientStock(data: unknown): InsufficientStockDetail[] {
   if (!Array.isArray(maybe)) return [];
   const results: InsufficientStockDetail[] = [];
   for (const item of maybe) {
-    const name = typeof item?.name === 'string' ? item.name : '';
-    const available = typeof item?.available === 'number' ? item.available : NaN;
-    const requested = typeof item?.requested === 'number' ? item.requested : NaN;
-    const productId = typeof item?.productId === 'string' ? item.productId : undefined;
-    const variantId = typeof item?.variantId === 'string' ? item.variantId : undefined;
-    const mode = item?.mode === 'add' || item?.mode === 'set' ? item.mode : undefined;
+    const detail = toRecord(item);
+    if (!detail) continue;
+
+    const name = toTrimmedString(detail.name) ?? '';
+    const available = typeof detail.available === 'number' ? detail.available : NaN;
+    const requested = typeof detail.requested === 'number' ? detail.requested : NaN;
+    const productId = toTrimmedString(detail.productId);
+    const variantId = toTrimmedString(detail.variantId);
+    const mode =
+      detail.mode === 'add' || detail.mode === 'set'
+        ? detail.mode
+        : undefined;
     if (!name || Number.isNaN(available) || Number.isNaN(requested)) {
       continue;
     }
@@ -9376,7 +9441,20 @@ function isCatalogOfferResponse(text: string): boolean {
   );
 }
 
-function buildCartSummaryPayload(cart: Cart, orderNumber?: string) {
+function buildCartSummaryPayload(
+  cart: Cart,
+  orderNumber?: string
+): {
+  orderNumber: string;
+  items: Array<{ name: string; quantity: number; unitPrice: number; total: number }>;
+  subtotal: number;
+  shipping: number;
+  discount: number;
+  total: number;
+  paidAmount: number;
+  notes?: string;
+  createdAt: string;
+} {
   return {
     orderNumber: orderNumber || 'PEDIDO EN CURSO',
     items: cart.items.map((item) => ({
@@ -9702,7 +9780,7 @@ const resolveVatConditionId = (input: string): string | null => {
     const optionNormalized = normalizeSimpleText(option.label);
     return optionNormalized.includes(normalized) || normalized.includes(optionNormalized);
   });
-  if (partial.length === 1) return partial[0]!.id;
+  if (partial.length === 1) return partial[0].id;
   return null;
 };
 
@@ -10047,7 +10125,7 @@ function parseProductSelection(
   );
 
   if (partial.length === 1) {
-    return { selection: partial[0]!.option, ambiguous: false };
+    return { selection: partial[0].option, ambiguous: false };
   }
   if (partial.length > 1) {
     return { selection: null, ambiguous: true };
@@ -10106,13 +10184,6 @@ function parsePaymentMethodSelection(message: string): PaymentMethodSelection {
 function isPaymentBack(message: string): boolean {
   const raw = message.trim().toLowerCase();
   return raw === 'payment_method_back';
-}
-
-function parsePaymentReceiptDecision(message: string): boolean | null {
-  const raw = message.trim().toLowerCase();
-  if (raw === 'payment_receipt_confirm') return true;
-  if (raw === 'payment_receipt_cancel') return false;
-  return parseCancelDecision(message);
 }
 
 function parsePaymentOrderSelection(
@@ -10647,7 +10718,7 @@ function parseQuantityMessage(message: string): QuantityParseResult {
       i += 1;
       const nameTokens: string[] = [];
       while (i < tokens.length && !/^\d+$/.test(tokens[i] ?? '')) {
-        nameTokens.push(tokens[i]!);
+        nameTokens.push(tokens[i]);
         i += 1;
       }
       if (nameTokens.length > 0 && Number.isFinite(quantity) && quantity > 0) {
@@ -10656,7 +10727,7 @@ function parseQuantityMessage(message: string): QuantityParseResult {
           .filter((token) => !isOrderCommandLike(token));
         while (
           filteredTokens.length > 0 &&
-          ORDER_NAME_TRAILING_STOPWORDS.has(filteredTokens[filteredTokens.length - 1]!)
+          ORDER_NAME_TRAILING_STOPWORDS.has(filteredTokens[filteredTokens.length - 1])
         ) {
           filteredTokens.pop();
         }
@@ -10800,7 +10871,7 @@ function tokenizeProductTokens(value: string): string[] {
   const normalized = normalizeMatchText(value);
   if (!normalized) return [];
   const tokens = normalized.split(' ').filter(Boolean).filter((token) => !ORDER_STOPWORDS.has(token));
-  while (tokens.length > 0 && ORDER_NAME_TRAILING_STOPWORDS.has(tokens[tokens.length - 1]!)) {
+  while (tokens.length > 0 && ORDER_NAME_TRAILING_STOPWORDS.has(tokens[tokens.length - 1])) {
     tokens.pop();
   }
   return tokens;
@@ -10849,7 +10920,7 @@ function buildProductCandidateName(product: {
   unitValue?: string | null;
   secondaryUnit?: string | null;
   secondaryUnitValue?: string | null;
-}) {
+}): string {
   const unit = product.unit || 'unit';
   const unitValue = product.unitValue?.toString().trim();
   const primarySuffix = unit !== 'unit' && unitValue ? `${unitValue} ${UNIT_SHORT_LABELS[unit] || unit}` : '';
@@ -10871,7 +10942,7 @@ function normalizeMatchText(message: string): string {
     .trim();
 }
 
-function safeParseJson(text: string): unknown | null {
+function safeParseJson(text: string): unknown {
   const trimmed = text.trim();
   if (!trimmed) return null;
   try {
@@ -10960,13 +11031,13 @@ function extractRegistrationParts(
 }
 
 function extractDni(message: string): string | null {
-  const keywordMatch = message.match(/(?:dni|documento|doc)\s*[:\-]?\s*([0-9.\-\s]{7,20})/i);
+  const keywordMatch = message.match(/(?:dni|documento|doc)\s*[:-]?\s*([0-9.\s-]{7,20})/i);
   if (keywordMatch?.[1]) {
     const digits = keywordMatch[1].replace(/\D/g, '');
     if (digits.length >= 7 && digits.length <= 11) return digits;
   }
 
-  const digitsMatch = message.match(/\b[\d.\-]{7,20}\b/);
+  const digitsMatch = message.match(/\b[\d.-]{7,20}\b/);
   if (digitsMatch?.[0]) {
     const digits = digitsMatch[0].replace(/\D/g, '');
     if (digits.length >= 7 && digits.length <= 11) return digits;
@@ -10980,7 +11051,7 @@ function extractFullName(message: string): string | null {
     /me llamo\s+(.+)/i,
     /mi nombre es\s+(.+)/i,
     /soy\s+(.+)/i,
-    /nombre\s*[:\-]?\s+(.+)/i,
+    /nombre\s*[:-]?\s+(.+)/i,
   ];
 
   let candidate: string | null = null;
@@ -11030,7 +11101,7 @@ function buildOrderEditDiff(
   originalItems: OrderDraftItem[],
   updatedItems: OrderDraftItem[]
 ): Array<{ action: 'add' | 'remove' | 'update_quantity'; productId: string; variantId?: string; quantity: number }> {
-  const keyFor = (item: OrderDraftItem) => `${item.productId}:${item.variantId ?? 'null'}`;
+  const keyFor = (item: OrderDraftItem): string => `${item.productId}:${item.variantId ?? 'null'}`;
   const originalMap = new Map(originalItems.map((item) => [keyFor(item), item]));
   const updatedMap = new Map(updatedItems.map((item) => [keyFor(item), item]));
   const keys = new Set([...originalMap.keys(), ...updatedMap.keys()]);
@@ -11106,8 +11177,9 @@ function buildConfirmationRequest(
 }
 
 function buildConfirmationMessage(toolName: string, input: Record<string, unknown>): string {
-  const getId = () => (input.orderNumber || input.orderId || input.productId || input.sku || input.categoryName) as string | undefined;
-  const formatMoney = (amount?: number) => {
+  const getId = (): string | undefined =>
+    (input.orderNumber || input.orderId || input.productId || input.sku || input.categoryName) as string | undefined;
+  const formatMoney = (amount?: number): string | undefined => {
     if (amount === undefined || Number.isNaN(amount)) return undefined;
     return `$${formatMoneyCents(amount)}`;
   };
@@ -11198,7 +11270,7 @@ function buildConfirmationMessage(toolName: string, input: Record<string, unknow
 
 function buildConfirmationResultMessage(
   execution: ToolExecution,
-  pending: PendingConfirmation
+  _pending: PendingConfirmation
 ): string {
   if (execution.result.success) {
     const data = execution.result.data as Record<string, unknown> | undefined;

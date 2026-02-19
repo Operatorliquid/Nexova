@@ -2,21 +2,28 @@
  * Commerce Tools
  * Tools for commerce profile and settings
  */
+import { randomUUID } from 'crypto';
+
+import { type Prisma, type PrismaClient } from '@prisma/client';
 import { z } from 'zod';
-import { PrismaClient } from '@prisma/client';
-import { getCommercePlanCapabilities, resolveCommercePlan } from '@nexova/shared';
-import { BaseTool } from '../base.js';
-import { ToolCategory, ToolContext, ToolResult, CommerceProfile } from '../../types/index.js';
-import { CatalogPdfService, CatalogOptions, CatalogProductFilter, OrderReceiptPdfService, decrypt } from '@nexova/core';
-import { withVisibleOrders } from '../../utils/orders.js';
+
+import { CatalogPdfService, type CatalogOptions, type CatalogProductFilter, OrderReceiptPdfService, decrypt } from '@nexova/core';
 import {
   EvolutionClient,
   EvolutionError,
   InfobipClient,
   type MercadoPagoIntegrationService,
 } from '@nexova/integrations';
+import { getCommercePlanCapabilities, resolveCommercePlan } from '@nexova/shared';
+
+import { ToolCategory, type ToolContext, type ToolResult, type CommerceProfile } from '../../types/index.js';
 import { LocalFileUploader } from '../../utils/file-uploader.js';
-import { randomUUID } from 'crypto';
+import { withVisibleOrders } from '../../utils/orders.js';
+import { BaseTool } from '../base.js';
+
+
+
+
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // GET COMMERCE PROFILE
@@ -128,6 +135,12 @@ export class GetCommerceProfileTool extends BaseTool<typeof GetCommerceProfileIn
   }
 
   private buildScheduleString(settings: Record<string, unknown>): string | undefined {
+    const readString = (value: unknown): string | undefined => {
+      if (typeof value !== 'string') return undefined;
+      const trimmed = value.trim();
+      return trimmed || undefined;
+    };
+
     const workingDays = settings.workingDays as string[] | undefined;
     if (!workingDays?.length) return undefined;
 
@@ -151,17 +164,24 @@ export class GetCommerceProfileTool extends BaseTool<typeof GetCommerceProfileIn
     }
 
     let hoursText = '';
+    const workingHoursStart = readString(settings.workingHoursStart);
+    const workingHoursEnd = readString(settings.workingHoursEnd);
+    const morningShiftStart = readString(settings.morningShiftStart);
+    const morningShiftEnd = readString(settings.morningShiftEnd);
+    const afternoonShiftStart = readString(settings.afternoonShiftStart);
+    const afternoonShiftEnd = readString(settings.afternoonShiftEnd);
+
     if (settings.continuousHours) {
-      if (settings.workingHoursStart && settings.workingHoursEnd) {
-        hoursText = `de ${settings.workingHoursStart} a ${settings.workingHoursEnd} hs`;
+      if (workingHoursStart && workingHoursEnd) {
+        hoursText = `de ${workingHoursStart} a ${workingHoursEnd} hs`;
       }
     } else {
       const parts = [];
-      if (settings.morningShiftStart && settings.morningShiftEnd) {
-        parts.push(`Mañana: ${settings.morningShiftStart} a ${settings.morningShiftEnd}`);
+      if (morningShiftStart && morningShiftEnd) {
+        parts.push(`Mañana: ${morningShiftStart} a ${morningShiftEnd}`);
       }
-      if (settings.afternoonShiftStart && settings.afternoonShiftEnd) {
-        parts.push(`Tarde: ${settings.afternoonShiftStart} a ${settings.afternoonShiftEnd}`);
+      if (afternoonShiftStart && afternoonShiftEnd) {
+        parts.push(`Tarde: ${afternoonShiftStart} a ${afternoonShiftEnd}`);
       }
       hoursText = parts.join(' | ');
     }
@@ -219,7 +239,7 @@ export class CreatePaymentLinkTool extends BaseTool<typeof CreatePaymentLinkInpu
     }
 
     // Get order
-    const where: any = { workspaceId: context.workspaceId };
+    const where: Prisma.OrderWhereInput = { workspaceId: context.workspaceId };
     if (orderId) where.id = orderId;
     else if (orderNumber) where.orderNumber = orderNumber;
 
@@ -347,7 +367,7 @@ export class ProcessPaymentReceiptTool extends BaseTool<typeof ProcessPaymentRec
     const { orderNumber, orderId, amount, method, reference } = input;
 
     // Get order
-    const where: any = { workspaceId: context.workspaceId };
+    const where: Prisma.OrderWhereInput = { workspaceId: context.workspaceId };
     if (orderId) where.id = orderId;
     else if (orderNumber) where.orderNumber = orderNumber;
 
@@ -951,7 +971,7 @@ export class SendOrderPdfTool extends BaseTool<typeof SendOrderPdfInput> {
 export function createCommerceTools(
   prisma: PrismaClient,
   mpService?: MercadoPagoIntegrationService
-): BaseTool<any, any>[] {
+): Array<BaseTool<z.ZodSchema, unknown>> {
   return [
     new GetCommerceProfileTool(prisma),
     new CreatePaymentLinkTool(prisma, mpService),

@@ -1,5 +1,7 @@
-import { useMemo, useRef, useState } from 'react';
 import { FileUp, ReceiptText, CheckCircle2, AlertTriangle, Upload, Info } from 'lucide-react';
+import { useMemo, useRef, useState } from 'react';
+
+import { useToast } from '../../stores/toast.store';
 import {
   Badge,
   Button,
@@ -17,14 +19,45 @@ import {
   SelectTrigger,
   SelectValue,
 } from '../ui';
-import { useToast } from '../../stores/toast.store';
 
-const API_URL = import.meta.env.VITE_API_URL || '';
+type JsonRecord = Record<string, unknown>;
 
-const fetchWithCredentials = (input: RequestInfo | URL, init?: RequestInit) => fetch(input, {
-  ...init,
-  credentials: 'include',
-});
+const envValues = import.meta.env as unknown as Record<string, unknown>;
+const apiUrlFromEnv = envValues['VITE_API_URL'];
+const API_URL = typeof apiUrlFromEnv === 'string' ? apiUrlFromEnv : '';
+
+const fetchWithCredentials = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>
+  fetch(input, {
+    ...init,
+    credentials: 'include',
+  });
+
+function asRecord(value: unknown): JsonRecord | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as JsonRecord)
+    : null;
+}
+
+function readString(record: JsonRecord | null, key: string): string | undefined {
+  if (!record) {
+    return undefined;
+  }
+  const value = record[key];
+  return typeof value === 'string' ? value : undefined;
+}
+
+async function readJsonRecord(response: Response): Promise<JsonRecord | null> {
+  try {
+    const payload: unknown = await response.json();
+    return asRecord(payload);
+  } catch {
+    return null;
+  }
+}
+
+function readErrorMessage(record: JsonRecord | null, fallback: string): string {
+  return readString(record, 'message') ?? readString(record, 'error') ?? fallback;
+}
 
 type PreviewItem = {
   id: string;
@@ -115,7 +148,7 @@ export function StockReceiptModal(props: {
   onOpenChange: (open: boolean) => void;
   workspaceId: string;
   onApplied?: () => void;
-}) {
+}): JSX.Element {
   const toast = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
@@ -133,7 +166,7 @@ export function StockReceiptModal(props: {
     return source.some((it) => !it.matchedProductId || (typeof it.matchConfidence === 'number' && it.matchConfidence < 0.7));
   }, [preview, editableItems]);
 
-  const resetState = () => {
+  const resetState = (): void => {
     setFile(null);
     setPreview(null);
     setEditableItems([]);
@@ -142,18 +175,21 @@ export function StockReceiptModal(props: {
     setIsApplyLoading(false);
   };
 
-  const updateEditableItem = (itemId: string, updater: (prev: EditablePreviewItem) => EditablePreviewItem) => {
+  const updateEditableItem = (
+    itemId: string,
+    updater: (prev: EditablePreviewItem) => EditablePreviewItem
+  ): void => {
     setEditableItems((prev) => prev.map((item) => (item.id === itemId ? updater(item) : item)));
   };
 
-  const handleClose = (nextOpen: boolean) => {
+  const handleClose = (nextOpen: boolean): void => {
     props.onOpenChange(nextOpen);
     if (!nextOpen) {
       resetState();
     }
   };
 
-  const handlePreview = async () => {
+  const handlePreview = async (): Promise<void> => {
     if (!file) return;
     setIsPreviewLoading(true);
     setApplyResult(null);
@@ -171,8 +207,8 @@ export function StockReceiptModal(props: {
       });
 
       if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        const message = err?.message || err?.error || 'Error al procesar boleta';
+        const err = await readJsonRecord(res);
+        const message = readErrorMessage(err, 'Error al procesar boleta');
         toast.error(message);
         return;
       }
@@ -203,7 +239,7 @@ export function StockReceiptModal(props: {
     }
   };
 
-  const handleApply = async () => {
+  const handleApply = async (): Promise<void> => {
     if (!receiptId) return;
     setIsApplyLoading(true);
     try {
@@ -230,8 +266,8 @@ export function StockReceiptModal(props: {
       });
 
       if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        const message = err?.message || err?.error || 'Error al aplicar boleta';
+        const err = await readJsonRecord(res);
+        const message = readErrorMessage(err, 'Error al aplicar boleta');
         toast.error(message);
         return;
       }
@@ -317,7 +353,14 @@ export function StockReceiptModal(props: {
               <Button variant="secondary" className="flex-1" onClick={() => handleClose(false)}>
                 Cancelar
               </Button>
-              <Button className="flex-1" onClick={handlePreview} disabled={!file} isLoading={isPreviewLoading}>
+              <Button
+                className="flex-1"
+                onClick={() => {
+                  void handlePreview();
+                }}
+                disabled={!file}
+                isLoading={isPreviewLoading}
+              >
                 Analizar boleta
               </Button>
             </div>
@@ -570,7 +613,13 @@ export function StockReceiptModal(props: {
               <Button variant="secondary" className="flex-1" onClick={() => handleClose(false)} disabled={isApplyLoading}>
                 Cerrar
               </Button>
-              <Button className="flex-1" onClick={handleApply} isLoading={isApplyLoading}>
+              <Button
+                className="flex-1"
+                onClick={() => {
+                  void handleApply();
+                }}
+                isLoading={isApplyLoading}
+              >
                 Aplicar al stock
               </Button>
             </div>

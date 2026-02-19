@@ -4,12 +4,13 @@
  * - Enforces workspace membership
  * - Subscribes to Redis pub/sub for event fan-out
  */
-import { FastifyPluginAsync } from 'fastify';
-import fp from 'fastify-plugin';
 import websocket from '@fastify/websocket';
+import { type FastifyPluginAsync } from 'fastify';
+import fp from 'fastify-plugin';
 import { Redis } from 'ioredis';
-import type { WebSocketMessage } from '@nexova/shared';
+
 import { PermissionService, verifyAccessToken } from '@nexova/core';
+import type { WebSocketMessage } from '@nexova/shared';
 
 interface RealtimePluginOptions {
   redisHost?: string;
@@ -23,7 +24,7 @@ interface SocketLike {
   OPEN: number;
   send: (data: string) => void;
   close: () => void;
-  on: (event: string, listener: (...args: any[]) => void) => void;
+  on: (event: string, listener: (...args: unknown[]) => void) => void;
 }
 
 interface SocketContext {
@@ -34,6 +35,41 @@ interface SocketContext {
 }
 
 const DEFAULT_CHANNEL = process.env.REALTIME_CHANNEL || 'nexova:realtime';
+const WS_MESSAGE_TYPES: WebSocketMessage['type'][] = [
+  'subscribe',
+  'unsubscribe',
+  'event',
+  'ping',
+  'pong',
+  'error',
+];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isWebSocketMessageType(value: unknown): value is WebSocketMessage['type'] {
+  return typeof value === 'string' && WS_MESSAGE_TYPES.includes(value as WebSocketMessage['type']);
+}
+
+function parseRealtimeEventPayload(payload: string): Record<string, unknown> | null {
+  const parsed: unknown = JSON.parse(payload);
+  return isRecord(parsed) ? parsed : null;
+}
+
+function parseClientMessage(rawText: string): WebSocketMessage | null {
+  const parsed: unknown = JSON.parse(rawText);
+  if (!isRecord(parsed)) return null;
+  const type = parsed.type;
+  if (!isWebSocketMessageType(type)) return null;
+  return {
+    type,
+    ...(typeof parsed.channel === 'string' ? { channel: parsed.channel } : {}),
+    ...('data' in parsed ? { data: parsed.data } : {}),
+    ...(typeof parsed.error === 'string' ? { error: parsed.error } : {}),
+    ...(typeof parsed.timestamp === 'string' ? { timestamp: parsed.timestamp } : {}),
+  };
+}
 
 function extractBearerToken(authorization?: string): string | undefined {
   if (!authorization?.startsWith('Bearer ')) return undefined;
@@ -108,21 +144,24 @@ const realtimePluginImpl: FastifyPluginAsync<RealtimePluginOptions> = async (
   await redis.subscribe(channel);
   redis.on('message', (chan: string, payload: string) => {
     if (chan !== channel) return;
-    let event: any;
+    let event: Record<string, unknown> | null;
     try {
-      event = JSON.parse(payload);
+      event = parseRealtimeEventPayload(payload);
     } catch {
       fastify.log.warn('Ignoring malformed realtime payload');
       return;
     }
+    if (!event) return;
 
-    const workspaceId = event?.workspaceId;
+    const workspaceId = typeof event.workspaceId === 'string' ? event.workspaceId : undefined;
     if (!workspaceId) return;
 
     const targetSockets = workspaceSockets.get(workspaceId);
     if (!targetSockets || targetSockets.size === 0) return;
 
-    const resolvedChannel = resolveChannel(event.eventType, event.aggregateType);
+    const eventType = typeof event.eventType === 'string' ? event.eventType : '';
+    const aggregateType = typeof event.aggregateType === 'string' ? event.aggregateType : undefined;
+    const resolvedChannel = resolveChannel(eventType, aggregateType);
     if (!resolvedChannel) return;
 
     const message: WebSocketMessage = {
@@ -142,7 +181,7 @@ const realtimePluginImpl: FastifyPluginAsync<RealtimePluginOptions> = async (
 
   fastify.get('/ws', { websocket: true }, (connection, request) => {
     void (async () => {
-      const socket = connection.socket as SocketLike;
+      const socket = (connection as { socket: SocketLike }).socket;
       const url = new URL(request.url || '', 'http://localhost');
       const token =
         url.searchParams.get('token') || extractBearerToken(request.headers.authorization);
@@ -209,7 +248,11 @@ const realtimePluginImpl: FastifyPluginAsync<RealtimePluginOptions> = async (
               : String(raw);
         let message: WebSocketMessage;
         try {
-          message = JSON.parse(rawText);
+          const parsed = parseClientMessage(rawText);
+          if (!parsed) {
+            throw new Error('Invalid message format');
+          }
+          message = parsed;
         } catch {
           sendMessage(socket, {
             type: 'error',

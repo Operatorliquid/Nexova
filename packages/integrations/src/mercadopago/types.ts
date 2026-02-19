@@ -138,7 +138,7 @@ export type PaymentStatusDetail =
   | 'cc_rejected_invalid_installments'
   | 'cc_rejected_max_attempts'
   | 'cc_rejected_other_reason'
-  | string;
+  | (string & { readonly __paymentStatusDetail?: never });
 
 export interface PaymentResponse {
   id: number;

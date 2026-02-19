@@ -2,11 +2,12 @@
  * Quick Actions Routes
  * API endpoints for executing quick actions from the dashboard
  */
-import { FastifyInstance } from 'fastify';
+import { type FastifyInstance } from 'fastify';
+
 import { QuickActionService, COMMAND_SUGGESTIONS } from '../../services/quick-action/index.js';
 import { getWorkspacePlanContext } from '../../utils/commerce-plan.js';
 
-export async function quickActionsRoutes(app: FastifyInstance): Promise<void> {
+export function quickActionsRoutes(app: FastifyInstance): void {
   const quickActionService = new QuickActionService(app.prisma);
 
   /**
@@ -56,7 +57,7 @@ export async function quickActionsRoutes(app: FastifyInstance): Promise<void> {
       skipConfirmation?: boolean;
     };
   }>('/execute', {
-    preHandler: [app.authenticate],
+    preHandler: [app.requirePermission('dashboard:read')],
     schema: {
       body: {
         type: 'object',
@@ -115,7 +116,7 @@ export async function quickActionsRoutes(app: FastifyInstance): Promise<void> {
       token: string;
     };
   }>('/confirm', {
-    preHandler: [app.authenticate],
+    preHandler: [app.requirePermission('dashboard:read')],
     schema: {
       body: {
         type: 'object',
@@ -168,7 +169,7 @@ export async function quickActionsRoutes(app: FastifyInstance): Promise<void> {
   app.get<{
     Querystring: { limit?: number };
   }>('/history', {
-    preHandler: [app.authenticate],
+    preHandler: [app.requirePermission('dashboard:read')],
     schema: {
       querystring: {
         type: 'object',
@@ -212,7 +213,7 @@ export async function quickActionsRoutes(app: FastifyInstance): Promise<void> {
   app.post<{
     Params: { id: string };
   }>('/:id/rerun', {
-    preHandler: [app.authenticate],
+    preHandler: [app.requirePermission('dashboard:read')],
     schema: {
       params: {
         type: 'object',
@@ -264,7 +265,7 @@ export async function quickActionsRoutes(app: FastifyInstance): Promise<void> {
    * Get command suggestions for autocomplete
    */
   app.get('/suggestions', {
-    preHandler: [app.authenticate],
+    preHandler: [app.requirePermission('dashboard:read')],
     handler: async (request, reply) => {
       const workspaceId = request.workspaceId;
       if (workspaceId && !(await isCommerceWorkspace(workspaceId))) {

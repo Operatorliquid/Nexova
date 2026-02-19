@@ -1,9 +1,10 @@
 /**
  * Prisma Plugin for Fastify
  */
-import { FastifyPluginAsync } from 'fastify';
+import { type PrismaClient } from '@prisma/client';
+import { type FastifyPluginAsync } from 'fastify';
 import fp from 'fastify-plugin';
-import { PrismaClient } from '@prisma/client';
+
 import { applyTenantPrismaMiddleware } from '@nexova/core';
 
 declare module 'fastify' {

@@ -2,10 +2,12 @@
  * Webhook Retry Job
  * Re-enqueues failed webhooks for agent processing
  */
-import { Job, Queue } from 'bullmq';
-import { PrismaClient } from '@prisma/client';
 import { randomUUID } from 'crypto';
-import { AgentProcessPayload, QUEUES, WebhookRetryPayload } from '@nexova/shared';
+
+import { type PrismaClient } from '@prisma/client';
+import { type Job, type Queue } from 'bullmq';
+
+import { type AgentProcessPayload, QUEUES, type WebhookRetryPayload } from '@nexova/shared';
 
 interface WebhookRetryResult {
   retried: number;
@@ -15,9 +17,21 @@ interface WebhookRetryResult {
 const MAX_RETRIES = 5;
 const SCAN_LIMIT = 50;
 
-function extractSenderPhone(payload: any): string {
-  const result = payload?.results?.[0];
-  return result?.from || result?.sender || payload?.from || 'unknown';
+function asObject(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function extractSenderPhone(payload: unknown): string {
+  const payloadObject = asObject(payload);
+  const firstResult = Array.isArray(payloadObject?.['results'])
+    ? asObject((payloadObject['results'] as unknown[])[0])
+    : null;
+  const fromResult = typeof firstResult?.['from'] === 'string' ? firstResult['from'] : null;
+  const senderResult = typeof firstResult?.['sender'] === 'string' ? firstResult['sender'] : null;
+  const fromPayload = typeof payloadObject?.['from'] === 'string' ? payloadObject['from'] : null;
+
+  return fromResult || senderResult || fromPayload || 'unknown';
 }
 
 export function createWebhookRetryProcessor(
@@ -49,7 +63,7 @@ export function createWebhookRetryProcessor(
 
     for (const webhook of webhookRecords) {
       try {
-        const payload = webhook.payload as any;
+        const payload = webhook.payload as unknown;
         const senderPhone = extractSenderPhone(payload);
         const correlationId = webhook.correlationId || randomUUID();
         if (!webhook.correlationId) {

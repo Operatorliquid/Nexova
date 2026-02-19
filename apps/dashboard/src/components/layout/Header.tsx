@@ -1,4 +1,3 @@
-import { useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Bell,
@@ -9,10 +8,13 @@ import {
   ShoppingCart,
   UserPlus,
   XCircle,
+  type LucideIcon,
 } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useTheme } from '../../contexts/ThemeContext';
+
 import { useAuth } from '../../contexts/AuthContext';
+import { useTheme } from '../../contexts/ThemeContext';
 import { apiFetch } from '../../lib/api';
 import { useToast } from '../../stores/toast.store';
 import {
@@ -51,7 +53,118 @@ interface NotificationItem {
   createdAt: string;
 }
 
-export function Header({ title, onMenuClick }: HeaderProps) {
+type JsonRecord = Record<string, unknown>;
+
+function asRecord(value: unknown): JsonRecord | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as JsonRecord)
+    : null;
+}
+
+function readString(record: JsonRecord | null, key: string): string | undefined {
+  if (!record) {
+    return undefined;
+  }
+  const value = record[key];
+  return typeof value === 'string' ? value : undefined;
+}
+
+function readBoolean(record: JsonRecord | null, key: string): boolean | undefined {
+  if (!record) {
+    return undefined;
+  }
+  const value = record[key];
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+function readNumber(record: JsonRecord | null, key: string): number | undefined {
+  if (!record) {
+    return undefined;
+  }
+  const value = record[key];
+  return typeof value === 'number' ? value : undefined;
+}
+
+function readRecord(record: JsonRecord | null, key: string): JsonRecord | null {
+  if (!record) {
+    return null;
+  }
+  return asRecord(record[key]);
+}
+
+function readArray(record: JsonRecord | null, key: string): unknown[] {
+  if (!record) {
+    return [];
+  }
+  const value = record[key];
+  return Array.isArray(value) ? value : [];
+}
+
+async function readJsonRecord(response: Response): Promise<JsonRecord | null> {
+  try {
+    const payload: unknown = await response.json();
+    return asRecord(payload);
+  } catch {
+    return null;
+  }
+}
+
+function parseNotification(value: unknown): NotificationItem | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  const id = readString(record, 'id');
+  const type = readString(record, 'type');
+  const title = readString(record, 'title');
+  const message = readString(record, 'message');
+  const createdAt = readString(record, 'createdAt');
+  if (!id || !type || !title || !message || !createdAt) {
+    return null;
+  }
+  return {
+    id,
+    type,
+    title,
+    message,
+    entityType: readString(record, 'entityType') ?? null,
+    entityId: readString(record, 'entityId') ?? null,
+    metadata: asRecord(record.metadata),
+    readAt: readString(record, 'readAt') ?? null,
+    createdAt,
+  };
+}
+
+function parseWorkspaceWhatsAppNumber(value: unknown): WorkspaceWhatsAppNumber | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  const id = readString(record, 'id');
+  const phoneNumber = readString(record, 'phoneNumber');
+  if (!id || !phoneNumber) {
+    return null;
+  }
+  return {
+    id,
+    phoneNumber,
+    displayName: readString(record, 'displayName') ?? null,
+    status: readString(record, 'status') ?? null,
+    healthStatus: readString(record, 'healthStatus') ?? null,
+    isActive: readBoolean(record, 'isActive'),
+    provider: readString(record, 'provider') ?? null,
+  };
+}
+
+function readMetadataString(
+  metadata: Record<string, unknown> | null | undefined,
+  key: string
+): string | undefined {
+  const value = metadata?.[key];
+  return typeof value === 'string' ? value : undefined;
+}
+
+export function Header({ title, onMenuClick }: HeaderProps): JSX.Element {
   const { theme, toggleTheme } = useTheme();
   const { workspace } = useAuth();
   const toast = useToast();
@@ -63,7 +176,7 @@ export function Header({ title, onMenuClick }: HeaderProps) {
   const seenIdsRef = useRef<Set<string>>(new Set());
   const initializedRef = useRef(false);
 
-  const timeAgo = (value: string) => {
+  const timeAgo = (value: string): string => {
     const date = new Date(value);
     const now = new Date();
     const diffMs = now.getTime() - date.getTime();
@@ -76,7 +189,7 @@ export function Header({ title, onMenuClick }: HeaderProps) {
     return `hace ${diffDays}d`;
   };
 
-  const resolveNotificationStyle = (type: string) => {
+  const resolveNotificationStyle = (type: string): { icon: LucideIcon; tone: string; bg: string } => {
     switch (type) {
       case 'order.new':
         return { icon: ShoppingCart, tone: 'text-emerald-400', bg: 'bg-emerald-500/15' };
@@ -97,7 +210,7 @@ export function Header({ title, onMenuClick }: HeaderProps) {
     }
   };
 
-  const showToastForNotification = (notification: NotificationItem) => {
+  const showToastForNotification = useCallback((notification: NotificationItem): void => {
     if (notification.type === 'order.new') return toast.notify(notification.title, 'success', notification.type);
     if (notification.type === 'order.cancelled') return toast.notify(notification.title, 'warning', notification.type);
     if (notification.type === 'handoff.requested') return toast.notify(notification.title, 'warning', notification.type);
@@ -106,26 +219,30 @@ export function Header({ title, onMenuClick }: HeaderProps) {
     if (notification.type === 'customer.new') return toast.notify(notification.title, 'info', notification.type);
     if (notification.type === 'stock.low') return toast.notify(notification.title, 'warning', notification.type);
     return toast.notify(notification.title, 'info', notification.type);
-  };
+  }, [toast]);
 
   useEffect(() => {
-    if (!workspace?.id) return;
+    if (!workspace?.id) {
+      return;
+    }
 
-    const fetchNotifications = async () => {
+    const fetchNotifications = async (): Promise<void> => {
       if (!initializedRef.current) {
         setIsNotificationsLoading(true);
       }
       try {
         const params = new URLSearchParams({ limit: '12', offset: '0' });
-        const response = await apiFetch(`/api/v1/notifications?${params}`, {}, workspace.id);
+        const response = await apiFetch(`/api/v1/notifications?${params.toString()}`, {}, workspace.id);
         if (!response.ok) {
           setIsNotificationsLoading(false);
           return;
         }
-        const data = await response.json();
-        const nextNotifications: NotificationItem[] = data.notifications || [];
+        const data = await readJsonRecord(response);
+        const nextNotifications = readArray(data, 'notifications')
+          .map(item => parseNotification(item))
+          .filter((item): item is NotificationItem => item !== null);
         setNotifications(nextNotifications);
-        setUnreadCount(data.unreadCount ?? 0);
+        setUnreadCount(readNumber(data, 'unreadCount') ?? 0);
 
         const currentIds = new Set(nextNotifications.map((item) => item.id));
         if (!initializedRef.current) {
@@ -147,32 +264,36 @@ export function Header({ title, onMenuClick }: HeaderProps) {
       }
     };
 
-    const fetchWhatsAppNumber = async () => {
+    const fetchWhatsAppNumber = async (): Promise<void> => {
       try {
         const response = await apiFetch(`/api/v1/workspaces/${workspace.id}/whatsapp-numbers`, {}, workspace.id);
         if (!response.ok) {
           setWhatsappNumber(null);
           return;
         }
-        const data = await response.json().catch(() => ({}));
-        setWhatsappNumber((data?.number as WorkspaceWhatsAppNumber | null) || null);
+        const data = await readJsonRecord(response);
+        setWhatsappNumber(parseWorkspaceWhatsAppNumber(readRecord(data, 'number')));
       } catch (error) {
         console.error('Failed to fetch WhatsApp number:', error);
         setWhatsappNumber(null);
       }
     };
 
-    const fetchAll = async () => {
+    const fetchAll = async (): Promise<void> => {
       await Promise.all([fetchNotifications(), fetchWhatsAppNumber()]);
     };
 
-    fetchAll();
-    const interval = setInterval(fetchAll, 10000);
+    void fetchAll();
+    const interval = setInterval(() => {
+      void fetchAll();
+    }, 10000);
     return () => clearInterval(interval);
-  }, [workspace?.id]);
+  }, [workspace?.id, showToastForNotification]);
 
-  const markAsRead = async (notification: NotificationItem) => {
-    if (!workspace?.id || notification.readAt) return;
+  const markAsRead = async (notification: NotificationItem): Promise<void> => {
+    if (!workspace?.id || notification.readAt) {
+      return;
+    }
     try {
       await apiFetch(`/api/v1/notifications/${notification.id}/read`, { method: 'PATCH' }, workspace.id);
       setNotifications((prev) =>
@@ -186,33 +307,34 @@ export function Header({ title, onMenuClick }: HeaderProps) {
     }
   };
 
-  const navigateTo = (path: string) => {
+  const navigateTo = (path: string): void => {
     setTimeout(() => {
       navigate(path);
     }, 0);
   };
 
-  const handleNotificationClick = async (notification: NotificationItem) => {
+  const handleNotificationClick = async (notification: NotificationItem): Promise<void> => {
     await markAsRead(notification);
     const metadata = notification.metadata || {};
 
     if (notification.type === 'handoff.requested') {
-      const sessionId = (metadata.sessionId as string | undefined) || (metadata.conversationId as string | undefined);
+      const sessionId = readMetadataString(metadata, 'sessionId') ?? readMetadataString(metadata, 'conversationId');
       if (sessionId) {
         navigateTo(`/inbox?sessionId=${sessionId}`);
         return;
       }
-      const customerId = metadata.customerId as string | undefined;
+      const customerId = readMetadataString(metadata, 'customerId');
       if (customerId && workspace?.id) {
         try {
           const response = await apiFetch('/api/v1/conversations', {}, workspace.id);
           if (response.ok) {
-            const data = await response.json();
-            const conversation = (data.conversations || []).find(
-              (item: { customerId?: string }) => item.customerId === customerId
-            );
-            if (conversation?.id) {
-              navigateTo(`/inbox?sessionId=${conversation.id}`);
+            const data = await readJsonRecord(response);
+            const conversation = readArray(data, 'conversations')
+              .map(item => asRecord(item))
+              .find((item) => readString(item, 'customerId') === customerId);
+            const conversationId = readString(conversation ?? null, 'id');
+            if (conversationId) {
+              navigateTo(`/inbox?sessionId=${conversationId}`);
               return;
             }
           }
@@ -225,12 +347,12 @@ export function Header({ title, onMenuClick }: HeaderProps) {
     }
 
     if (notification.type === 'receipt.new') {
-      const orderId = metadata.orderId as string | undefined;
+      const orderId = readMetadataString(metadata, 'orderId');
       if (orderId) {
         navigateTo(`/orders?orderId=${orderId}`);
         return;
       }
-      const orderNumber = metadata.orderNumber as string | undefined;
+      const orderNumber = readMetadataString(metadata, 'orderNumber');
       if (orderNumber) {
         navigateTo(`/orders?orderNumber=${orderNumber}`);
         return;
@@ -240,7 +362,7 @@ export function Header({ title, onMenuClick }: HeaderProps) {
     }
 
     if (notification.type === 'stock.low') {
-      const productId = notification.entityId || (metadata.productId as string | undefined);
+      const productId = notification.entityId || readMetadataString(metadata, 'productId');
       if (productId) {
         navigateTo(`/stock?productId=${productId}`);
         return;
@@ -249,26 +371,26 @@ export function Header({ title, onMenuClick }: HeaderProps) {
       return;
     }
 
-    const orderId = notification.entityId || (metadata.orderId as string | undefined);
+    const orderId = notification.entityId || readMetadataString(metadata, 'orderId');
     if (notification.entityType === 'Order' && orderId) {
       navigateTo(`/orders?orderId=${orderId}`);
       return;
     }
     if (notification.entityType === 'Order') {
-      const orderNumber = metadata.orderNumber as string | undefined;
+      const orderNumber = readMetadataString(metadata, 'orderNumber');
       if (orderNumber) {
         navigateTo(`/orders?orderNumber=${orderNumber}`);
         return;
       }
     }
 
-    const customerId = notification.entityId || (metadata.customerId as string | undefined);
+    const customerId = notification.entityId || readMetadataString(metadata, 'customerId');
     if (notification.entityType === 'Customer' && customerId) {
       navigateTo(`/customers?customerId=${customerId}`);
       return;
     }
     if (notification.entityType === 'Customer') {
-      const customerPhone = metadata.phone as string | undefined;
+      const customerPhone = readMetadataString(metadata, 'phone');
       if (customerPhone) {
         navigateTo(`/customers?customerPhone=${encodeURIComponent(customerPhone)}`);
         return;
@@ -291,8 +413,10 @@ export function Header({ title, onMenuClick }: HeaderProps) {
     }
   };
 
-  const markAllRead = async () => {
-    if (!workspace?.id || unreadCount === 0) return;
+  const markAllRead = async (): Promise<void> => {
+    if (!workspace?.id || unreadCount === 0) {
+      return;
+    }
     try {
       await apiFetch('/api/v1/notifications/read-all', { method: 'POST' }, workspace.id);
       setNotifications((prev) =>
@@ -371,7 +495,9 @@ export function Header({ title, onMenuClick }: HeaderProps) {
                 </div>
                 {unreadCount > 0 && (
                   <button
-                    onClick={markAllRead}
+                    onClick={() => {
+                      void markAllRead();
+                    }}
                     className="text-xs text-primary hover:text-primary/80"
                   >
                     Marcar todo como leído
@@ -396,7 +522,9 @@ export function Header({ title, onMenuClick }: HeaderProps) {
                     return (
                       <DropdownMenuItem
                         key={notification.id}
-                        onSelect={() => handleNotificationClick(notification)}
+                        onSelect={() => {
+                          void handleNotificationClick(notification);
+                        }}
                         className="p-0 focus:bg-transparent"
                       >
                         <div

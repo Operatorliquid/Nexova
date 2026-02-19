@@ -3,9 +3,11 @@
  * Processes IPN (Instant Payment Notification) from MercadoPago
  */
 
+import { randomBytes } from 'crypto';
+
 import { hmacSha256, secureCompare } from './crypto.utils.js';
+import { type MercadoPagoClient } from './mercadopago.client.js';
 import type { WebhookNotification, PaymentResponse, PaymentStatus } from './types.js';
-import { MercadoPagoClient } from './mercadopago.client.js';
 
 export interface ProcessedWebhook {
   type: 'payment' | 'merchant_order' | 'unknown';
@@ -87,7 +89,7 @@ export class MercadoPagoWebhookHandler {
     }
 
     return {
-      id: typeof data.id === 'number' ? data.id : parseInt(data.id as string, 10),
+      id: typeof data.id === 'number' ? data.id : parseInt(data.id, 10),
       live_mode: data.live_mode === true,
       type: data.type as WebhookNotification['type'],
       date_created: (data.date_created as string) || new Date().toISOString(),
@@ -202,6 +204,5 @@ export class MercadoPagoWebhookHandler {
  * Utility to generate a webhook secret
  */
 export function generateWebhookSecret(): string {
-  const { randomBytes } = require('crypto');
   return randomBytes(32).toString('hex');
 }

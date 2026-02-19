@@ -3,29 +3,27 @@
  * Main entry point for processing incoming messages
  * Handles: FSM, routing, tool execution, audit logging, error handling
  */
-import { PrismaClient, Prisma } from '@prisma/client';
-import type { Redis } from 'ioredis';
 import Anthropic from '@anthropic-ai/sdk';
+import { type PrismaClient, Prisma } from '@prisma/client';
+import type { Redis } from 'ioredis';
 
-import {
-  OrchestratorContext,
-  OrchestratorResult,
-  SessionState,
-  AgentTurnAudit,
-  AgentState,
-  AgentStateType,
-  MessageThread,
-  MessageThreadType,
-  ToolContext,
-  ToolExecution,
-} from '../types/index.js';
-import { StateMachine } from './state-machine.js';
-import { MemoryManager, createMemoryManager } from './memory-manager.js';
+import { ConversationRouter } from './conversation-router.js';
+import { type MemoryManager, createMemoryManager } from './memory-manager.js';
 import { MemoryService } from './memory-service.js';
-import { ConversationRouter, classifyMessage } from './conversation-router.js';
-import { ToolRegistry, toolRegistry } from '../tools/registry.js';
-import { initializeRetailTools } from '../tools/retail/index.js';
+import { StateMachine } from './state-machine.js';
 import { buildRetailSystemPrompt } from '../prompts/retail-system.js';
+import { toolRegistry } from '../tools/registry.js';
+import { initializeRetailTools } from '../tools/retail/index.js';
+import {
+  type OrchestratorContext,
+  type OrchestratorResult,
+  type SessionState,
+  type AgentTurnAudit,
+  AgentState,
+  MessageThread,
+  type ToolContext,
+  type ToolExecution,
+} from '../types/index.js';
 import { createNotificationIfEnabled } from '../utils/notifications.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -85,11 +83,11 @@ export class AgentOrchestrator {
   /**
    * Initialize tools (call once before processing)
    */
-  async initialize(): Promise<void> {
+  initialize(): void {
     if (this.initialized) return;
     initializeRetailTools(this.prisma, this.memoryManager);
     this.initialized = true;
-    console.log('[Orchestrator] Initialized');
+    console.warn('[Orchestrator] Initialized');
   }
 
   /**
@@ -103,7 +101,7 @@ export class AgentOrchestrator {
     const toolsUsed: ToolExecution[] = [];
     let totalTokens = 0;
 
-    await this.initialize();
+    this.initialize();
 
     // 1. Load session state
     const sessionState = await this.loadSessionState(ctx.sessionId);
@@ -237,7 +235,8 @@ export class AgentOrchestrator {
         select: { name: true, settings: true },
       });
       const workspaceSettings = (workspace?.settings as Record<string, unknown>) || {};
-      const commerceProfile = memory.context.commerceProfile || workspaceSettings || {};
+      const commerceProfile =
+        (memory.context.commerceProfile || workspaceSettings || {}) as Parameters<typeof buildRetailSystemPrompt>[1];
       const commerceName =
         (workspaceSettings.businessName as string) ||
         'Tu Comercio';
@@ -246,7 +245,7 @@ export class AgentOrchestrator {
       const memoryContext = await this.memoryService.buildContext(ctx.sessionId, ctx.workspaceId);
       const systemPrompt = buildRetailSystemPrompt(
         commerceName,
-        commerceProfile as any,
+        commerceProfile,
         { memoryContext }
       );
 
@@ -628,7 +627,7 @@ export class AgentOrchestrator {
       },
     });
 
-    console.log(`[Orchestrator] HANDOFF triggered: ${reason}${handoffId ? ` (${handoffId})` : ''}`);
+    console.warn(`[Orchestrator] HANDOFF triggered: ${reason}${handoffId ? ` (${handoffId})` : ''}`);
   }
 
   // ═══════════════════════════════════════════════════════════════════════════════

@@ -28,7 +28,9 @@ export const getConfiguredMonthlyAmountCents = (plan: CommercePlan): number => {
   return parsed ?? BILLING_PLAN_CATALOG[plan].monthlyAmountCents;
 };
 
-export const buildBillingCatalog = () => {
+type BillingCatalogEntry = (typeof BILLING_PLAN_CATALOG)[CommercePlan];
+
+export const buildBillingCatalog = (): BillingCatalogEntry[] => {
   return (Object.keys(BILLING_PLAN_CATALOG) as CommercePlan[]).map((plan) => {
     const base = BILLING_PLAN_CATALOG[plan];
     const monthlyAmountCents = getConfiguredMonthlyAmountCents(plan);
@@ -60,7 +62,7 @@ export const getBillingTotalCents = (plan: CommercePlan, months: BillingMonthsOp
   return monthly * months;
 };
 
-export const getBillingMonthOptions = () => BILLING_MONTH_OPTIONS;
+export const getBillingMonthOptions = (): readonly BillingMonthsOption[] => BILLING_MONTH_OPTIONS;
 
 export const addMonths = (date: Date, months: number): Date => {
   const result = new Date(date.getTime());
@@ -79,4 +81,3 @@ export const getDashboardUrl = (): string => {
 export const getApiPublicUrl = (): string => {
   return process.env.API_PUBLIC_URL || `http://localhost:${process.env.API_PORT || '3000'}`;
 };
-

@@ -2,18 +2,20 @@
  * Catalog Tools
  * Tools for generating and sending PDF catalogs
  */
+import { type PrismaClient } from '@prisma/client';
+import { type Queue } from 'bullmq';
 import { z } from 'zod';
-import { PrismaClient } from '@prisma/client';
-import { Queue } from 'bullmq';
-import { BaseTool } from '../base.js';
-import { ToolCategory, ToolContext, ToolResult } from '../../types/index.js';
+
 import {
   CatalogPdfService,
-  CatalogProductFilter,
-  CatalogOptions,
-  CatalogResult,
+  type CatalogProductFilter,
+  type CatalogOptions,
+  type CatalogResult,
 } from '@nexova/core';
-import { MessageSendPayload } from '@nexova/shared';
+import { type MessageSendPayload } from '@nexova/shared';
+
+import { ToolCategory, type ToolContext, type ToolResult } from '../../types/index.js';
+import { BaseTool } from '../base.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // GENERATE CATALOG PDF TOOL
@@ -295,7 +297,7 @@ const catalogStorage = new Map<string, CatalogResult>();
 
 export function createCatalogTools(
   deps: CatalogToolsDependencies
-): BaseTool<any, any>[] {
+): Array<BaseTool<z.ZodSchema, unknown>> {
   const { prisma, messageQueue, fileUploader } = deps;
 
   return [

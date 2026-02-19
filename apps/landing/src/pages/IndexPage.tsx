@@ -1,11 +1,3 @@
-import { useEffect, useRef, useState, useCallback, type ReactNode } from 'react';
-import {
-  motion,
-  useScroll,
-  useSpring,
-  useInView as useMotionInView,
-  AnimatePresence,
-} from 'motion/react';
 import {
   MessageSquare,
   ShoppingCart,
@@ -32,6 +24,14 @@ import {
   Store,
 } from 'lucide-react';
 import {
+  motion,
+  useScroll,
+  useSpring,
+  useInView as useMotionInView,
+  AnimatePresence,
+} from 'motion/react';
+import { useEffect, useRef, useState, useCallback, type ReactNode } from 'react';
+import {
   BarChart,
   Bar,
   XAxis,
@@ -46,7 +46,15 @@ import {
 
 /* ───────────────────────── helpers ───────────────────────── */
 
-function Reveal({ children, className = '', delay = 0 }: { children: ReactNode; className?: string; delay?: number }) {
+function Reveal({
+  children,
+  className = '',
+  delay = 0,
+}: {
+  children: ReactNode;
+  className?: string;
+  delay?: number;
+}): JSX.Element {
   const ref = useRef<HTMLDivElement>(null);
   const isInView = useMotionInView(ref, { once: true, margin: '-60px' });
   return (
@@ -62,12 +70,12 @@ function Reveal({ children, className = '', delay = 0 }: { children: ReactNode; 
   );
 }
 
-function useCountUp(target: number, duration = 2000, active = true) {
+function useCountUp(target: number, duration = 2000, active = true): number {
   const [value, setValue] = useState(0);
   useEffect(() => {
     if (!active) return;
     const start = performance.now();
-    const tick = (now: number) => {
+    const tick = (now: number): void => {
       const elapsed = now - start;
       const progress = Math.min(elapsed / duration, 1);
       const eased = 1 - Math.pow(1 - progress, 3);
@@ -122,7 +130,11 @@ const solutions = [
   { icon: Layers, title: 'Equipos de venta', description: 'Empresas con múltiples vendedores que necesitan centralizar operaciones y tener visibilidad total.', items: ['Roles y permisos granulares', 'Dashboard de métricas por equipo', 'Inbox colaborativo'] },
 ];
 
-const DASHBOARD_URL = import.meta.env.VITE_DASHBOARD_URL || 'http://localhost:5173';
+const dashboardUrlRaw: unknown = import.meta.env.VITE_DASHBOARD_URL;
+const DASHBOARD_URL =
+  typeof dashboardUrlRaw === 'string' && dashboardUrlRaw.trim().length > 0
+    ? dashboardUrlRaw
+    : 'http://localhost:5173';
 
 const plans = [
   { code: 'basic', name: 'Basic', price: '47,72', period: '/mes', description: 'Para negocios que arrancan con WhatsApp commerce.', features: ['Agente IA básico', 'Hasta 500 conversaciones/mes', 'Gestión de pedidos', 'Control de stock', 'CRM de clientes', '1 número WhatsApp', 'Soporte por email'], cta: 'Elegir Basic', highlighted: false },
@@ -149,7 +161,13 @@ const testimonials = [
 ];
 
 /* ── SVG logo (shared) ── */
-const NexovaLogo = ({ className = 'h-6 w-auto', fill = 'white' }: { className?: string; fill?: string }) => (
+const NexovaLogo = ({
+  className = 'h-6 w-auto',
+  fill = 'white',
+}: {
+  className?: string;
+  fill?: string;
+}): JSX.Element => (
   <svg className={className} viewBox="0 0 878 171" fill="none" xmlns="http://www.w3.org/2000/svg">
     <path d="M258.65 92.31L183.53 167.43H183.51C181.12 169.14 178.18 170.14 175.02 170.14C167.16 170.14 160.75 163.97 160.38 156.2V95.84H160.35C160.36 95.72 160.36 95.6 160.36 95.48C160.36 87.82 154.15 81.61 146.48 81.61C142.64 81.61 139.16 83.17 136.65 85.69L58.6 164.12L55.44 167.3L55.41 167.33C52.99 169.1 50.01 170.14 46.78 170.14C39.47 170.14 33.41 164.8 32.3 157.8V95.24L32.21 95.21C32.19 87.42 25.87 81.11 18.07 81.11C13.82 81.11 10 82.99 7.42 85.96L0 78.24L1.45 76.78L73.43 4.8L73.69 4.53C76.36 1.74 80.12 0 84.29 0C92.39 0 98.95 6.56 98.95 14.66V74.03C98.95 75.14 99.08 76.22 99.33 77.25C100.78 83.36 106.28 87.91 112.83 87.91C116.34 87.91 119.16 86.96 121.6 84.82H121.61L121.71 84.72C122.08 84.39 122.44 84.03 122.78 83.65L202.47 3.95L202.49 3.93C205.11 1.47 208.66 0 212.54 0C220.64 0 227.2 6.56 227.2 14.66V71.07C227.2 72.04 227.24 73 227.32 73.97C227.35 74.22 227.37 74.48 227.38 74.81C227.73 81.91 233.15 87.88 240.24 88.37C244.51 88.66 247.97 87.09 250.7 84.37L258.65 92.31Z" fill={fill}/>
     <path d="M834.333 134.627C847.75 134.627 858.236 125.386 858.236 113.212V105.837L835.221 107.259C823.758 108.059 817.272 113.124 817.272 121.121C817.272 129.296 824.025 134.627 834.333 134.627ZM829.001 149.822C810.696 149.822 797.901 138.448 797.901 121.654C797.901 105.304 810.43 95.263 832.644 94.019L858.236 92.5084V85.3108C858.236 74.9144 851.216 68.6943 839.486 68.6943C828.379 68.6943 821.448 74.0258 819.76 82.3785H801.633C802.699 65.4954 817.094 53.0552 840.197 53.0552C862.856 53.0552 877.34 65.0511 877.34 83.8002V148.223H858.946V132.85H858.502C853.082 143.247 841.264 149.822 829.001 149.822Z" fill={fill}/>
@@ -163,14 +181,14 @@ const NexovaLogo = ({ className = 'h-6 w-auto', fill = 'white' }: { className?: 
 
 /* ───────────────────────── components ───────────────────────── */
 
-function Navbar() {
+function Navbar(): JSX.Element {
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const { scrollYProgress } = useScroll();
   const scaleX = useSpring(scrollYProgress, { stiffness: 100, damping: 30, restDelta: 0.001 });
 
   useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 20);
+    const onScroll = (): void => setScrolled(window.scrollY > 20);
     window.addEventListener('scroll', onScroll);
     return () => window.removeEventListener('scroll', onScroll);
   }, []);
@@ -221,7 +239,7 @@ function Navbar() {
   );
 }
 
-function HeroSection() {
+function HeroSection(): JSX.Element {
   const heroRef = useRef<HTMLDivElement>(null);
   const heroVisible = useMotionInView(heroRef, { once: true, margin: '-10%' });
 
@@ -302,7 +320,7 @@ function HeroSection() {
                 ))}
               </div>
               <div>
-                <div className="flex items-center gap-1">{[...Array(5)].map((_, i) => <Star key={i} className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />)}</div>
+                <div className="flex items-center gap-1">{Array.from({ length: 5 }).map((_, i) => <Star key={i} className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />)}</div>
                 <p className="text-xs text-white/30 mt-0.5">Comercios que ya confían en Nexova</p>
               </div>
             </motion.div>
@@ -383,7 +401,7 @@ function HeroSection() {
   );
 }
 
-function StatsBar() {
+function StatsBar(): JSX.Element {
   const ref = useRef<HTMLDivElement>(null);
   const isInView = useMotionInView(ref, { once: true, margin: '-60px' });
   const stats = [
@@ -411,7 +429,7 @@ function StatsBar() {
   );
 }
 
-function FeatureCard({ f, index }: { f: typeof features[0]; index: number }) {
+function FeatureCard({ f, index }: { f: (typeof features)[0]; index: number }): JSX.Element {
   const cardRef = useRef<HTMLDivElement>(null);
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     const card = cardRef.current;
@@ -434,7 +452,7 @@ function FeatureCard({ f, index }: { f: typeof features[0]; index: number }) {
   );
 }
 
-function FeaturesSection() {
+function FeaturesSection(): JSX.Element {
   return (
     <section id="features" className="relative py-24 overflow-hidden">
       <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-[#4D7CFF]/5 rounded-full blur-[120px]" />
@@ -452,7 +470,7 @@ function FeaturesSection() {
   );
 }
 
-function AIShowcase() {
+function AIShowcase(): JSX.Element {
   const ref = useRef<HTMLDivElement>(null);
   const isInView = useMotionInView(ref, { once: true, margin: '-100px' });
   const [visibleMessages, setVisibleMessages] = useState(0);
@@ -553,7 +571,7 @@ function AIShowcase() {
   );
 }
 
-function AnalyticsSection() {
+function AnalyticsSection(): JSX.Element {
   return (
     <section className="relative py-24 overflow-hidden">
       <div className="absolute right-0 top-1/3 w-[500px] h-[500px] bg-blue-600/5 rounded-full blur-[120px]" />
@@ -603,7 +621,7 @@ function AnalyticsSection() {
                   <p className="text-sm font-medium text-white mb-3">Cobros por método</p>
                   <div className="h-36">
                     <ResponsiveContainer width="100%" height="100%">
-                      <PieChart><Pie data={paymentMethodData} cx="50%" cy="50%" innerRadius={35} outerRadius={55} paddingAngle={4} dataKey="value" strokeWidth={0}>{paymentMethodData.map((entry, index) => <Cell key={index} fill={entry.color} />)}</Pie><Tooltip contentStyle={{ background: '#1a1a2e', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', fontSize: '13px' }} labelStyle={{ color: 'rgba(255,255,255,0.5)' }} itemStyle={{ color: 'rgba(255,255,255,0.8)' }} formatter={(value) => [`${value}%`, '']} /></PieChart>
+                      <PieChart><Pie data={paymentMethodData} cx="50%" cy="50%" innerRadius={35} outerRadius={55} paddingAngle={4} dataKey="value" strokeWidth={0}>{paymentMethodData.map((entry, index) => <Cell key={index} fill={entry.color} />)}</Pie><Tooltip contentStyle={{ background: '#1a1a2e', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', fontSize: '13px' }} labelStyle={{ color: 'rgba(255,255,255,0.5)' }} itemStyle={{ color: 'rgba(255,255,255,0.8)' }} formatter={(value) => { const pct = typeof value === 'number' ? value : Number(value ?? 0); return [`${pct}%`, '']; }} /></PieChart>
                     </ResponsiveContainer>
                   </div>
                   <div className="space-y-1.5 mt-2">{paymentMethodData.map((c, i) => (<div key={i} className="flex items-center justify-between text-xs"><span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full" style={{ background: c.color }} /><span className="text-white/40">{c.name}</span></span><span className="text-white/60 font-medium">{c.value}%</span></div>))}</div>
@@ -625,7 +643,7 @@ function AnalyticsSection() {
   );
 }
 
-function SolutionsSection() {
+function SolutionsSection(): JSX.Element {
   return (
     <section id="solutions" className="relative py-24 overflow-hidden">
       <div className="absolute left-1/2 -translate-x-1/2 bottom-0 w-[800px] h-[400px] bg-[#4D7CFF]/5 rounded-full blur-[120px]" />
@@ -655,7 +673,7 @@ function SolutionsSection() {
   );
 }
 
-function PricingSection() {
+function PricingSection(): JSX.Element {
   return (
     <section id="pricing" className="relative py-24 overflow-hidden">
       <div className="absolute top-0 left-1/4 w-[600px] h-[600px] bg-[#4D7CFF]/5 rounded-full blur-[120px]" />
@@ -690,7 +708,7 @@ function PricingSection() {
   );
 }
 
-function TestimonialsSection() {
+function TestimonialsSection(): JSX.Element {
   const doubled = [...testimonials, ...testimonials];
   return (
     <section className="relative py-24 overflow-hidden">
@@ -744,7 +762,7 @@ function TestimonialsSection() {
   );
 }
 
-function FAQSection() {
+function FAQSection(): JSX.Element {
   const [openIndex, setOpenIndex] = useState<number | null>(null);
   return (
     <section id="faq" className="relative py-24 overflow-hidden">
@@ -778,7 +796,7 @@ function FAQSection() {
   );
 }
 
-function CTASection() {
+function CTASection(): JSX.Element {
   return (
     <section className="relative py-24 overflow-hidden">
       <div className="absolute inset-0">
@@ -804,7 +822,7 @@ function CTASection() {
   );
 }
 
-function NewsletterSection() {
+function NewsletterSection(): JSX.Element {
   const [email, setEmail] = useState('');
   return (
     <section className="relative py-16 border-t border-white/[0.04]">
@@ -825,7 +843,7 @@ function NewsletterSection() {
   );
 }
 
-function Footer() {
+function Footer(): JSX.Element {
   const year = new Date().getFullYear();
   const links = {
     Producto: [{ label: 'Funciones', href: '#features' }, { label: 'Precios', href: '#pricing' }, { label: 'Soluciones', href: '#solutions' }, { label: 'FAQ', href: '#faq' }],
@@ -860,7 +878,7 @@ function Footer() {
 
 /* ───────────────────────── MAIN ───────────────────────── */
 
-export default function IndexPage() {
+export default function IndexPage(): JSX.Element {
   return (
     <div className="min-h-screen bg-[#08080d] text-white font-sans antialiased overflow-x-hidden" style={{ scrollBehavior: 'smooth' }}>
       <Navbar />

@@ -1,6 +1,15 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Plus, Package, AlertTriangle, CheckCircle, Clock, Tags, Trash2, MoreVertical, Edit, ReceiptText, RotateCcw } from 'lucide-react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
+
+import {
+  ProductModal,
+  ProductCard,
+  StockFilters,
+  CategoriesModal,
+  DeleteConfirmModal,
+  StockReceiptModal,
+} from '../../components/stock';
 import {
   Button,
   Badge,
@@ -19,23 +28,22 @@ import {
   AnimatedStagger,
   StatCard,
 } from '../../components/ui';
-import {
-  ProductModal,
-  ProductCard,
-  StockFilters,
-  CategoriesModal,
-  DeleteConfirmModal,
-  StockReceiptModal,
-} from '../../components/stock';
 import { useWorkspace } from '../../contexts/AuthContext';
-import { useToast } from '../../stores/toast.store';
 import { getWorkspaceCommerceCapabilities } from '../../lib/commerce-plan';
+import { useToast } from '../../stores/toast.store';
 
-const API_URL = import.meta.env.VITE_API_URL || '';
-const fetchWithCredentials = (input: RequestInfo | URL, init?: RequestInit) => fetch(input, {
-  ...init,
-  credentials: 'include',
-});
+type JsonRecord = Record<string, unknown>;
+type StockFilter = 'all' | 'inStock' | 'lowStock' | 'outOfStock';
+type ViewMode = 'grid' | 'list';
+
+const envValues = import.meta.env as unknown as Record<string, unknown>;
+const apiUrlFromEnv = envValues['VITE_API_URL'];
+const API_URL = typeof apiUrlFromEnv === 'string' ? apiUrlFromEnv : '';
+const fetchWithCredentials = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>
+  fetch(input, {
+    ...init,
+    credentials: 'include',
+  });
 const VIEW_MODE_STORAGE_KEY = 'stockViewMode';
 
 interface Category {
@@ -86,6 +94,174 @@ interface ProductFormData {
   secondaryUnitValue: string;
 }
 
+function asRecord(value: unknown): JsonRecord | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as JsonRecord)
+    : null;
+}
+
+function readString(record: JsonRecord | null, key: string): string | undefined {
+  if (!record) {
+    return undefined;
+  }
+  const value = record[key];
+  return typeof value === 'string' ? value : undefined;
+}
+
+function readStringLike(record: JsonRecord | null, key: string): string | undefined {
+  if (!record) {
+    return undefined;
+  }
+  const value = record[key];
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (typeof value === 'number') {
+    return value.toString();
+  }
+  return undefined;
+}
+
+function readNumber(record: JsonRecord | null, key: string): number | undefined {
+  if (!record) {
+    return undefined;
+  }
+  const value = record[key];
+  return typeof value === 'number' ? value : undefined;
+}
+
+function readBoolean(record: JsonRecord | null, key: string): boolean | undefined {
+  if (!record) {
+    return undefined;
+  }
+  const value = record[key];
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+function readArray(record: JsonRecord | null, key: string): unknown[] {
+  if (!record) {
+    return [];
+  }
+  const value = record[key];
+  return Array.isArray(value) ? value : [];
+}
+
+function readRecord(record: JsonRecord | null, key: string): JsonRecord | null {
+  if (!record) {
+    return null;
+  }
+  return asRecord(record[key]);
+}
+
+function readStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item): item is string => typeof item === 'string');
+}
+
+function readErrorMessage(record: JsonRecord | null, fallback: string): string {
+  return readString(record, 'message') ?? readString(record, 'error') ?? fallback;
+}
+
+async function readJsonRecord(response: Response): Promise<JsonRecord | null> {
+  try {
+    const payload: unknown = await response.json();
+    return asRecord(payload);
+  } catch {
+    return null;
+  }
+}
+
+function parseCategory(value: unknown): Category | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  const id = readString(record, 'id');
+  const name = readString(record, 'name');
+  if (!id || !name) {
+    return null;
+  }
+
+  return {
+    id,
+    name,
+    color: readString(record, 'color') ?? null,
+    productCount: readNumber(record, 'productCount'),
+  };
+}
+
+function parseCategoriesFromUnknown(value: unknown): Category[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map(item => parseCategory(item))
+    .filter((category): category is Category => category !== null);
+}
+
+function parseCategories(record: JsonRecord | null): Category[] {
+  return parseCategoriesFromUnknown(record?.categories);
+}
+
+function parseProduct(value: unknown): Product | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  const id = readString(record, 'id');
+  const sku = readString(record, 'sku');
+  const name = readString(record, 'name');
+  if (!id || !sku || !name) {
+    return null;
+  }
+
+  const statusRaw = readString(record, 'status');
+  const status = statusRaw === 'active' || statusRaw === 'archived' ? statusRaw : undefined;
+
+  return {
+    id,
+    sku,
+    name,
+    description: readString(record, 'description') ?? null,
+    price: readNumber(record, 'price') ?? 0,
+    stock: readNumber(record, 'stock') ?? 0,
+    isLowStock: readBoolean(record, 'isLowStock') ?? false,
+    isOutOfStock: readBoolean(record, 'isOutOfStock') ?? false,
+    images: readStringArray(record.images),
+    categories: parseCategoriesFromUnknown(record.categories),
+    unit: readString(record, 'unit'),
+    unitValue: readStringLike(record, 'unitValue'),
+    secondaryUnit: readString(record, 'secondaryUnit') ?? null,
+    secondaryUnitValue: readStringLike(record, 'secondaryUnitValue') ?? null,
+    status,
+    deletedAt: readString(record, 'deletedAt') ?? null,
+    createdAt: readString(record, 'createdAt'),
+    updatedAt: readString(record, 'updatedAt'),
+  };
+}
+
+function parseProducts(record: JsonRecord | null): Product[] {
+  return readArray(record, 'products')
+    .map(item => parseProduct(item))
+    .filter((product): product is Product => product !== null);
+}
+
+function parseStockStats(record: JsonRecord | null): StockStats | null {
+  if (!record) {
+    return null;
+  }
+  return {
+    totalProducts: readNumber(record, 'totalProducts') ?? 0,
+    activeProducts: readNumber(record, 'activeProducts') ?? 0,
+    lowStockCount: readNumber(record, 'lowStockCount') ?? 0,
+    outOfStockCount: readNumber(record, 'outOfStockCount') ?? 0,
+  };
+}
+
 const UNIT_SHORT_LABELS: Record<string, string> = {
   unit: 'uds',
   kg: 'kg',
@@ -103,7 +279,7 @@ const SECONDARY_UNIT_LABELS: Record<string, string> = {
   dozen: 'Docena',
 };
 
-export default function StockPage() {
+export default function StockPage(): JSX.Element {
   const workspace = useWorkspace();
   const capabilities = getWorkspaceCommerceCapabilities(workspace);
   const toast = useToast();
@@ -120,12 +296,12 @@ export default function StockPage() {
   // Filter state
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
-  const [stockFilter, setStockFilter] = useState<'all' | 'inStock' | 'lowStock' | 'outOfStock'>('all');
+  const [stockFilter, setStockFilter] = useState<StockFilter>('all');
 
   // Selection state
   const [selectedProductIds, setSelectedProductIds] = useState<Set<string>>(new Set());
   const [isSelectMode, setIsSelectMode] = useState(false);
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>(() => {
+  const [viewMode, setViewMode] = useState<ViewMode>(() => {
     if (typeof window === 'undefined') return 'grid';
     const stored = window.localStorage.getItem(VIEW_MODE_STORAGE_KEY);
     return stored === 'list' ? 'list' : 'grid';
@@ -149,45 +325,48 @@ export default function StockPage() {
   const [trashActionProductId, setTrashActionProductId] = useState<string | null>(null);
 
   // API helpers
-  const getHeaders = () => ({
-    'X-Workspace-Id': workspace?.id || '',
-    'Content-Type': 'application/json',
-  });
+  const getHeaders = useCallback((): Record<string, string> => {
+    return {
+      'X-Workspace-Id': workspace?.id || '',
+      'Content-Type': 'application/json',
+    };
+  }, [workspace?.id]);
 
-  const readApiError = async (response: Response, fallback: string) => {
-    try {
-      const body = await response.json();
-      if (body?.message && typeof body.message === 'string') return body.message;
-      if (body?.error && typeof body.error === 'string') return body.error;
-    } catch (_error) {
-      // Ignore JSON parse errors and return fallback.
-    }
-    return fallback;
-  };
+  const readApiError = useCallback(
+    async (response: Response, fallback: string): Promise<string> => {
+      const body = await readJsonRecord(response);
+      return readErrorMessage(body, fallback);
+    },
+    []
+  );
 
   // Fetch products
-  const fetchProducts = async () => {
-    if (!workspace?.id) return;
+  const fetchProducts = useCallback(async (): Promise<void> => {
+    if (!workspace?.id) {
+      return;
+    }
 
     try {
       const params = new URLSearchParams({ limit: '100' });
       if (selectedCategory) params.append('categoryId', selectedCategory);
 
-      const response = await fetchWithCredentials(`${API_URL}/api/v1/products?${params}`, {
+      const response = await fetchWithCredentials(`${API_URL}/api/v1/products?${params.toString()}`, {
         headers: getHeaders(),
       });
 
       if (response.ok) {
-        const data = await response.json();
-        setProducts(data.products || []);
+        const data = await readJsonRecord(response);
+        setProducts(parseProducts(data));
       }
     } catch (error) {
       console.error('Failed to fetch products:', error);
     }
-  };
+  }, [workspace?.id, selectedCategory, getHeaders]);
 
-  const fetchTrashProducts = useCallback(async () => {
-    if (!workspace?.id) return;
+  const fetchTrashProducts = useCallback(async (): Promise<void> => {
+    if (!workspace?.id) {
+      return;
+    }
 
     const requestId = ++trashRequestIdRef.current;
     if (!hasLoadedTrash) {
@@ -213,24 +392,31 @@ export default function StockPage() {
         throw new Error(await readApiError(response, 'No se pudo cargar la papelera'));
       }
 
-      const data = await response.json();
-      if (requestId !== trashRequestIdRef.current) return;
-      setTrashProducts(data.products || []);
+      const data = await readJsonRecord(response);
+      if (requestId !== trashRequestIdRef.current) {
+        return;
+      }
+      setTrashProducts(parseProducts(data));
       setHasLoadedTrash(true);
     } catch (error) {
-      if (requestId !== trashRequestIdRef.current) return;
+      if (requestId !== trashRequestIdRef.current) {
+        return;
+      }
       console.error('Failed to fetch trash products:', error);
       toast.error(error instanceof Error ? error.message : 'No se pudo cargar la papelera');
     } finally {
-      if (requestId !== trashRequestIdRef.current) return;
-      setIsTrashLoadingInitial(false);
-      setIsTrashRefreshing(false);
+      if (requestId === trashRequestIdRef.current) {
+        setIsTrashLoadingInitial(false);
+        setIsTrashRefreshing(false);
+      }
     }
-  }, [workspace?.id, trashSearch, hasLoadedTrash]);
+  }, [workspace?.id, trashSearch, hasLoadedTrash, getHeaders, readApiError, toast]);
 
   // Fetch categories
-  const fetchCategories = async () => {
-    if (!workspace?.id) return;
+  const fetchCategories = useCallback(async (): Promise<void> => {
+    if (!workspace?.id) {
+      return;
+    }
 
     try {
       const response = await fetchWithCredentials(`${API_URL}/api/v1/categories?includeProductCount=true`, {
@@ -238,17 +424,19 @@ export default function StockPage() {
       });
 
       if (response.ok) {
-        const data = await response.json();
-        setCategories(data.categories || []);
+        const data = await readJsonRecord(response);
+        setCategories(parseCategories(data));
       }
     } catch (error) {
       console.error('Failed to fetch categories:', error);
     }
-  };
+  }, [workspace?.id, getHeaders]);
 
   // Fetch stats
-  const fetchStats = async () => {
-    if (!workspace?.id) return;
+  const fetchStats = useCallback(async (): Promise<void> => {
+    if (!workspace?.id) {
+      return;
+    }
 
     try {
       const response = await fetchWithCredentials(`${API_URL}/api/v1/products/stats`, {
@@ -256,23 +444,23 @@ export default function StockPage() {
       });
 
       if (response.ok) {
-        const data = await response.json();
-        setStats(data);
+        const data = await readJsonRecord(response);
+        setStats(parseStockStats(data));
       }
     } catch (error) {
       console.error('Failed to fetch stats:', error);
     }
-  };
+  }, [workspace?.id, getHeaders]);
 
   // Initial load
   useEffect(() => {
-    const loadData = async () => {
+    const loadData = async (): Promise<void> => {
       setIsLoading(true);
       await Promise.all([fetchProducts(), fetchCategories(), fetchStats()]);
       setIsLoading(false);
     };
-    loadData();
-  }, [workspace?.id]);
+    void loadData();
+  }, [fetchProducts, fetchCategories, fetchStats]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -289,7 +477,7 @@ export default function StockPage() {
 
   useEffect(() => {
     if (!showTrashModal || !workspace?.id) return;
-    fetchTrashProducts();
+    void fetchTrashProducts();
   }, [showTrashModal, workspace?.id, trashSearch, fetchTrashProducts]);
 
   useEffect(() => {
@@ -310,11 +498,11 @@ export default function StockPage() {
 
   // Refetch when category filter changes
   useEffect(() => {
-    fetchProducts();
-  }, [selectedCategory]);
+    void fetchProducts();
+  }, [fetchProducts]);
 
   // Create product
-  const handleCreateProduct = async (data: ProductFormData) => {
+  const handleCreateProduct = async (data: ProductFormData): Promise<void> => {
     const response = await fetchWithCredentials(`${API_URL}/api/v1/products`, {
       method: 'POST',
       headers: getHeaders(),
@@ -335,8 +523,7 @@ export default function StockPage() {
     });
 
     if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.message || 'Error al crear producto');
+      throw new Error(await readApiError(response, 'Error al crear producto'));
     }
 
     toast.success('Producto creado exitosamente');
@@ -344,8 +531,10 @@ export default function StockPage() {
   };
 
   // Update product
-  const handleUpdateProduct = async (data: ProductFormData) => {
-    if (!editingProduct) return;
+  const handleUpdateProduct = async (data: ProductFormData): Promise<void> => {
+    if (!editingProduct) {
+      return;
+    }
 
     const response = await fetchWithCredentials(`${API_URL}/api/v1/products/${editingProduct.id}`, {
       method: 'PATCH',
@@ -364,8 +553,7 @@ export default function StockPage() {
     });
 
     if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.message || 'Error al actualizar producto');
+      throw new Error(await readApiError(response, 'Error al actualizar producto'));
     }
 
     // Update stock if changed
@@ -386,7 +574,7 @@ export default function StockPage() {
   };
 
   // Delete product
-  const handleDeleteProduct = async () => {
+  const handleDeleteProduct = async (): Promise<void> => {
     setIsDeleting(true);
     try {
       if (productToDelete) {
@@ -422,8 +610,10 @@ export default function StockPage() {
     }
   };
 
-  const handleRestoreProduct = async (product: Product) => {
-    if (!workspace?.id) return;
+  const handleRestoreProduct = async (product: Product): Promise<void> => {
+    if (!workspace?.id) {
+      return;
+    }
     setTrashActionProductId(product.id);
     try {
       const response = await fetchWithCredentials(`${API_URL}/api/v1/products/${product.id}/restore`, {
@@ -445,13 +635,17 @@ export default function StockPage() {
     }
   };
 
-  const handlePermanentDeleteProduct = async (product: Product) => {
-    if (!workspace?.id) return;
+  const handlePermanentDeleteProduct = async (product: Product): Promise<void> => {
+    if (!workspace?.id) {
+      return;
+    }
 
     const confirmed = window.confirm(
       `Eliminar permanentemente "${product.name}"?\nEsta acción no se puede deshacer.`
     );
-    if (!confirmed) return;
+    if (!confirmed) {
+      return;
+    }
 
     setTrashActionProductId(product.id);
     try {
@@ -483,19 +677,19 @@ export default function StockPage() {
     });
 
     if (!response.ok) {
-      const error = await response.json();
-      toast.error(error.message || 'Error al crear categoria');
+      toast.error(await readApiError(response, 'Error al crear categoria'));
       return null;
     }
 
-    const data = await response.json();
+    const data = await readJsonRecord(response);
+    const category = parseCategory(readRecord(data, 'category'));
     toast.success(`Categoria "${name}" creada`);
-    await fetchCategories();
-    return data.category;
+    void fetchCategories();
+    return category;
   };
 
   // Delete category
-  const handleDeleteCategory = async (categoryId: string) => {
+  const handleDeleteCategory = async (categoryId: string): Promise<void> => {
     const response = await fetchWithCredentials(`${API_URL}/api/v1/categories/${categoryId}`, {
       method: 'DELETE',
       headers: getHeaders(),
@@ -513,7 +707,7 @@ export default function StockPage() {
     }
   };
 
-  const handleUpdateCategory = async (categoryId: string, color: string) => {
+  const handleUpdateCategory = async (categoryId: string, color: string): Promise<void> => {
     const response = await fetchWithCredentials(`${API_URL}/api/v1/categories/${categoryId}`, {
       method: 'PATCH',
       headers: getHeaders(),
@@ -521,22 +715,21 @@ export default function StockPage() {
     });
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({}));
-      toast.error(error.message || 'Error al actualizar la categoría');
+      toast.error(await readApiError(response, 'Error al actualizar la categoría'));
       return;
     }
 
     await fetchCategories();
   };
 
-  const formatPrice = (price: number) => {
+  const formatPrice = (price: number): string => {
     return new Intl.NumberFormat('es-AR', {
       style: 'currency',
       currency: 'ARS',
     }).format(price / 100);
   };
 
-  const getStockVariant = (product: Product) => {
+  const getStockVariant = (product: Product): 'destructive' | 'warning' | 'success' => {
     if (product.isOutOfStock) return 'destructive';
     if (product.isLowStock) return 'warning';
     return 'success';
@@ -757,7 +950,7 @@ export default function StockPage() {
                     ? `${secondaryLabel} ${secondaryValue}`.trim()
                     : secondaryLabel
                   : null;
-                const handleSelectToggle = (selected: boolean) => {
+                const handleSelectToggle = (selected: boolean): void => {
                   const newSet = new Set(selectedProductIds);
                   if (selected) {
                     newSet.add(product.id);
@@ -1056,7 +1249,9 @@ export default function StockPage() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => handleRestoreProduct(product)}
+                          onClick={() => {
+                            void handleRestoreProduct(product);
+                          }}
                           disabled={isBusy}
                           className="flex-1 sm:flex-initial text-blue-400 hover:text-blue-300 hover:bg-blue-500/10"
                         >
@@ -1066,7 +1261,9 @@ export default function StockPage() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => handlePermanentDeleteProduct(product)}
+                          onClick={() => {
+                            void handlePermanentDeleteProduct(product);
+                          }}
                           disabled={isBusy}
                           className="flex-1 sm:flex-initial text-red-400 hover:text-red-300 hover:bg-red-500/10"
                         >
@@ -1094,8 +1291,8 @@ export default function StockPage() {
           open={showReceiptModal}
           onOpenChange={setShowReceiptModal}
           workspaceId={workspace.id}
-          onApplied={async () => {
-            await Promise.all([fetchProducts(), fetchStats()]);
+          onApplied={() => {
+            void Promise.all([fetchProducts(), fetchStats()]);
           }}
         />
       )}

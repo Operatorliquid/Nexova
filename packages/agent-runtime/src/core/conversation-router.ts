@@ -3,7 +3,7 @@
  * Classifies incoming messages as ORDER or INFO threads
  * Handles context preservation during thread switches
  */
-import { MessageThread, MessageThreadType, AgentStateType, AgentState } from '../types/index.js';
+import { MessageThread, type MessageThreadType, type AgentStateType, AgentState } from '../types/index.js';
 
 // Keywords that suggest ORDER thread
 const ORDER_KEYWORDS = [

@@ -2,13 +2,14 @@
  * Authentication Service
  * Handles user registration, login, token refresh, and logout
  */
-import { PrismaClient, User } from '@prisma/client';
+import { type PrismaClient, type User } from '@prisma/client';
+
 import { hashPassword, verifyPassword, validatePasswordStrength } from './password.service.js';
 import {
   generateTokenPair,
   verifyRefreshToken,
   hashToken,
-  TokenPair,
+  type TokenPair,
 } from './token.service.js';
 
 export interface RegisterInput {
@@ -265,8 +266,11 @@ export class AuthService {
   }
 
   private sanitizeUser(user: User): Omit<User, 'passwordHash' | 'mfaSecret' | 'mfaBackupCodes'> {
-    const { passwordHash, mfaSecret, mfaBackupCodes, ...sanitized } = user;
-    return sanitized;
+    const { passwordHash, mfaSecret, mfaBackupCodes, ...safeUser } = user;
+    void passwordHash;
+    void mfaSecret;
+    void mfaBackupCodes;
+    return safeUser;
   }
 }
 

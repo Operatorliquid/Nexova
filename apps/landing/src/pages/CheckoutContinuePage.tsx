@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+
 import { apiFetch, readErrorMessage } from '../lib/api';
 
 type CheckoutSessionResponse = {
@@ -10,7 +11,7 @@ type CheckoutSessionResponse = {
   dashboardUrl?: string;
 };
 
-export default function CheckoutContinuePage() {
+export default function CheckoutContinuePage(): JSX.Element {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const flowToken = useMemo(() => searchParams.get('flowToken')?.trim() || '', [searchParams]);
@@ -20,7 +21,7 @@ export default function CheckoutContinuePage() {
   const [error, setError] = useState('');
   const [checkoutUrl, setCheckoutUrl] = useState('');
 
-  const createCheckout = async () => {
+  const createCheckout = async (): Promise<void> => {
     if (!flowToken) {
       setError('Falta flowToken para crear el checkout.');
       setIsLoading(false);

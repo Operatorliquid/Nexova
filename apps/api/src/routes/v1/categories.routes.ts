@@ -2,7 +2,8 @@
  * Categories Routes
  * CRUD operations for product category management
  */
-import { FastifyPluginAsync } from 'fastify';
+import { type Prisma } from '@prisma/client';
+import { type FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 
 const categoryQuerySchema = z.object({
@@ -28,11 +29,11 @@ const assignProductsSchema = z.object({
   productIds: z.array(z.string().uuid()).min(1),
 });
 
-export const categoriesRoutes: FastifyPluginAsync = async (fastify) => {
+export const categoriesRoutes: FastifyPluginAsync = (fastify) => {
   // Get all categories
   fastify.get(
     '/',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('products:read')] },
     async (request, reply) => {
       const workspaceId = request.headers['x-workspace-id'] as string;
       if (!workspaceId) {
@@ -42,7 +43,7 @@ export const categoriesRoutes: FastifyPluginAsync = async (fastify) => {
       const query = categoryQuerySchema.parse(request.query);
       const { includeProductCount, includeDeleted } = query;
 
-      const where: any = { workspaceId };
+      const where: Prisma.ProductCategoryWhereInput = { workspaceId };
       if (!includeDeleted) {
         where.deletedAt = null;
       }
@@ -60,25 +61,29 @@ export const categoriesRoutes: FastifyPluginAsync = async (fastify) => {
         } : undefined,
       });
 
-      const formattedCategories = categories.map((c) => ({
+      const formattedCategories = categories.map((c) => {
+        const productsValue = (c as { products?: unknown }).products;
+        const productCount = Array.isArray(productsValue) ? productsValue.length : 0;
+        return {
         id: c.id,
         name: c.name,
         description: c.description,
         color: c.color,
         sortOrder: c.sortOrder,
-        productCount: includeProductCount ? (c as any).products?.length || 0 : undefined,
+        productCount: includeProductCount ? productCount : undefined,
         createdAt: c.createdAt,
         updatedAt: c.updatedAt,
-      }));
+        };
+      });
 
-      reply.send({ categories: formattedCategories });
+      return reply.send({ categories: formattedCategories });
     }
   );
 
   // Get single category
   fastify.get(
     '/:id',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('products:read')] },
     async (request, reply) => {
       const workspaceId = request.headers['x-workspace-id'] as string;
       if (!workspaceId) {
@@ -110,7 +115,7 @@ export const categoriesRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(404).send({ error: 'NOT_FOUND', message: 'Category not found' });
       }
 
-      reply.send({
+      return reply.send({
         category: {
           id: category.id,
           name: category.name,
@@ -128,7 +133,7 @@ export const categoriesRoutes: FastifyPluginAsync = async (fastify) => {
   // Create category
   fastify.post(
     '/',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('products:update')] },
     async (request, reply) => {
       const workspaceId = request.headers['x-workspace-id'] as string;
       if (!workspaceId) {
@@ -156,14 +161,14 @@ export const categoriesRoutes: FastifyPluginAsync = async (fastify) => {
         },
       });
 
-      reply.code(201).send({ category });
+      return reply.code(201).send({ category });
     }
   );
 
   // Update category
   fastify.patch(
     '/:id',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('products:update')] },
     async (request, reply) => {
       const workspaceId = request.headers['x-workspace-id'] as string;
       if (!workspaceId) {
@@ -201,14 +206,14 @@ export const categoriesRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id, workspaceId },
       });
 
-      reply.send({ category });
+      return reply.send({ category });
     }
   );
 
   // Delete category (soft delete)
   fastify.delete(
     '/:id',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('products:update')] },
     async (request, reply) => {
       const workspaceId = request.headers['x-workspace-id'] as string;
       if (!workspaceId) {
@@ -236,14 +241,14 @@ export const categoriesRoutes: FastifyPluginAsync = async (fastify) => {
         where: { categoryId: id },
       });
 
-      reply.send({ success: true });
+      return reply.send({ success: true });
     }
   );
 
   // Assign products to category
   fastify.post(
     '/:id/products',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('products:update')] },
     async (request, reply) => {
       const workspaceId = request.headers['x-workspace-id'] as string;
       if (!workspaceId) {
@@ -290,7 +295,7 @@ export const categoriesRoutes: FastifyPluginAsync = async (fastify) => {
         )
       );
 
-      reply.send({
+      return reply.send({
         success: true,
         assignedCount: mappings.length,
       });
@@ -300,7 +305,7 @@ export const categoriesRoutes: FastifyPluginAsync = async (fastify) => {
   // Remove product from category
   fastify.delete(
     '/:id/products/:productId',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('products:update')] },
     async (request, reply) => {
       const workspaceId = request.headers['x-workspace-id'] as string;
       if (!workspaceId) {
@@ -323,7 +328,7 @@ export const categoriesRoutes: FastifyPluginAsync = async (fastify) => {
         where: { productId, categoryId },
       });
 
-      reply.send({ success: true });
+      return reply.send({ success: true });
     }
   );
 };

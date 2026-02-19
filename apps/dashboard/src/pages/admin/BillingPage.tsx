@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CreditCard, CalendarClock, Receipt, RefreshCw } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+
 import { Badge, Button, Input, AnimatedPage } from '../../components/ui';
 import { apiFetch } from '../../lib/api';
 import { useToastStore } from '../../stores/toast.store';
@@ -41,15 +42,15 @@ interface BillingPaymentsResponse {
   pagination: Pagination;
 }
 
-const formatMoney = (amountCents: number, currency: string) =>
+const formatMoney = (amountCents: number, currency: string): string =>
   new Intl.NumberFormat('en-US', {
     style: 'currency',
     currency: currency || 'USD',
   }).format((amountCents || 0) / 100);
 
-const formatCurrencyCode = (value?: string | null) => (value || 'USD').toUpperCase();
+const formatCurrencyCode = (value?: string | null): string => (value || 'USD').toUpperCase();
 
-const formatDateTime = (value?: string | null) => {
+const formatDateTime = (value?: string | null): string => {
   if (!value) return '—';
   return new Intl.DateTimeFormat('es-AR', {
     day: '2-digit',
@@ -60,14 +61,14 @@ const formatDateTime = (value?: string | null) => {
   }).format(new Date(value));
 };
 
-const getPaymentStatusBadge = (status: string) => {
+const getPaymentStatusBadge = (status: string): JSX.Element => {
   const normalized = (status || '').toLowerCase();
   if (normalized === 'paid') return <Badge variant="success">Pagado</Badge>;
   if (normalized === 'failed') return <Badge variant="warning">Fallido</Badge>;
   return <Badge variant="secondary">{status || 'N/D'}</Badge>;
 };
 
-export default function BillingPage() {
+export default function BillingPage(): JSX.Element {
   const toastError = useToastStore((state) => state.error);
   const [rows, setRows] = useState<BillingPaymentRow[]>([]);
   const [pagination, setPagination] = useState<Pagination>({
@@ -91,7 +92,7 @@ export default function BillingPage() {
   }, [search]);
 
   const loadPayments = useCallback(
-    async (silent = false) => {
+    async (silent = false): Promise<void> => {
       if (silent) setIsRefreshing(true);
       else setIsLoading(true);
 
@@ -120,7 +121,7 @@ export default function BillingPage() {
   );
 
   useEffect(() => {
-    loadPayments();
+    void loadPayments();
   }, [loadPayments]);
 
   const stats = useMemo(() => {
@@ -150,7 +151,7 @@ export default function BillingPage() {
               onChange={(e) => setSearchInput(e.target.value)}
             />
           </div>
-          <Button variant="secondary" onClick={() => loadPayments(true)} isLoading={isRefreshing}>
+          <Button variant="secondary" onClick={() => { void loadPayments(true); }} isLoading={isRefreshing}>
             <RefreshCw className="w-4 h-4 mr-2" />
             Actualizar
           </Button>

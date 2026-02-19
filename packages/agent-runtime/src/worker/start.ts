@@ -3,12 +3,15 @@
  * Starts the BullMQ worker to process incoming messages
  */
 import { PrismaClient } from '@prisma/client';
+
+import { logger } from '@nexova/core';
+
 import { createAgentWorker } from './agent-worker.js';
 
 const prisma = new PrismaClient();
 
-async function main() {
-  console.log('Starting Agent Worker...');
+function main(): void {
+  logger.info('Starting Agent Worker...');
 
   // Validate environment
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
@@ -30,25 +33,29 @@ async function main() {
   if (redisPassword) {
     workerConfig.redisPassword = redisPassword;
   }
-  const worker = await createAgentWorker(prisma, workerConfig);
+  const worker = createAgentWorker(prisma, workerConfig);
 
-  console.log('Agent Worker started successfully');
-  console.log(`Redis: ${redisHost}:${redisPort}`);
-  console.log(`Concurrency: ${process.env.WORKER_CONCURRENCY || '5'}`);
+  logger.info('Agent Worker started successfully');
+  logger.info(`Redis: ${redisHost}:${redisPort}`);
+  logger.info(`Concurrency: ${process.env.WORKER_CONCURRENCY || '5'}`);
 
   // Graceful shutdown
   const signals = ['SIGINT', 'SIGTERM'];
   for (const signal of signals) {
-    process.on(signal, async () => {
-      console.log(`Received ${signal}, shutting down...`);
-      await worker.stop();
-      await prisma.$disconnect();
-      process.exit(0);
+    process.on(signal, () => {
+      void (async () => {
+        logger.info(`Received ${signal}, shutting down...`);
+        await worker.stop();
+        await prisma.$disconnect();
+        process.exit(0);
+      })();
     });
   }
 }
 
-main().catch((error) => {
-  console.error('Failed to start worker:', error);
+try {
+  main();
+} catch (error) {
+  logger.error({ error }, 'Failed to start worker');
   process.exit(1);
-});
+}

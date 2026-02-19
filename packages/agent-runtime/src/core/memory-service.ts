@@ -2,8 +2,8 @@
  * Memory Service
  * Builds and updates long-term memory using agent_memories.
  */
-import { PrismaClient, type AgentMemory } from '@prisma/client';
-import Anthropic from '@anthropic-ai/sdk';
+import type Anthropic from '@anthropic-ai/sdk';
+import { type PrismaClient, type AgentMemory } from '@prisma/client';
 
 interface MemoryServiceSettings {
   enabled: boolean;
@@ -362,7 +362,7 @@ export class MemoryService {
     return text.slice(start, end + 1);
   }
 
-  private safeParseJson(text: string): unknown | null {
+  private safeParseJson(text: string): unknown {
     try {
       return JSON.parse(text);
     } catch {

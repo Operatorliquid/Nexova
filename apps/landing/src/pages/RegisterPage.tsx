@@ -1,5 +1,6 @@
-import { FormEvent, useMemo, useState } from 'react';
+import { type FormEvent, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+
 import { API_URL, apiFetch, readErrorMessage } from '../lib/api';
 
 type RegisterResponse = {
@@ -37,7 +38,7 @@ const getPasswordStrength = (pw: string): { level: number; label: string; color:
   return { level: 5, label: 'Muy fuerte', color: 'bg-emerald-400' };
 };
 
-export default function RegisterPage() {
+export default function RegisterPage(): JSX.Element {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const flowToken = useMemo(() => searchParams.get('flowToken')?.trim() || '', [searchParams]);
@@ -54,7 +55,7 @@ export default function RegisterPage() {
   const passwordStrength = getPasswordStrength(password);
   const passwordsMatch = confirmPassword.length === 0 || password === confirmPassword;
 
-  const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
+  const onSubmit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
     if (!flowToken) {
       setError('Falta el flowToken de checkout. Volvé al carrito.');
@@ -121,7 +122,7 @@ export default function RegisterPage() {
     }
   };
 
-  const continueWithGoogle = () => {
+  const continueWithGoogle = (): void => {
     if (!flowToken) {
       setError('Falta el flowToken de checkout. Volvé al carrito.');
       return;
@@ -362,7 +363,12 @@ export default function RegisterPage() {
           </div>
 
           {/* Form */}
-          <form className="px-6 pb-6 space-y-4" onSubmit={onSubmit}>
+          <form
+            className="px-6 pb-6 space-y-4"
+            onSubmit={(event) => {
+              void onSubmit(event);
+            }}
+          >
             {/* Email */}
             <div className="space-y-1.5">
               <label className="block text-xs font-medium text-white/50 uppercase tracking-wider">

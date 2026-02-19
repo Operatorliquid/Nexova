@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
 import { Key, Bot, Wrench, AlertTriangle, Gauge, Trash2, RefreshCw } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+
 import { DEFAULT_COMMERCE_PLAN_LIMITS } from '@nexova/shared';
+
 import {
   Badge,
   Button,
@@ -47,7 +49,7 @@ const DEFAULT_RATE_LIMITS: RateLimits = {
   loginAttemptsBeforeLock: 5,
 };
 
-const readApiError = async (response: Response, fallback: string) => {
+const readApiError = async (response: Response, fallback: string): Promise<string> => {
   try {
     const body = (await response.json()) as ApiErrorBody;
     if (typeof body.message === 'string' && body.message.trim()) return body.message;
@@ -58,7 +60,7 @@ const readApiError = async (response: Response, fallback: string) => {
   return fallback;
 };
 
-const toPositiveInt = (value: string, fallback: number) => {
+const toPositiveInt = (value: string, fallback: number): number => {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
@@ -117,7 +119,7 @@ const DEFAULT_PLAN_LIMITS_FORM: PlanLimitsForm = {
   },
 };
 
-export default function AdminSettingsPage() {
+export default function AdminSettingsPage(): JSX.Element {
   const toastSuccess = useToastStore((state) => state.success);
   const toastError = useToastStore((state) => state.error);
   const [isLoading, setIsLoading] = useState(true);
@@ -182,7 +184,7 @@ export default function AdminSettingsPage() {
 
       const featureFlags = asObject(settings.featureFlags);
       const commercePlanLimits = asObject(featureFlags.commercePlanLimits);
-      const pickNumberOrDefault = (value: unknown, fallback: number) => {
+      const pickNumberOrDefault = (value: unknown, fallback: number): string => {
         if (typeof value === 'number' && Number.isFinite(value) && value > 0) return String(Math.trunc(value));
         if (typeof value === 'string') {
           const n = Number.parseInt(value.trim(), 10);
@@ -190,7 +192,7 @@ export default function AdminSettingsPage() {
         }
         return String(fallback);
       };
-      const pickNumberOrEmpty = (value: unknown) => {
+      const pickNumberOrEmpty = (value: unknown): string => {
         if (typeof value === 'number' && Number.isFinite(value) && value > 0) return String(Math.trunc(value));
         if (typeof value === 'string') {
           const n = Number.parseInt(value.trim(), 10);
@@ -234,10 +236,10 @@ export default function AdminSettingsPage() {
   }, [toastError]);
 
   useEffect(() => {
-    loadSettings();
+    void loadSettings();
   }, [loadSettings]);
 
-  const saveGeneral = async () => {
+  const saveGeneral = async (): Promise<void> => {
     setIsSavingGeneral(true);
     try {
       const response = await apiFetch('/api/v1/admin/settings', {
@@ -257,7 +259,7 @@ export default function AdminSettingsPage() {
     }
   };
 
-  const saveAnthropicKey = async () => {
+  const saveAnthropicKey = async (): Promise<void> => {
     if (!anthropicKey.trim()) {
       toastError('Ingresá una API key');
       return;
@@ -280,7 +282,7 @@ export default function AdminSettingsPage() {
     }
   };
 
-  const saveRateLimits = async () => {
+  const saveRateLimits = async (): Promise<void> => {
     setIsSavingLimits(true);
     try {
       const payload: RateLimits = {
@@ -310,10 +312,10 @@ export default function AdminSettingsPage() {
     }
   };
 
-  const savePlanLimits = async () => {
+  const savePlanLimits = async (): Promise<void> => {
     setIsSavingPlanLimits(true);
     try {
-      const toNullablePositiveInt = (value: string) => {
+      const toNullablePositiveInt = (value: string): number | null => {
         const parsed = Number.parseInt(value, 10);
         return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
       };
@@ -380,7 +382,7 @@ export default function AdminSettingsPage() {
     }
   };
 
-  const clearCache = async () => {
+  const clearCache = async (): Promise<void> => {
     if (!window.confirm('¿Querés limpiar la caché del sistema?')) return;
     setIsClearingCache(true);
     try {
@@ -412,7 +414,7 @@ export default function AdminSettingsPage() {
             Configuraciones globales que afectan a toda la plataforma
           </p>
         </div>
-        <Button variant="secondary" onClick={() => loadSettings(true)} isLoading={isRefreshing}>
+        <Button variant="secondary" onClick={() => { void loadSettings(true); }} isLoading={isRefreshing}>
           <RefreshCw className="w-4 h-4 mr-2" />
           Actualizar
         </Button>
@@ -451,7 +453,7 @@ export default function AdminSettingsPage() {
                 onChange={(e) => setAnthropicKey(e.target.value)}
                 className="flex-1"
               />
-              <Button onClick={saveAnthropicKey} isLoading={isSavingKey}>
+              <Button onClick={() => { void saveAnthropicKey(); }} isLoading={isSavingKey}>
                 {hasAnthropicKey ? 'Actualizar' : 'Guardar'}
               </Button>
             </div>
@@ -523,7 +525,7 @@ export default function AdminSettingsPage() {
           )}
 
           <div className="flex justify-end">
-            <Button onClick={saveGeneral} isLoading={isSavingGeneral}>
+            <Button onClick={() => { void saveGeneral(); }} isLoading={isSavingGeneral}>
               Guardar configuración general
             </Button>
           </div>
@@ -576,7 +578,7 @@ export default function AdminSettingsPage() {
             </div>
           </div>
           <div className="flex justify-end mt-4">
-            <Button onClick={saveRateLimits} isLoading={isSavingLimits}>Guardar límites</Button>
+            <Button onClick={() => { void saveRateLimits(); }} isLoading={isSavingLimits}>Guardar límites</Button>
           </div>
         </div>
       </div>
@@ -683,7 +685,7 @@ export default function AdminSettingsPage() {
           </div>
 
           <div className="flex justify-end">
-            <Button onClick={savePlanLimits} isLoading={isSavingPlanLimits}>
+            <Button onClick={() => { void savePlanLimits(); }} isLoading={isSavingPlanLimits}>
               Guardar límites por plan
             </Button>
           </div>
@@ -711,7 +713,7 @@ export default function AdminSettingsPage() {
                 </p>
               </div>
             </div>
-            <Button variant="destructive" size="sm" onClick={clearCache} isLoading={isClearingCache}>
+            <Button variant="destructive" size="sm" onClick={() => { void clearCache(); }} isLoading={isClearingCache}>
               Limpiar caché
             </Button>
           </div>

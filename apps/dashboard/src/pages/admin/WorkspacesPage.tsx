@@ -1,9 +1,12 @@
-import { useCallback, useEffect, useState } from 'react';
 import { Building2, Users, Package, ShoppingCart, Bot, RefreshCw } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+
+import { normalizeCommercePlan, type CommercePlan } from '@nexova/shared';
+
 import { Badge, Button, Input, AnimatedPage, AnimatedStagger, StatCard } from '../../components/ui';
 import { apiFetch } from '../../lib/api';
 import { useToastStore } from '../../stores/toast.store';
-import { normalizeCommercePlan, type CommercePlan } from '@nexova/shared';
+
 
 interface WorkspaceRow {
   id: string;
@@ -39,7 +42,7 @@ interface ApiErrorBody {
   error?: string;
 }
 
-const readApiError = async (response: Response, fallback: string) => {
+const readApiError = async (response: Response, fallback: string): Promise<string> => {
   try {
     const body = (await response.json()) as ApiErrorBody;
     if (typeof body.message === 'string' && body.message.trim()) return body.message;
@@ -50,25 +53,25 @@ const readApiError = async (response: Response, fallback: string) => {
   return fallback;
 };
 
-const getStatusBadge = (status: WorkspaceRow['status']) => {
+const getStatusBadge = (status: WorkspaceRow['status']): JSX.Element => {
   if (status === 'active') return <Badge variant="success">Activo</Badge>;
   if (status === 'suspended') return <Badge variant="warning">Suspendido</Badge>;
   return <Badge variant="secondary">Inactivo</Badge>;
 };
 
-const formatPlanLabel = (plan: CommercePlan) => {
+const formatPlanLabel = (plan: CommercePlan): string => {
   if (plan === 'basic') return 'Basic';
   if (plan === 'standard') return 'Standard';
   return 'Pro';
 };
 
-const getPlanVariant = (plan: CommercePlan) => {
+const getPlanVariant = (plan: CommercePlan): 'secondary' | 'info' | 'success' => {
   if (plan === 'basic') return 'secondary' as const;
   if (plan === 'standard') return 'info' as const;
   return 'success' as const;
 };
 
-const getPlanBadge = (rawPlan: string) => {
+const getPlanBadge = (rawPlan: string): JSX.Element => {
   const normalized = normalizeCommercePlan(rawPlan);
   if (!normalized) {
     return <Badge variant="outline">Plan {rawPlan || 'N/D'}</Badge>;
@@ -76,14 +79,14 @@ const getPlanBadge = (rawPlan: string) => {
   return <Badge variant={getPlanVariant(normalized)}>Plan {formatPlanLabel(normalized)}</Badge>;
 };
 
-const formatDate = (value: string) =>
+const formatDate = (value: string): string =>
   new Intl.DateTimeFormat('es-AR', {
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',
   }).format(new Date(value));
 
-export default function WorkspacesPage() {
+export default function WorkspacesPage(): JSX.Element {
   const toastError = useToastStore((state) => state.error);
   const [rows, setRows] = useState<WorkspaceRow[]>([]);
   const [stats, setStats] = useState<WorkspacesStats | null>(null);
@@ -148,7 +151,7 @@ export default function WorkspacesPage() {
   }, [pagination.page, pagination.limit, search, toastError]);
 
   useEffect(() => {
-    loadWorkspaces();
+    void loadWorkspaces();
   }, [loadWorkspaces]);
 
 
@@ -167,7 +170,7 @@ export default function WorkspacesPage() {
               onChange={(e) => setSearchInput(e.target.value)}
             />
           </div>
-          <Button variant="secondary" onClick={() => loadWorkspaces(true)} isLoading={isRefreshing}>
+          <Button variant="secondary" onClick={() => { void loadWorkspaces(true); }} isLoading={isRefreshing}>
             <RefreshCw className="w-4 h-4 mr-2" />
             Actualizar
           </Button>

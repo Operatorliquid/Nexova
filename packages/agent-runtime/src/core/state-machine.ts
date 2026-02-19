@@ -2,7 +2,7 @@
  * Agent State Machine (FSM)
  * Manages conversation flow states and transitions
  */
-import { AgentState, AgentStateType } from '../types/index.js';
+import { AgentState, type AgentStateType } from '../types/index.js';
 
 interface Transition {
   from: AgentStateType | AgentStateType[];
@@ -87,7 +87,7 @@ export class StateMachine {
     this.currentState = to;
     this.history.push({ from, to, timestamp: new Date() });
 
-    console.log(`[FSM] Transition: ${from} -> ${to}`);
+    console.warn(`[FSM] Transition: ${from} -> ${to}`);
     return true;
   }
 

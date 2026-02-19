@@ -5,11 +5,12 @@
  * ═══════════════════════════════════════════════════════════════════════════════
  */
 
-import { PDFDocument, PDFImage, PDFFont, rgb, StandardFonts } from 'pdf-lib';
-import sharp from 'sharp';
-import { PrismaClient } from '@prisma/client';
-import path from 'path';
 import { promises as fs, existsSync } from 'fs';
+import path from 'path';
+
+import { type PrismaClient } from '@prisma/client';
+import { PDFDocument, type PDFImage, type PDFFont, type PDFPage, rgb, StandardFonts } from 'pdf-lib';
+import sharp from 'sharp';
 
 const PAGE = { width: 595, height: 842 }; // A4
 const MARGIN = 36;
@@ -138,7 +139,7 @@ export class OrderReceiptPdfService {
   }
 
   private drawHeader(
-    page: any,
+    page: PDFPage,
     font: PDFFont,
     fontBold: PDFFont,
     params: {
@@ -164,7 +165,7 @@ export class OrderReceiptPdfService {
     });
 
     let leftX = MARGIN;
-    let headerBottom = titleY - 18;
+    const headerBottom = titleY - 18;
 
     if (params.logoImage && params.logoDims) {
       const logoY = headerBottom - params.logoDims.height + 12;
@@ -205,7 +206,7 @@ export class OrderReceiptPdfService {
   }
 
   private drawInfoBlock(
-    page: any,
+    page: PDFPage,
     font: PDFFont,
     fontBold: PDFFont,
     y: number,
@@ -232,7 +233,7 @@ export class OrderReceiptPdfService {
     return currentY;
   }
 
-  private drawTableHeader(page: any, fontBold: PDFFont, y: number): number {
+  private drawTableHeader(page: PDFPage, fontBold: PDFFont, y: number): number {
     const headerY = y - 4;
     page.drawRectangle({
       x: MARGIN,
@@ -276,7 +277,7 @@ export class OrderReceiptPdfService {
     return headerY - 18;
   }
 
-  private drawTableRow(page: any, font: PDFFont, y: number, item: ReceiptOrderItem) {
+  private drawTableRow(page: PDFPage, font: PDFFont, y: number, item: ReceiptOrderItem): void {
     const nameMaxWidth = PAGE.width * 0.55 - MARGIN;
     const nameText = this.truncateText(item.name, nameMaxWidth, font, 9);
 
@@ -301,7 +302,7 @@ export class OrderReceiptPdfService {
   }
 
   private drawTotals(
-    page: any,
+    page: PDFPage,
     font: PDFFont,
     fontBold: PDFFont,
     y: number,
@@ -329,7 +330,7 @@ export class OrderReceiptPdfService {
     return currentY;
   }
 
-  private drawNotes(page: any, font: PDFFont, fontBold: PDFFont, y: number, notes: string) {
+  private drawNotes(page: PDFPage, font: PDFFont, fontBold: PDFFont, y: number, notes: string): void {
     page.drawText('Notas:', {
       x: MARGIN,
       y,
@@ -350,7 +351,7 @@ export class OrderReceiptPdfService {
     pdfDoc: PDFDocument,
     fontBold: PDFFont,
     orderNumber: string
-  ): { page: any; y: number } {
+  ): { page: PDFPage; y: number } {
     const page = pdfDoc.addPage([PAGE.width, PAGE.height]);
     page.drawText(`BOLETA - ${orderNumber}`, {
       x: MARGIN,
@@ -369,14 +370,14 @@ export class OrderReceiptPdfService {
   }
 
   private drawRightText(
-    page: any,
+    page: PDFPage,
     font: PDFFont,
     text: string,
     rightX: number,
     y: number,
     size: number,
     color = COLORS.text
-  ) {
+  ): void {
     const width = font.widthOfTextAtSize(text, size);
     page.drawText(text, {
       x: rightX - width,
@@ -438,7 +439,7 @@ export class OrderReceiptPdfService {
     return { logoImage, logoDims: scale };
   }
 
-  private scaleToFit(width: number, height: number, maxWidth: number, maxHeight: number) {
+  private scaleToFit(width: number, height: number, maxWidth: number, maxHeight: number): { width: number; height: number } {
     const widthRatio = maxWidth / width;
     const heightRatio = maxHeight / height;
     const scale = Math.min(widthRatio, heightRatio);

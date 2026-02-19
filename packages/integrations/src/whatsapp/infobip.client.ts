@@ -3,6 +3,8 @@
  * Handles sending and receiving WhatsApp messages via Infobip
  */
 
+import { createHmac, timingSafeEqual } from 'crypto';
+
 export interface InfobipConfig {
   apiKey: string;
   baseUrl: string;
@@ -64,6 +66,49 @@ export interface IncomingWhatsAppMessage {
   context?: {
     messageId: string;
   };
+}
+
+type JsonObject = Record<string, unknown>;
+
+function asObject(value: unknown): JsonObject | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as JsonObject;
+}
+
+function firstObject(value: unknown): JsonObject | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  return asObject(value[0]);
+}
+
+function pickString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === 'string' && value.length > 0) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function pickFiniteNumber(...values: unknown[]): number | undefined {
+  for (const value of values) {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === 'string') {
+      const parsed = Number.parseFloat(value.trim());
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return undefined;
+}
+
+function parseReceivedAt(value: unknown): Date {
+  if (value instanceof Date) return value;
+  if (typeof value === 'string' || typeof value === 'number') {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+  return new Date();
 }
 
 export class InfobipClient {
@@ -296,8 +341,8 @@ export class InfobipClient {
    * Send a message via Infobip API
    */
   async sendMessage(message: WhatsAppMessage): Promise<WhatsAppMessageResponse> {
-    let endpointType = message.content.type;
-    let body: any;
+    const endpointType = message.content.type;
+    let body: Record<string, unknown>;
     const normalizedTo = this.normalizeTo(message.to);
 
     if (message.content.type === 'text') {
@@ -332,7 +377,7 @@ export class InfobipClient {
         },
       };
     } else {
-      throw new Error(`Unsupported message type: ${message.content.type}`);
+      throw new Error(`Unsupported message type: ${String(endpointType)}`);
     }
 
     const endpoint = `${this.baseUrl}/whatsapp/1/message/${endpointType}`;
@@ -388,39 +433,44 @@ export class InfobipClient {
   /**
    * Parse incoming webhook payload
    */
-  parseIncomingMessage(payload: any): IncomingWhatsAppMessage | null {
+  parseIncomingMessage(payload: unknown): IncomingWhatsAppMessage | null {
     try {
-      const result = payload.results?.[0];
+      const payloadObj = asObject(payload);
+      const result = firstObject(payloadObj?.results);
       if (!result) return null;
-      const eventType = typeof result.event === 'string' ? result.event.toUpperCase() : null;
+
+      const eventType = pickString(result.event)?.toUpperCase() ?? null;
       if (eventType && eventType !== 'MO') return null;
 
+      const messageObj = asObject(result.message);
+      const content = firstObject(result.content);
+      const context = asObject(result.context);
+
+      const messageId = pickString(result.messageId);
+      const from = pickString(result.from, result.sender);
+      const to = pickString(result.to, result.destination);
+
+      if (!messageId || !from || !to) return null;
+
       const message: IncomingWhatsAppMessage = {
-        messageId: result.messageId,
-        from: result.from || result.sender,
-        to: result.to || result.destination,
-        receivedAt: new Date(result.receivedAt),
+        messageId,
+        from,
+        to,
+        receivedAt: parseReceivedAt(result.receivedAt),
         content: {
           type: 'text',
         },
       };
 
       // Parse content based on type (support legacy and new formats)
-      const content = result.content?.[0];
-
-      const contentType = typeof content?.type === 'string' ? content.type.toUpperCase() : '';
-      const messageType = typeof result.message?.type === 'string' ? result.message.type.toUpperCase() : '';
+      const contentType = pickString(content?.type)?.toUpperCase() ?? '';
+      const messageType = pickString(messageObj?.type)?.toUpperCase() ?? '';
       const interactiveType = messageType || contentType;
-      const mediaUrl = content?.mediaUrl || content?.url || result.message?.url || result.message?.mediaUrl;
-      const mimeType = content?.mimeType || content?.mimetype || result.message?.mimeType || result.message?.mimetype;
-      const fileName = content?.fileName || content?.filename || result.message?.fileName || result.message?.filename;
-      const durationRaw = content?.duration || result.message?.duration || result.message?.durationMs || result.message?.audioDuration;
-      const durationMs =
-        typeof durationRaw === 'number' && Number.isFinite(durationRaw)
-          ? Math.trunc(durationRaw)
-          : typeof durationRaw === 'string'
-            ? Number.parseInt(durationRaw.trim(), 10)
-            : undefined;
+      const mediaUrl = pickString(content?.mediaUrl, content?.url, messageObj?.url, messageObj?.mediaUrl);
+      const mimeType = pickString(content?.mimeType, content?.mimetype, messageObj?.mimeType, messageObj?.mimetype);
+      const fileName = pickString(content?.fileName, content?.filename, messageObj?.fileName, messageObj?.filename);
+      const durationValue = pickFiniteNumber(content?.duration, messageObj?.duration, messageObj?.durationMs, messageObj?.audioDuration);
+      const durationMs = durationValue !== undefined ? Math.trunc(durationValue) : undefined;
       const isAudioType =
         contentType === 'AUDIO'
         || contentType === 'VOICE'
@@ -431,70 +481,75 @@ export class InfobipClient {
       const isAudioMime = typeof mimeType === 'string' && mimeType.toLowerCase().startsWith('audio/');
 
       if (interactiveType.includes('INTERACTIVE') || interactiveType.includes('BUTTON_REPLY')) {
-        const replyId = result.message?.id || content?.id || result.message?.payload || content?.payload;
-        const replyTitle = result.message?.title || content?.title || result.message?.text || content?.text;
+        const replyId = pickString(messageObj?.id, content?.id, messageObj?.payload, content?.payload);
+        const replyTitle = pickString(messageObj?.title, content?.title, messageObj?.text, content?.text);
         message.content = {
           type: 'text',
           text: replyId || replyTitle,
         };
-      } else if (content?.text || result.message?.text) {
+      } else if (pickString(content?.text, messageObj?.text)) {
         message.content = {
           type: 'text',
-          text: content?.text || result.message.text,
+          text: pickString(content?.text, messageObj?.text),
         };
       } else if (
-        (mediaUrl || result.message?.audioUrl) &&
-        (isAudioType || isAudioMime || !!result.message?.audioUrl)
+        (mediaUrl || pickString(messageObj?.audioUrl)) &&
+        (isAudioType || isAudioMime || Boolean(pickString(messageObj?.audioUrl)))
       ) {
         message.content = {
           type: 'audio',
-          mediaUrl: mediaUrl || result.message?.audioUrl,
+          mediaUrl: mediaUrl || pickString(messageObj?.audioUrl),
           mimeType,
           fileName,
-          ...(Number.isFinite(durationMs as number) ? { durationMs: durationMs as number } : {}),
+          ...(durationMs !== undefined ? { durationMs } : {}),
         };
       } else if (
         mediaUrl &&
-        content?.type?.toLowerCase() === 'image'
+        contentType.toLowerCase() === 'image'
       ) {
         message.content = {
           type: 'image',
           mediaUrl,
-          caption: content.caption,
+          caption: pickString(content?.caption),
         };
       } else if (
         mediaUrl &&
-        content?.type?.toLowerCase() === 'document'
+        contentType.toLowerCase() === 'document'
       ) {
         message.content = {
           type: 'document',
           mediaUrl,
-          caption: content.caption,
+          caption: pickString(content?.caption),
         };
-      } else if (result.message?.imageUrl) {
+      } else if (pickString(messageObj?.imageUrl)) {
         message.content = {
           type: 'image',
-          mediaUrl: result.message.imageUrl,
-          caption: result.message.caption,
+          mediaUrl: pickString(messageObj?.imageUrl),
+          caption: pickString(messageObj?.caption),
         };
-      } else if (result.message?.documentUrl) {
+      } else if (pickString(messageObj?.documentUrl)) {
         message.content = {
           type: 'document',
-          mediaUrl: result.message.documentUrl,
-          caption: result.message.caption,
+          mediaUrl: pickString(messageObj?.documentUrl),
+          caption: pickString(messageObj?.caption),
         };
-      } else if (result.message?.location) {
+      } else if (asObject(messageObj?.location)) {
+        const location = asObject(messageObj?.location);
+        const latitude = pickFiniteNumber(location?.latitude);
+        const longitude = pickFiniteNumber(location?.longitude);
+        if (latitude === undefined || longitude === undefined) return message;
         message.content = {
           type: 'location',
-          latitude: result.message.location.latitude,
-          longitude: result.message.location.longitude,
+          latitude,
+          longitude,
         };
       }
 
       // Context for replies
-      if (result.context?.messageId) {
+      const contextMessageId = pickString(context?.messageId);
+      if (contextMessageId) {
         message.context = {
-          messageId: result.context.messageId,
+          messageId: contextMessageId,
         };
       }
 
@@ -509,17 +564,15 @@ export class InfobipClient {
    */
   verifyWebhookSignature(payload: string | Buffer, signature: string, secret: string): boolean {
     // Infobip uses HMAC-SHA256 for webhook signatures
-    const crypto = require('crypto');
     const provided = (signature.startsWith('sha256=') ? signature.slice(7) : signature)
       .trim()
       .toLowerCase();
-    const expectedSignature = crypto
-      .createHmac('sha256', secret)
+    const expectedSignature = createHmac('sha256', secret)
       .update(payload)
       .digest('hex');
 
     try {
-      return crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expectedSignature));
+      return timingSafeEqual(Buffer.from(provided), Buffer.from(expectedSignature));
     } catch {
       return false;
     }

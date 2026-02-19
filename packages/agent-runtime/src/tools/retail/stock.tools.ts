@@ -2,10 +2,11 @@
  * Stock/Inventory Tools
  * Tools for inventory management by AI agent
  */
+import { type Prisma, type PrismaClient } from '@prisma/client';
 import { z } from 'zod';
-import { PrismaClient } from '@prisma/client';
+
+import { ToolCategory, type ToolContext, type ToolResult } from '../../types/index.js';
 import { BaseTool } from '../base.js';
-import { ToolCategory, ToolContext, ToolResult } from '../../types/index.js';
 import { buildProductDisplayName } from './product-utils.js';
 
 const DEFAULT_LOW_STOCK_THRESHOLD = 10;
@@ -201,7 +202,7 @@ export class UpdateProductTool extends BaseTool<typeof UpdateProductInput> {
     const { productId, sku, name, description, price, unit, unitValue, secondaryUnit, secondaryUnitValue, status, imageUrl } = input;
 
     // Find product
-    const where: any = { workspaceId: context.workspaceId, deletedAt: null };
+    const where: Prisma.ProductWhereInput = { workspaceId: context.workspaceId, deletedAt: null };
     if (productId) where.id = productId;
     else if (sku) where.sku = sku;
 
@@ -211,7 +212,7 @@ export class UpdateProductTool extends BaseTool<typeof UpdateProductInput> {
     }
 
     // Build update data
-    const updateData: any = {};
+    const updateData: Prisma.ProductUpdateManyMutationInput = {};
     if (name) updateData.name = name;
     if (description !== undefined) updateData.description = description;
     if (price !== undefined) updateData.price = Math.round(price * 100);
@@ -294,7 +295,7 @@ export class DeleteProductTool extends BaseTool<typeof DeleteProductInput> {
     const { productId, sku, productName } = input;
 
     // Find product
-    const where: any = { workspaceId: context.workspaceId, deletedAt: null };
+    const where: Prisma.ProductWhereInput = { workspaceId: context.workspaceId, deletedAt: null };
     if (productId) where.id = productId;
     else if (sku) where.sku = sku;
     else if (productName) where.name = { contains: productName, mode: 'insensitive' };
@@ -346,7 +347,7 @@ export class AdjustStockTool extends BaseTool<typeof AdjustStockInput> {
     const { productId, sku, productName, quantity, reason } = input;
 
     // Find product
-    const where: any = { workspaceId: context.workspaceId, deletedAt: null };
+    const where: Prisma.ProductWhereInput = { workspaceId: context.workspaceId, deletedAt: null };
     if (productId) where.id = productId;
     else if (sku) where.sku = sku;
     else if (productName) where.name = { contains: productName, mode: 'insensitive' };
@@ -468,7 +469,7 @@ export class GetFullStockTool extends BaseTool<typeof GetFullStockInput> {
     const { categoryName, search, lowStockOnly, outOfStockOnly, limit } = input;
 
     // Build where clause
-    const where: any = {
+    const where: Prisma.ProductWhereInput = {
       workspaceId: context.workspaceId,
       status: 'active',
       deletedAt: null,
@@ -639,9 +640,9 @@ export class ListCategoriesTool extends BaseTool<typeof ListCategoriesInput> {
     const categories = await this.prisma.productCategory.findMany({
       where: { workspaceId: context.workspaceId, deletedAt: null },
       orderBy: { name: 'asc' },
-      include: includeProductCount ? {
+      include: {
         _count: { select: { products: true } },
-      } : undefined,
+      },
     });
 
     const formattedCategories = categories.map((c) => ({
@@ -649,7 +650,7 @@ export class ListCategoriesTool extends BaseTool<typeof ListCategoriesInput> {
       name: c.name,
       description: c.description,
       color: c.color,
-      productCount: includeProductCount ? (c as any)._count?.products || 0 : undefined,
+      productCount: includeProductCount ? c._count.products : undefined,
     }));
 
     return {
@@ -689,7 +690,7 @@ export class DeleteCategoryTool extends BaseTool<typeof DeleteCategoryInput> {
     const { categoryId, categoryName } = input;
 
     // Find category
-    const where: any = { workspaceId: context.workspaceId, deletedAt: null };
+    const where: Prisma.ProductCategoryWhereInput = { workspaceId: context.workspaceId, deletedAt: null };
     if (categoryId) where.id = categoryId;
     else if (categoryName) where.name = { contains: categoryName, mode: 'insensitive' };
 
@@ -745,7 +746,7 @@ export class AssignCategoryToProductTool extends BaseTool<typeof AssignCategoryI
     const { productId, sku, productName, categoryName } = input;
 
     // Find product
-    const where: any = { workspaceId: context.workspaceId, deletedAt: null };
+    const where: Prisma.ProductWhereInput = { workspaceId: context.workspaceId, deletedAt: null };
     if (productId) where.id = productId;
     else if (sku) where.sku = sku;
     else if (productName) where.name = { contains: productName, mode: 'insensitive' };
@@ -793,7 +794,7 @@ export class AssignCategoryToProductTool extends BaseTool<typeof AssignCategoryI
 /**
  * Create all stock/inventory tools
  */
-export function createStockTools(prisma: PrismaClient): BaseTool<any, any>[] {
+export function createStockTools(prisma: PrismaClient): Array<BaseTool<z.ZodSchema, unknown>> {
   return [
     new CreateProductTool(prisma),
     new UpdateProductTool(prisma),

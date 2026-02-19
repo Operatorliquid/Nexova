@@ -2,10 +2,12 @@
  * Tool Registry
  * Manages available tools for the agent
  */
-import { Prisma, PrismaClient } from '@prisma/client';
-import { BaseTool } from './base.js';
-import { ToolContext, ToolExecution, ToolCategory, ToolResult, ToolCategoryType } from '../types/index.js';
-import { MemoryManager } from '../core/memory-manager.js';
+import { type Prisma, type PrismaClient } from '@prisma/client';
+import type { z } from 'zod';
+
+import { type BaseTool } from './base.js';
+import { type MemoryManager } from '../core/memory-manager.js';
+import { type ToolContext, type ToolExecution, ToolCategory, type ToolResult, type ToolCategoryType } from '../types/index.js';
 
 const SENSITIVE_KEY_PATTERN =
   /(password|token|secret|apiKey|apikey|accessToken|refreshToken|authorization|email|phone|dni|document|address|cbu|alias|account|card|cvv|cvc|iban|bank)/i;
@@ -86,6 +88,13 @@ function buildResultData(result: ToolResult): Record<string, unknown> | null {
   return Object.keys(summary).length > 0 ? summary : null;
 }
 
+function asInputRecord(value: unknown): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return {};
+}
+
 export interface ToolDefinitionForLLM {
   name: string;
   description: string;
@@ -93,7 +102,7 @@ export interface ToolDefinitionForLLM {
 }
 
 export class ToolRegistry {
-  private tools: Map<string, BaseTool<any, any>> = new Map();
+  private tools: Map<string, BaseTool<z.ZodSchema, unknown>> = new Map();
   private memoryManager?: MemoryManager;
   private prisma?: PrismaClient;
 
@@ -160,7 +169,7 @@ export class ToolRegistry {
   /**
    * Register a tool
    */
-  register(tool: BaseTool<any, any>): void {
+  register(tool: BaseTool<z.ZodSchema, unknown>): void {
     const shouldLog = !(process.env.NODE_ENV === 'test' || process.env.VITEST);
     if (this.tools.has(tool.name)) {
       if (shouldLog) {
@@ -169,14 +178,14 @@ export class ToolRegistry {
     }
     this.tools.set(tool.name, tool);
     if (shouldLog) {
-      console.log(`[ToolRegistry] Registered tool: ${tool.name} (${tool.category})`);
+      console.warn(`[ToolRegistry] Registered tool: ${tool.name} (${tool.category})`);
     }
   }
 
   /**
    * Register multiple tools
    */
-  registerAll(tools: BaseTool<any, any>[]): void {
+  registerAll(tools: BaseTool<z.ZodSchema, unknown>[]): void {
     for (const tool of tools) {
       this.register(tool);
     }
@@ -185,14 +194,14 @@ export class ToolRegistry {
   /**
    * Get a tool by name
    */
-  get(name: string): BaseTool<any, any> | undefined {
+  get(name: string): BaseTool<z.ZodSchema, unknown> | undefined {
     return this.tools.get(name);
   }
 
   /**
    * Get all registered tools
    */
-  getAll(): BaseTool<any, any>[] {
+  getAll(): BaseTool<z.ZodSchema, unknown>[] {
     return Array.from(this.tools.values());
   }
 
@@ -295,6 +304,7 @@ export class ToolRegistry {
 
     // Check idempotency
     const idempotencyKey = tool.getIdempotencyKey(validation.data);
+    const validatedInput = asInputRecord(validation.data);
     if (idempotencyKey && this.memoryManager) {
       const alreadyExecuted = await this.memoryManager.checkIdempotency(idempotencyKey);
       if (alreadyExecuted) {
@@ -302,7 +312,7 @@ export class ToolRegistry {
           correlationId: context.correlationId,
           toolName: name,
           category: tool.category,
-          input,
+          input: validatedInput,
           result: {
             success: true,
             data: { message: 'Operation already executed (idempotency)' },
@@ -315,7 +325,7 @@ export class ToolRegistry {
           context,
           toolName: name,
           toolCategory: tool.category,
-          inputParams: validation.data,
+          inputParams: validatedInput,
           validationStatus: 'passed',
           confirmationRequired: tool.requiresConfirmation,
           resultStatus: 'success',
@@ -340,7 +350,7 @@ export class ToolRegistry {
         correlationId: context.correlationId,
         toolName: name,
         category: tool.category,
-        input: validation.data,
+        input: validatedInput,
         result,
         durationMs: Date.now() - startTime,
         validationPassed: true,
@@ -350,7 +360,7 @@ export class ToolRegistry {
         context,
         toolName: name,
         toolCategory: tool.category,
-        inputParams: validation.data,
+        inputParams: validatedInput,
         validationStatus: 'passed',
         confirmationRequired: tool.requiresConfirmation,
         resultStatus: result.success ? 'success' : 'error',
@@ -365,7 +375,7 @@ export class ToolRegistry {
         correlationId: context.correlationId,
         toolName: name,
         category: tool.category,
-        input: validation.data,
+        input: validatedInput,
         result: {
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error',
@@ -378,7 +388,7 @@ export class ToolRegistry {
         context,
         toolName: name,
         toolCategory: tool.category,
-        inputParams: validation.data,
+        inputParams: validatedInput,
         validationStatus: 'passed',
         confirmationRequired: tool.requiresConfirmation,
         resultStatus: 'error',

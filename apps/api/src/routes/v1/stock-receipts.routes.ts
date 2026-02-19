@@ -2,16 +2,19 @@
  * Stock Purchase Receipts Routes
  * Upload + OCR + apply supplier receipts to increase stock.
  */
-import { FastifyPluginAsync } from 'fastify';
 import { randomUUID, createHash } from 'crypto';
 import { promises as fs, existsSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { Prisma } from '@prisma/client';
+
+import { type Prisma } from '@prisma/client';
+import { type FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
+
 import { StockPurchaseReceiptService } from '@nexova/core';
-import { extractStockReceiptWithClaude } from '../../utils/stock-receipt-claude.js';
+
 import { getWorkspacePlanContext } from '../../utils/commerce-plan.js';
+import { extractStockReceiptWithClaude } from '../../utils/stock-receipt-claude.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -44,6 +47,39 @@ const SECONDARY_UNIT_LABELS: Record<string, string> = {
 };
 
 const PRIMARY_UNITS = ['unit', 'kg', 'g', 'l', 'ml', 'm', 'cm'] as const;
+
+type StockReceiptDisabledPayload = {
+  error: 'FORBIDDEN_BY_PLAN';
+  message: string;
+};
+
+type StockReceiptGateResult =
+  | { ok: true }
+  | { ok: false; code: number; payload: StockReceiptDisabledPayload };
+
+type SuggestedProductData = {
+  name: string | null;
+  unit: string | null;
+  unitValue: string | null;
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null;
+
+const getSuggestedProductData = (value: unknown): SuggestedProductData => {
+  if (!isRecord(value)) {
+    return { name: null, unit: null, unitValue: null };
+  }
+  const suggested = value.suggestedProduct;
+  if (!isRecord(suggested)) {
+    return { name: null, unit: null, unitValue: null };
+  }
+  return {
+    name: typeof suggested.name === 'string' ? suggested.name : null,
+    unit: typeof suggested.unit === 'string' ? suggested.unit : null,
+    unitValue: typeof suggested.unitValue === 'string' ? suggested.unitValue : null,
+  };
+};
 
 const applyEditableItemSchema = z.object({
   id: z.string().uuid(),
@@ -148,7 +184,7 @@ export const stockReceiptsRoutes: FastifyPluginAsync = async (fastify) => {
   const assertStockReceiptsEnabled = async (
     workspaceId: string,
     userId: string
-  ): Promise<{ ok: true } | { ok: false; code: number; payload: any }> => {
+  ): Promise<StockReceiptGateResult> => {
     const membership = await fastify.prisma.membership.findFirst({
       where: {
         workspaceId,
@@ -181,7 +217,7 @@ export const stockReceiptsRoutes: FastifyPluginAsync = async (fastify) => {
    */
   fastify.post(
     '/preview',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('stock:adjust')] },
     async (request, reply) => {
       const workspaceId = request.workspaceId;
       if (!workspaceId) {
@@ -206,7 +242,15 @@ export const stockReceiptsRoutes: FastifyPluginAsync = async (fastify) => {
 
       const chunks: Buffer[] = [];
       for await (const chunk of data.file) {
-        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        if (Buffer.isBuffer(chunk)) {
+          chunks.push(chunk);
+          continue;
+        }
+        if (chunk instanceof Uint8Array) {
+          chunks.push(Buffer.from(chunk));
+          continue;
+        }
+        chunks.push(Buffer.from(String(chunk)));
       }
       const buffer = Buffer.concat(chunks);
       if (buffer.length === 0) {
@@ -258,37 +302,30 @@ export const stockReceiptsRoutes: FastifyPluginAsync = async (fastify) => {
                 fileHash: draft.fileHash,
                 createdAt: draft.createdAt.toISOString(),
               },
-              items: draft.items.map((it) => ({
-                id: it.id,
-                description: it.rawDescription,
-                quantity: it.quantity,
-                isPack: it.isPack,
-                unitsPerPack: it.unitsPerPack,
-                quantityBaseUnits: it.quantityBaseUnits,
-                matchedProductId: it.matchedProductId,
-                matchedProductName: (() => {
-                  if (!it.matchedProductId) return null;
-                  const matched = productMap.get(it.matchedProductId);
-                  return matched ? buildProductDisplayName(matched) : null;
-                })(),
-                suggestedProductName:
-                  (it.suggestedProductData as any)?.suggestedProduct?.name
-                    ? normalizeSuggestedName(
-                        String((it.suggestedProductData as any).suggestedProduct.name),
-                        it.rawDescription
-                      )
+              items: draft.items.map((it) => {
+                const suggested = getSuggestedProductData(it.suggestedProductData);
+                return {
+                  id: it.id,
+                  description: it.rawDescription,
+                  quantity: it.quantity,
+                  isPack: it.isPack,
+                  unitsPerPack: it.unitsPerPack,
+                  quantityBaseUnits: it.quantityBaseUnits,
+                  matchedProductId: it.matchedProductId,
+                  matchedProductName: (() => {
+                    if (!it.matchedProductId) return null;
+                    const matched = productMap.get(it.matchedProductId);
+                    return matched ? buildProductDisplayName(matched) : null;
+                  })(),
+                  suggestedProductName: suggested.name
+                    ? normalizeSuggestedName(suggested.name, it.rawDescription)
                     : null,
-                suggestedProductUnit:
-                  (it.suggestedProductData as any)?.suggestedProduct?.unit
-                    ? String((it.suggestedProductData as any).suggestedProduct.unit)
-                    : null,
-                suggestedProductUnitValue:
-                  (it.suggestedProductData as any)?.suggestedProduct?.unitValue
-                    ? String((it.suggestedProductData as any).suggestedProduct.unitValue)
-                    : null,
-                matchConfidence: it.matchConfidence ? Number(it.matchConfidence) : null,
-                createdProductId: it.createdProductId,
-              })),
+                  suggestedProductUnit: suggested.unit,
+                  suggestedProductUnitValue: suggested.unitValue,
+                  matchConfidence: it.matchConfidence ? Number(it.matchConfidence) : null,
+                  createdProductId: it.createdProductId,
+                };
+              }),
             });
           }
         }
@@ -416,37 +453,30 @@ export const stockReceiptsRoutes: FastifyPluginAsync = async (fastify) => {
           fileHash: draft.fileHash,
           createdAt: draft.createdAt.toISOString(),
         },
-        items: draft.items.map((it) => ({
-          id: it.id,
-          description: it.rawDescription,
-          quantity: it.quantity,
-          isPack: it.isPack,
-          unitsPerPack: it.unitsPerPack,
-          quantityBaseUnits: it.quantityBaseUnits,
-          matchedProductId: it.matchedProductId,
-          matchedProductName: (() => {
-            if (!it.matchedProductId) return null;
-            const matched = productMap.get(it.matchedProductId);
-            return matched ? buildProductDisplayName(matched) : null;
-          })(),
-          suggestedProductName:
-            (it.suggestedProductData as any)?.suggestedProduct?.name
-              ? normalizeSuggestedName(
-                  String((it.suggestedProductData as any).suggestedProduct.name),
-                  it.rawDescription
-                )
+        items: draft.items.map((it) => {
+          const suggested = getSuggestedProductData(it.suggestedProductData);
+          return {
+            id: it.id,
+            description: it.rawDescription,
+            quantity: it.quantity,
+            isPack: it.isPack,
+            unitsPerPack: it.unitsPerPack,
+            quantityBaseUnits: it.quantityBaseUnits,
+            matchedProductId: it.matchedProductId,
+            matchedProductName: (() => {
+              if (!it.matchedProductId) return null;
+              const matched = productMap.get(it.matchedProductId);
+              return matched ? buildProductDisplayName(matched) : null;
+            })(),
+            suggestedProductName: suggested.name
+              ? normalizeSuggestedName(suggested.name, it.rawDescription)
               : null,
-          suggestedProductUnit:
-            (it.suggestedProductData as any)?.suggestedProduct?.unit
-              ? String((it.suggestedProductData as any).suggestedProduct.unit)
-              : null,
-          suggestedProductUnitValue:
-            (it.suggestedProductData as any)?.suggestedProduct?.unitValue
-              ? String((it.suggestedProductData as any).suggestedProduct.unitValue)
-              : null,
-          matchConfidence: it.matchConfidence ? Number(it.matchConfidence) : null,
-          createdProductId: it.createdProductId,
-        })),
+            suggestedProductUnit: suggested.unit,
+            suggestedProductUnitValue: suggested.unitValue,
+            matchConfidence: it.matchConfidence ? Number(it.matchConfidence) : null,
+            createdProductId: it.createdProductId,
+          };
+        }),
       });
     }
   );
@@ -457,7 +487,7 @@ export const stockReceiptsRoutes: FastifyPluginAsync = async (fastify) => {
    */
   fastify.post(
     '/:id/apply',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('stock:adjust')] },
     async (request, reply) => {
       const workspaceId = request.workspaceId;
       if (!workspaceId) {

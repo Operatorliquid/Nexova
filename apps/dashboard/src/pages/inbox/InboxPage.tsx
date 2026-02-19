@@ -1,11 +1,14 @@
+import { ArrowLeft, Info, MessageSquare, Trash2, Send, Loader2, AlertTriangle, MessagesSquare } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Info, MessageSquare, Trash2, Send, Loader2, AlertTriangle, MessagesSquare } from 'lucide-react';
+
 import { Button, Input, AnimatedPage } from '../../components/ui';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '../../components/ui/sheet';
 import { useAuth } from '../../contexts/AuthContext';
 import { cn } from '../../lib/utils';
+
+type JsonRecord = Record<string, unknown>;
 
 interface Conversation {
   id: string;
@@ -40,14 +43,167 @@ interface SessionInfo {
   currentState: string;
 }
 
-const API_URL = import.meta.env.VITE_API_URL || '';
+const envValues = import.meta.env as unknown as Record<string, unknown>;
+const apiUrlFromEnv = envValues['VITE_API_URL'];
+const API_URL = typeof apiUrlFromEnv === 'string' ? apiUrlFromEnv : '';
 
-const fetchWithCredentials = (input: RequestInfo | URL, init?: RequestInit) => fetch(input, {
-  ...init,
-  credentials: 'include',
-});
+const fetchWithCredentials = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>
+  fetch(input, {
+    ...init,
+    credentials: 'include',
+  });
 
-export default function InboxPage() {
+function asRecord(value: unknown): JsonRecord | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as JsonRecord)
+    : null;
+}
+
+function readString(record: JsonRecord | null, key: string): string | undefined {
+  if (!record) {
+    return undefined;
+  }
+  const value = record[key];
+  return typeof value === 'string' ? value : undefined;
+}
+
+function readBoolean(record: JsonRecord | null, key: string): boolean | undefined {
+  if (!record) {
+    return undefined;
+  }
+  const value = record[key];
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+function readRecord(record: JsonRecord | null, key: string): JsonRecord | null {
+  if (!record) {
+    return null;
+  }
+  return asRecord(record[key]);
+}
+
+function readArray(record: JsonRecord | null, key: string): unknown[] {
+  if (!record) {
+    return [];
+  }
+  const value = record[key];
+  return Array.isArray(value) ? value : [];
+}
+
+async function readJsonRecord(response: Response): Promise<JsonRecord | null> {
+  try {
+    const payload: unknown = await response.json();
+    return asRecord(payload);
+  } catch {
+    return null;
+  }
+}
+
+function parseConversation(value: unknown): Conversation | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  const id = readString(record, 'id');
+  const customerId = readString(record, 'customerId');
+  const customerPhone = readString(record, 'customerPhone');
+  const customerName = readString(record, 'customerName');
+  const channelType = readString(record, 'channelType');
+  const currentState = readString(record, 'currentState');
+  const lastActivityAt = readString(record, 'lastActivityAt');
+  if (
+    !id ||
+    !customerId ||
+    !customerPhone ||
+    !customerName ||
+    !channelType ||
+    !currentState ||
+    !lastActivityAt
+  ) {
+    return null;
+  }
+
+  return {
+    id,
+    customerId,
+    customerPhone,
+    customerName,
+    channelType,
+    agentActive: readBoolean(record, 'agentActive') ?? false,
+    currentState,
+    lastMessage: readString(record, 'lastMessage') ?? null,
+    lastMessageRole: readString(record, 'lastMessageRole') ?? null,
+    lastActivityAt,
+  };
+}
+
+function parseMessage(value: unknown): Message | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  const id = readString(record, 'id');
+  const roleValue = readString(record, 'role');
+  const content = readString(record, 'content');
+  const createdAt = readString(record, 'createdAt');
+  if (!id || !roleValue || !content || !createdAt) {
+    return null;
+  }
+
+  const role: Message['role'] =
+    roleValue === 'user' || roleValue === 'assistant' || roleValue === 'system'
+      ? roleValue
+      : 'system';
+
+  return {
+    id,
+    role,
+    content,
+    metadata: asRecord(record.metadata) ?? {},
+    createdAt,
+  };
+}
+
+function parseSessionInfo(value: unknown): SessionInfo | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  const customer = asRecord(record.customer);
+  if (!customer) {
+    return null;
+  }
+
+  const id = readString(record, 'id');
+  const customerId = readString(customer, 'id');
+  const phone = readString(customer, 'phone');
+  const currentState = readString(record, 'currentState');
+  if (!id || !customerId || !phone || !currentState) {
+    return null;
+  }
+
+  return {
+    id,
+    customer: {
+      id: customerId,
+      phone,
+      firstName: readString(customer, 'firstName') ?? null,
+      lastName: readString(customer, 'lastName') ?? null,
+    },
+    agentActive: readBoolean(record, 'agentActive') ?? false,
+    currentState,
+  };
+}
+
+function isSentByHuman(metadata: Record<string, unknown>): boolean {
+  const value = metadata.sentByHuman;
+  return value === true;
+}
+
+export default function InboxPage(): JSX.Element {
   const { workspace } = useAuth();
   const [searchParams] = useSearchParams();
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -68,9 +224,11 @@ export default function InboxPage() {
 
   // Fetch conversations
   useEffect(() => {
-    if (!workspace?.id) return;
+    if (!workspace?.id) {
+      return;
+    }
 
-    const fetchConversations = async () => {
+    const fetchConversations = async (): Promise<void> => {
       try {
         const res = await fetchWithCredentials(`${API_URL}/api/v1/conversations`, {
           headers: {
@@ -79,8 +237,12 @@ export default function InboxPage() {
         });
 
         if (res.ok) {
-          const data = await res.json();
-          setConversations(data.conversations || []);
+          const data = await readJsonRecord(res);
+          setConversations(
+            readArray(data, 'conversations')
+              .map(item => parseConversation(item))
+              .filter((item): item is Conversation => item !== null)
+          );
         }
       } catch (error) {
         console.error('Failed to fetch conversations:', error);
@@ -89,15 +251,21 @@ export default function InboxPage() {
       }
     };
 
-    fetchConversations();
-    const interval = setInterval(fetchConversations, 5000);
+    void fetchConversations();
+    const interval = setInterval(() => {
+      void fetchConversations();
+    }, 5000);
     return () => clearInterval(interval);
   }, [workspace?.id]);
 
   // Auto-select conversation from URL param
   useEffect(() => {
-    if (!sessionParam) return;
-    if (selectedConversation === sessionParam) return;
+    if (!sessionParam) {
+      return;
+    }
+    if (selectedConversation === sessionParam) {
+      return;
+    }
     const exists = conversations.some((conversation) => conversation.id === sessionParam);
     if (exists || conversations.length === 0) {
       setSelectedConversation(sessionParam);
@@ -113,7 +281,7 @@ export default function InboxPage() {
       return;
     }
 
-    const fetchMessages = async () => {
+    const fetchMessages = async (): Promise<void> => {
       try {
         const res = await fetchWithCredentials(
           `${API_URL}/api/v1/conversations/${selectedConversation}/messages`,
@@ -125,17 +293,23 @@ export default function InboxPage() {
         );
 
         if (res.ok) {
-          const data = await res.json();
-          setMessages(data.messages || []);
-          setSessionInfo(data.session || null);
+          const data = await readJsonRecord(res);
+          setMessages(
+            readArray(data, 'messages')
+              .map(item => parseMessage(item))
+              .filter((item): item is Message => item !== null)
+          );
+          setSessionInfo(parseSessionInfo(readRecord(data, 'session')));
         }
       } catch (error) {
         console.error('Failed to fetch messages:', error);
       }
     };
 
-    fetchMessages();
-    const interval = setInterval(fetchMessages, 3000);
+    void fetchMessages();
+    const interval = setInterval(() => {
+      void fetchMessages();
+    }, 3000);
     return () => clearInterval(interval);
   }, [selectedConversation, workspace?.id]);
 
@@ -143,9 +317,11 @@ export default function InboxPage() {
     autoScrollRef.current = true;
   }, [selectedConversation]);
 
-  const handleMessagesScroll = () => {
+  const handleMessagesScroll = (): void => {
     const container = messagesContainerRef.current;
-    if (!container) return;
+    if (!container) {
+      return;
+    }
     const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
     autoScrollRef.current = distanceFromBottom <= 64;
   };
@@ -158,8 +334,10 @@ export default function InboxPage() {
     container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
   }, [messages]);
 
-  const handleSendMessage = async () => {
-    if (!newMessage.trim() || !selectedConversation) return;
+  const handleSendMessage = async (): Promise<void> => {
+    if (!newMessage.trim() || !selectedConversation) {
+      return;
+    }
 
     setIsSending(true);
     try {
@@ -176,9 +354,12 @@ export default function InboxPage() {
       );
 
       if (res.ok) {
-        const data = await res.json();
-        autoScrollRef.current = true;
-        setMessages((prev) => [...prev, data.message]);
+        const data = await readJsonRecord(res);
+        const message = parseMessage(readRecord(data, 'message'));
+        if (message) {
+          autoScrollRef.current = true;
+          setMessages((prev) => [...prev, message]);
+        }
         setNewMessage('');
       }
     } catch (error) {
@@ -188,8 +369,10 @@ export default function InboxPage() {
     }
   };
 
-  const toggleAgentActive = async () => {
-    if (!selectedConversation || !sessionInfo) return;
+  const toggleAgentActive = async (): Promise<void> => {
+    if (!selectedConversation || !sessionInfo) {
+      return;
+    }
 
     try {
       const res = await fetchWithCredentials(
@@ -214,8 +397,10 @@ export default function InboxPage() {
     }
   };
 
-  const handleDeleteConversation = async () => {
-    if (!deleteCandidate) return;
+  const handleDeleteConversation = async (): Promise<void> => {
+    if (!deleteCandidate) {
+      return;
+    }
 
     const convId = deleteCandidate.id;
     setDeletingId(convId);
@@ -247,17 +432,17 @@ export default function InboxPage() {
     }
   };
 
-  const handleSelectConversation = (convId: string) => {
+  const handleSelectConversation = (convId: string): void => {
     setSelectedConversation(convId);
     setMobileView('chat');
   };
 
-  const handleBackToList = () => {
+  const handleBackToList = (): void => {
     setSelectedConversation(null);
     setMobileView('list');
   };
 
-  const formatTime = (dateStr: string) => {
+  const formatTime = (dateStr: string): string => {
     const date = new Date(dateStr);
     const now = new Date();
     const diffMs = now.getTime() - date.getTime();
@@ -444,7 +629,9 @@ export default function InboxPage() {
                 </button>
                 <Button
                   variant={sessionInfo.agentActive ? 'secondary' : 'default'}
-                  onClick={toggleAgentActive}
+                  onClick={() => {
+                    void toggleAgentActive();
+                  }}
                   size="sm"
                 >
                   {sessionInfo.agentActive ? 'Tomar control' : 'Activar IA'}
@@ -485,7 +672,7 @@ export default function InboxPage() {
                         hour: '2-digit',
                         minute: '2-digit',
                       })}
-                      {msg.role === 'assistant' && (msg.metadata as any)?.sentByHuman && ' (Humano)'}
+                      {msg.role === 'assistant' && isSentByHuman(msg.metadata) && ' (Humano)'}
                     </p>
                   </div>
                 </div>
@@ -500,12 +687,19 @@ export default function InboxPage() {
                   placeholder="Escribe un mensaje..."
                   value={newMessage}
                   onChange={(e) => setNewMessage(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSendMessage()}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      void handleSendMessage();
+                    }
+                  }}
                   disabled={isSending}
                   className="flex-1"
                 />
                 <Button
-                  onClick={handleSendMessage}
+                  onClick={() => {
+                    void handleSendMessage();
+                  }}
                   disabled={isSending || !newMessage.trim()}
                 >
                   {isSending ? (
@@ -591,7 +785,9 @@ export default function InboxPage() {
               </Button>
               <Button
                 className="flex-1 bg-red-600 text-white hover:bg-red-500"
-                onClick={handleDeleteConversation}
+                onClick={() => {
+                  void handleDeleteConversation();
+                }}
                 disabled={deletingId === deleteCandidate?.id}
               >
                 {deletingId === deleteCandidate?.id ? (

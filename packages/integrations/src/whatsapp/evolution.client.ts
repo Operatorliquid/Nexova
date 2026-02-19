@@ -69,6 +69,8 @@ export interface EvolutionInteractiveButtonsPayload {
   footer?: string;
 }
 
+type JsonObject = Record<string, unknown>;
+
 function parseBool(value: string | undefined, fallback: boolean): boolean {
   if (value == null) return fallback;
   const normalized = value.trim().toLowerCase();
@@ -124,6 +126,32 @@ function renderInteractiveListFallback(payload: EvolutionInteractiveListPayload)
       : '';
 
   return `${body}${lines.length > 0 ? `\n\n${lines.join('\n')}` : ''}${footer}`.trim();
+}
+
+function asObject(value: unknown): JsonObject | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as JsonObject;
+}
+
+function pickString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === 'string' && value.length > 0) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function buildSendResponse(to: string, raw: unknown): EvolutionSendResponse {
+  const root = asObject(raw);
+  const key = asObject(root?.['key']);
+
+  return {
+    messageId: pickString(key?.['id']) ?? '',
+    status: pickString(root?.['status']) ?? 'PENDING',
+    to,
+    raw,
+  };
 }
 
 export class EvolutionError extends Error {
@@ -204,25 +232,25 @@ export class EvolutionAdminClient {
     return this.request<EvolutionConnectionStateResponse>('GET', `/instance/connectionState/${encodeURIComponent(instanceName)}`);
   }
 
-  async fetchInstances(query?: { instanceName?: string; instanceId?: string }): Promise<any> {
+  async fetchInstances(query?: { instanceName?: string; instanceId?: string }): Promise<unknown> {
     const params = new URLSearchParams();
     if (query?.instanceName) params.set('instanceName', query.instanceName);
     if (query?.instanceId) params.set('instanceId', query.instanceId);
     const suffix = params.toString() ? `?${params.toString()}` : '';
-    return this.request<any>('GET', `/instance/fetchInstances${suffix}`);
+    return this.request<unknown>('GET', `/instance/fetchInstances${suffix}`);
   }
 
-  async setWebhook(instanceName: string, webhook: EvolutionWebhookConfig): Promise<any> {
+  async setWebhook(instanceName: string, webhook: EvolutionWebhookConfig): Promise<unknown> {
     // Evolution expects a wrapper object: { webhook: {...} }
-    return this.request<any>('POST', `/webhook/set/${encodeURIComponent(instanceName)}`, { webhook });
+    return this.request<unknown>('POST', `/webhook/set/${encodeURIComponent(instanceName)}`, { webhook });
   }
 
-  async logoutInstance(instanceName: string): Promise<any> {
-    return this.request<any>('DELETE', `/instance/logout/${encodeURIComponent(instanceName)}`);
+  async logoutInstance(instanceName: string): Promise<unknown> {
+    return this.request<unknown>('DELETE', `/instance/logout/${encodeURIComponent(instanceName)}`);
   }
 
-  async deleteInstance(instanceName: string): Promise<any> {
-    return this.request<any>('DELETE', `/instance/delete/${encodeURIComponent(instanceName)}`);
+  async deleteInstance(instanceName: string): Promise<unknown> {
+    return this.request<unknown>('DELETE', `/instance/delete/${encodeURIComponent(instanceName)}`);
   }
 }
 
@@ -236,17 +264,12 @@ export class EvolutionClient extends EvolutionAdminClient {
 
   async sendText(to: string, text: string): Promise<EvolutionSendResponse> {
     const number = toDigits(to);
-    const data = await this.request<any>('POST', `/message/sendText/${encodeURIComponent(this.instanceName)}`, {
+    const data = await this.request<unknown>('POST', `/message/sendText/${encodeURIComponent(this.instanceName)}`, {
       number,
       text,
     });
 
-    return {
-      messageId: data?.key?.id || '',
-      status: data?.status || 'PENDING',
-      to: number,
-      raw: data,
-    };
+    return buildSendResponse(number, data);
   }
 
   async sendInteractiveButtons(to: string, payload: EvolutionInteractiveButtonsPayload): Promise<EvolutionSendResponse> {
@@ -286,7 +309,7 @@ export class EvolutionClient extends EvolutionAdminClient {
     try {
       // Prefer native buttons first. Payload includes aliases because Evolution/Baileys
       // builds differ in the expected button field names.
-      const data = await this.request<any>('POST', `/message/sendButtons/${encodeURIComponent(this.instanceName)}`, {
+      const data = await this.request<unknown>('POST', `/message/sendButtons/${encodeURIComponent(this.instanceName)}`, {
         number,
         title,
         description,
@@ -301,12 +324,7 @@ export class EvolutionClient extends EvolutionAdminClient {
         })),
       });
 
-      return {
-        messageId: data?.key?.id || '',
-        status: data?.status || 'PENDING',
-        to: number,
-        raw: data,
-      };
+      return buildSendResponse(number, data);
     } catch {
       return this.sendInteractiveList(to, fallbackListPayload);
     }
@@ -336,7 +354,7 @@ export class EvolutionClient extends EvolutionAdminClient {
     }));
 
     try {
-      const data = await this.request<any>('POST', `/message/sendList/${encodeURIComponent(this.instanceName)}`, {
+      const data = await this.request<unknown>('POST', `/message/sendList/${encodeURIComponent(this.instanceName)}`, {
         number,
         title,
         description,
@@ -347,12 +365,7 @@ export class EvolutionClient extends EvolutionAdminClient {
         values: sections,
       });
 
-      return {
-        messageId: data?.key?.id || '',
-        status: data?.status || 'PENDING',
-        to: number,
-        raw: data,
-      };
+      return buildSendResponse(number, data);
     } catch {
       // Some Evolution/Baileys builds fail sending ListMessage (e.g. Long/isZero runtime issue).
       // Fallback to plain text so the conversation never gets stuck.
@@ -391,7 +404,7 @@ export class EvolutionClient extends EvolutionAdminClient {
     }
   ): Promise<EvolutionSendResponse> {
     const number = toDigits(to);
-    const data = await this.request<any>('POST', `/message/sendMedia/${encodeURIComponent(this.instanceName)}`, {
+    const data = await this.request<unknown>('POST', `/message/sendMedia/${encodeURIComponent(this.instanceName)}`, {
       number,
       mediatype: params.mediaType,
       mimetype: params.mimetype,
@@ -400,12 +413,7 @@ export class EvolutionClient extends EvolutionAdminClient {
       fileName: params.fileName,
     });
 
-    return {
-      messageId: data?.key?.id || '',
-      status: data?.status || 'PENDING',
-      to: number,
-      raw: data,
-    };
+    return buildSendResponse(number, data);
   }
 
   async healthCheck(): Promise<{ healthy: boolean; message?: string; state?: string }> {
@@ -423,7 +431,7 @@ export class EvolutionClient extends EvolutionAdminClient {
   }
 }
 
-function safeJsonParse(text: string): unknown | null {
+function safeJsonParse(text: string): unknown {
   try {
     return JSON.parse(text);
   } catch {

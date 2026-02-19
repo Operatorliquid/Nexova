@@ -1,4 +1,5 @@
 import { Package, MoreVertical, Edit, Trash2, Tags } from 'lucide-react';
+
 import {
   Badge,
   Checkbox,
@@ -8,7 +9,8 @@ import {
   DropdownMenuTrigger,
 } from '../ui';
 
-const API_URL = import.meta.env.VITE_API_URL || '';
+const API_URL: string =
+  typeof import.meta.env.VITE_API_URL === 'string' ? import.meta.env.VITE_API_URL : '';
 
 interface Category {
   id: string;
@@ -67,15 +69,15 @@ export function ProductCard({
   onEdit,
   onDelete,
   onAddCategory,
-}: ProductCardProps) {
-  const formatPrice = (price: number) => {
+}: ProductCardProps): JSX.Element {
+  const formatPrice = (price: number): string => {
     return new Intl.NumberFormat('es-AR', {
       style: 'currency',
       currency: 'ARS',
     }).format(price / 100);
   };
 
-  const getStockVariant = () => {
+  const getStockVariant = (): 'destructive' | 'warning' | 'success' => {
     if (product.isOutOfStock) return 'destructive';
     if (product.isLowStock) return 'warning';
     return 'success';
@@ -85,7 +87,7 @@ export function ProductCard({
   const rawImageUrl = product.images?.[0];
   const imageUrl = rawImageUrl?.startsWith('/') ? `${API_URL}${rawImageUrl}` : rawImageUrl;
 
-  const handleCardClick = (e: React.MouseEvent) => {
+  const handleCardClick = (e: React.MouseEvent): void => {
     const target = e.target as HTMLElement;
     if (target.closest('button') || target.closest('input') || target.closest('label') || target.closest('[role="menu"]')) {
       return;

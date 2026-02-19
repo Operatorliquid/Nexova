@@ -77,7 +77,7 @@ const normalizeNumber = (value?: string | number | null): number | null => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
-const collapseDuplicates = (value: string) => value.replace(/(.)\1+/g, '$1');
+const collapseDuplicates = (value: string): string => value.replace(/(.)\1+/g, '$1');
 
 export const normalizeUnitToken = (token: string): string | null => {
   const cleaned = token
@@ -190,13 +190,13 @@ export const extractUnitHints = (query: string): UnitHint[] => {
   return hints;
 };
 
-const toBaseUnit = (unit: string, value: number) => {
+const toBaseUnit = (unit: string, value: number): { base: string; value: number } => {
   const info = BASE_UNIT_FACTORS[unit];
   if (!info) return { base: unit, value };
   return { base: info.base, value: value * info.factor };
 };
 
-const isClose = (a: number, b: number, base: string) => {
+const isClose = (a: number, b: number, base: string): boolean => {
   const tolerance = base === 'ml' || base === 'g' || base === 'cm' ? 1 : 0.01;
   return Math.abs(a - b) <= tolerance;
 };

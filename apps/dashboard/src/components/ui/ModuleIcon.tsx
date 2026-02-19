@@ -8,7 +8,7 @@ interface ModuleIconProps {
   className?: string;
 }
 
-export function ModuleIcon({ name, className = 'w-5 h-5' }: ModuleIconProps) {
+export function ModuleIcon({ name, className = 'w-5 h-5' }: ModuleIconProps): JSX.Element {
   const icons: Record<string, JSX.Element> = {
     dashboard: (
       <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">

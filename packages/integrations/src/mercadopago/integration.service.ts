@@ -3,12 +3,13 @@
  * High-level service that coordinates OAuth, tokens, and database persistence
  */
 
-import { PrismaClient, Prisma, type WorkspaceIntegration } from '@prisma/client';
+import { type PrismaClient, Prisma, type WorkspaceIntegration } from '@prisma/client';
+
+import { encryptToken, decryptToken } from './crypto.utils.js';
 import { MercadoPagoClient, MercadoPagoError } from './mercadopago.client.js';
 import { MercadoPagoOAuthService, OAuthServiceError } from './oauth.service.js';
-import { MercadoPagoWebhookHandler, type ProcessedWebhook } from './webhook.handler.js';
-import { encryptToken, decryptToken } from './crypto.utils.js';
 import type { MercadoPagoConfig, MercadoPagoTokens, CreatePaymentLinkResult } from './types.js';
+import { MercadoPagoWebhookHandler, type ProcessedWebhook } from './webhook.handler.js';
 
 const PROVIDER_NAME = 'mercadopago';
 

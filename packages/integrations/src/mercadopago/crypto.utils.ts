@@ -3,7 +3,13 @@
  * Uses AES-256-GCM for secure token storage
  */
 
-import { randomBytes, createCipheriv, createDecipheriv } from 'crypto';
+import {
+  randomBytes,
+  createCipheriv,
+  createDecipheriv,
+  createHmac,
+  timingSafeEqual,
+} from 'crypto';
 
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 12; // GCM recommended IV length
@@ -97,7 +103,6 @@ export function generateEncryptionKey(): string {
  * Hash a string for webhook signature verification
  */
 export function hmacSha256(data: string, secret: string): string {
-  const { createHmac } = require('crypto');
   return createHmac('sha256', secret).update(data).digest('hex');
 }
 
@@ -105,7 +110,6 @@ export function hmacSha256(data: string, secret: string): string {
  * Constant-time comparison to prevent timing attacks
  */
 export function secureCompare(a: string, b: string): boolean {
-  const { timingSafeEqual } = require('crypto');
   if (a.length !== b.length) {
     return false;
   }

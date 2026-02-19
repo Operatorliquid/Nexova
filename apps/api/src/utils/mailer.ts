@@ -1,4 +1,5 @@
 import dns from 'node:dns';
+
 import nodemailer from 'nodemailer';
 
 type MailPayload = {
@@ -83,7 +84,7 @@ const getMailProvider = (): MailProvider => {
 let dnsConfigured = false;
 const transporters = new Map<string, nodemailer.Transporter>();
 
-const ensureDnsResultOrder = () => {
+const ensureDnsResultOrder = (): void => {
   if (dnsConfigured) return;
   dnsConfigured = true;
 

@@ -1,9 +1,10 @@
 /**
  * Scheduled Jobs Processor
  */
-import { Job } from 'bullmq';
-import { PrismaClient, Prisma } from '@prisma/client';
-import { BUSINESS_RULES, ScheduledJobPayload, ScheduledJobType } from '@nexova/shared';
+import { type PrismaClient, Prisma } from '@prisma/client';
+import { type Job, type Queue } from 'bullmq';
+
+import { BUSINESS_RULES, type ScheduledJobPayload, type ScheduledJobType } from '@nexova/shared';
 
 interface ScheduledJobResult {
   jobType: ScheduledJobType;
@@ -11,7 +12,7 @@ interface ScheduledJobResult {
   details?: Record<string, unknown>;
 }
 
-export function createScheduledProcessor(prisma: PrismaClient) {
+export function createScheduledProcessor(prisma: PrismaClient): (job: Job<ScheduledJobPayload>) => Promise<ScheduledJobResult> {
   return async (job: Job<ScheduledJobPayload>): Promise<ScheduledJobResult> => {
     const { jobType, workspaceId } = job.data;
 
@@ -38,7 +39,7 @@ export function createScheduledProcessor(prisma: PrismaClient) {
   };
 }
 
-export async function scheduleDefaultJobs(queue: { add: Function }) {
+export async function scheduleDefaultJobs(queue: Pick<Queue<ScheduledJobPayload>, 'add'>): Promise<void> {
   await queue.add('session-cleanup', { jobType: 'session:cleanup' }, {
     repeat: { every: 60 * 60 * 1000 },
     jobId: 'session-cleanup',

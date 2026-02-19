@@ -1,8 +1,10 @@
 /**
 * Authentication Routes
  */
-import { FastifyPluginAsync } from 'fastify';
+import type { Prisma } from '@prisma/client';
+import { type FastifyPluginAsync, type FastifyReply, type FastifyRequest } from 'fastify';
 import { z } from 'zod';
+
 import {
   AuthService,
   WorkspaceService,
@@ -11,6 +13,7 @@ import {
   hashToken,
   validatePasswordStrength,
 } from '@nexova/core';
+
 import { getDashboardUrl } from '../../utils/billing.js';
 import { isMailerConfigured, sendMail } from '../../utils/mailer.js';
 
@@ -46,7 +49,32 @@ const resetPasswordSchema = z.object({
     .max(128, 'La contraseña debe tener como máximo 128 caracteres'),
 });
 
-export const authRoutes: FastifyPluginAsync = async (fastify) => {
+type CookieOptions = NonNullable<Parameters<FastifyReply['setCookie']>[2]>;
+const membershipInclude = {
+  workspace: {
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+      plan: true,
+      status: true,
+      settings: true,
+    },
+  },
+  role: {
+    select: {
+      id: true,
+      name: true,
+      permissions: true,
+    },
+  },
+} satisfies Prisma.MembershipInclude;
+
+type MembershipWithWorkspaceAndRole = Prisma.MembershipGetPayload<{
+  include: typeof membershipInclude;
+}>;
+
+export const authRoutes: FastifyPluginAsync = (fastify) => {
   const authService = new AuthService(fastify.prisma);
   const workspaceService = new WorkspaceService(fastify.prisma);
   const cookieSameSiteRaw = (process.env.AUTH_COOKIE_SAMESITE || 'lax').toLowerCase();
@@ -57,63 +85,69 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
   const cookieSecure = process.env.NODE_ENV === 'production' || cookieSameSite === 'none';
 
   const setAuthCookies = (
-    reply: import('fastify').FastifyReply,
+    reply: FastifyReply,
     tokens: { accessToken: string; refreshToken: string; accessTokenExpiresAt: Date; refreshTokenExpiresAt: Date },
     options?: { rememberMe?: boolean }
-  ) => {
+  ): void => {
     const rememberMe = options?.rememberMe ?? true;
-    const base = {
+    const base: CookieOptions = {
       httpOnly: true,
       secure: cookieSecure,
       sameSite: cookieSameSite,
       path: '/',
     };
-    reply.setCookie('accessToken', tokens.accessToken, {
+    void reply.setCookie('accessToken', tokens.accessToken, {
       ...base,
       expires: tokens.accessTokenExpiresAt,
     });
 
-    const refreshOptions: Record<string, unknown> = { ...base };
-    if (rememberMe) {
-      refreshOptions.expires = tokens.refreshTokenExpiresAt;
-    }
-    reply.setCookie('refreshToken', tokens.refreshToken, refreshOptions as any);
+    const refreshOptions: CookieOptions = rememberMe
+      ? { ...base, expires: tokens.refreshTokenExpiresAt }
+      : base;
+    void reply.setCookie('refreshToken', tokens.refreshToken, refreshOptions);
 
-    const rememberOptions: Record<string, unknown> = { ...base };
-    if (rememberMe) {
-      rememberOptions.expires = tokens.refreshTokenExpiresAt;
-    }
-    reply.setCookie('rememberMe', rememberMe ? '1' : '0', rememberOptions as any);
+    const rememberOptions: CookieOptions = rememberMe
+      ? { ...base, expires: tokens.refreshTokenExpiresAt }
+      : base;
+    void reply.setCookie('rememberMe', rememberMe ? '1' : '0', rememberOptions);
   };
 
-  const clearAuthCookies = (reply: import('fastify').FastifyReply) => {
-    reply.clearCookie('accessToken', {
+  const clearAuthCookies = (reply: FastifyReply): void => {
+    void reply.clearCookie('accessToken', {
       path: '/',
       secure: cookieSecure,
       sameSite: cookieSameSite,
     });
-    reply.clearCookie('refreshToken', {
+    void reply.clearCookie('refreshToken', {
       path: '/',
       secure: cookieSecure,
       sameSite: cookieSameSite,
     });
-    reply.clearCookie('rememberMe', {
+    void reply.clearCookie('rememberMe', {
       path: '/',
       secure: cookieSecure,
       sameSite: cookieSameSite,
     });
   };
 
-  const readRememberMeCookie = (request: import('fastify').FastifyRequest): boolean => {
-    const raw =
-      typeof (request as any).cookies?.rememberMe === 'string' ? (request as any).cookies.rememberMe : undefined;
+  const readCookie = (request: FastifyRequest, cookieName: string): string | undefined => {
+    const cookies = (request as FastifyRequest & { cookies?: unknown }).cookies;
+    if (!cookies || typeof cookies !== 'object') {
+      return undefined;
+    }
+    const value = (cookies as Record<string, unknown>)[cookieName];
+    return typeof value === 'string' ? value : undefined;
+  };
+
+  const readRememberMeCookie = (request: FastifyRequest): boolean => {
+    const raw = readCookie(request, 'rememberMe');
     if (!raw) return true; // Backwards compatible default.
     const normalized = raw.toLowerCase().trim();
     if (normalized === '0' || normalized === 'false' || normalized === 'no') return false;
     return true;
   };
 
-  const escapeHtml = (value: string) =>
+  const escapeHtml = (value: string): string =>
     value
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
@@ -121,7 +155,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
 
-  const buildWorkspaceName = (user: { firstName?: string | null; email?: string | null }) => {
+  const buildWorkspaceName = (user: { firstName?: string | null; email?: string | null }): string => {
     if (user.firstName?.trim()) {
       return user.firstName.trim();
     }
@@ -132,7 +166,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
     return `business-${Date.now()}`;
   };
 
-  const buildWorkspaceSlug = (name: string) => {
+  const buildWorkspaceSlug = (name: string): string => {
     const base = name
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
@@ -140,35 +174,30 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
     return base || 'business';
   };
 
-  const fetchMemberships = async (userId: string) => {
+  const fetchMemberships = (
+    userId: string
+  ): Promise<MembershipWithWorkspaceAndRole[]> => {
     return fastify.prisma.membership.findMany({
       where: {
         userId,
         status: { in: ['ACTIVE', 'active'] },
       },
-      include: {
-        workspace: {
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-            plan: true,
-            status: true,
-            settings: true,
-          },
-        },
-        role: {
-          select: {
-            id: true,
-            name: true,
-            permissions: true,
-          },
-        },
-      },
+      include: membershipInclude,
     });
   };
 
-  const mapWorkspaces = (memberships: Awaited<ReturnType<typeof fetchMemberships>>) => {
+  type WorkspaceSummary = {
+    id: string;
+    name: string;
+    slug: string;
+    plan: MembershipWithWorkspaceAndRole['workspace']['plan'];
+    status: MembershipWithWorkspaceAndRole['workspace']['status'];
+    role: MembershipWithWorkspaceAndRole['role'];
+    onboardingCompleted: boolean;
+    businessType: 'bookings' | 'commerce';
+  };
+
+  const mapWorkspaces = (memberships: MembershipWithWorkspaceAndRole[]): WorkspaceSummary[] => {
     return memberships.map((m) => {
       const settings = (m.workspace.settings as Record<string, unknown>) || {};
       const rawBusinessType = typeof settings.businessType === 'string'
@@ -188,7 +217,9 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
     });
   };
 
-  const ensureWorkspaceForUser = async (user: { id: string; firstName?: string | null; email?: string | null; isSuperAdmin?: boolean }) => {
+  const ensureWorkspaceForUser = async (
+    user: { id: string; firstName?: string | null; email?: string | null; isSuperAdmin?: boolean }
+  ): Promise<MembershipWithWorkspaceAndRole[]> => {
     let memberships = await fetchMemberships(user.id);
 
     if (memberships.length === 0 && !user.isSuperAdmin) {
@@ -265,7 +296,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
 
     setAuthCookies(reply, result.tokens, { rememberMe: true });
 
-    reply.code(201).send({
+    return reply.code(201).send({
       user: result.user,
       workspace,
       workspaces,
@@ -293,7 +324,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
 
     setAuthCookies(reply, result.tokens, { rememberMe });
 
-    reply.send({
+    return reply.send({
       user: result.user,
       workspace,
       workspaces,
@@ -436,11 +467,8 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
   // Refresh token
   fastify.post('/refresh', async (request, reply) => {
     const body = refreshSchema.parse(request.body || {});
-    const cookieRefresh =
-      typeof (request as any).cookies?.refreshToken === 'string'
-        ? (request as any).cookies.refreshToken
-        : undefined;
-    const refreshToken = body.refreshToken || cookieRefresh;
+    const cookieRefresh = readCookie(request, 'refreshToken');
+    const refreshToken = body.refreshToken ?? cookieRefresh;
 
     if (!refreshToken) {
       return reply.status(400).send({ error: 'REFRESH_TOKEN_REQUIRED' });
@@ -454,7 +482,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
 
     setAuthCookies(reply, result.tokens, { rememberMe: readRememberMeCookie(request) });
 
-    reply.send({
+    return reply.send({
       user: result.user,
       accessToken: result.tokens.accessToken,
       refreshToken: result.tokens.refreshToken,
@@ -465,11 +493,8 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
   // Logout
   fastify.post('/logout', async (request, reply) => {
     const body = refreshSchema.parse(request.body || {});
-    const cookieRefresh =
-      typeof (request as any).cookies?.refreshToken === 'string'
-        ? (request as any).cookies.refreshToken
-        : undefined;
-    const refreshToken = body.refreshToken || cookieRefresh;
+    const cookieRefresh = readCookie(request, 'refreshToken');
+    const refreshToken = body.refreshToken ?? cookieRefresh;
 
     if (refreshToken) {
       await authService.logout(refreshToken);
@@ -477,7 +502,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
 
     clearAuthCookies(reply);
 
-    reply.send({ success: true });
+    return reply.send({ success: true });
   });
 
   // Get current user with workspaces (protected)
@@ -525,7 +550,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
         ? workspacesWithSettings.find((w) => w.id === currentWorkspaceId)
         : workspacesWithSettings[0] || null;
 
-      reply.send({ user, workspace, workspaces: workspacesWithSettings });
+      return reply.send({ user, workspace, workspaces: workspacesWithSettings });
     }
   );
 
@@ -595,7 +620,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
         },
       });
 
-      reply.send({ user });
+      return reply.send({ user });
     }
   );
 
@@ -608,7 +633,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       await authService.logoutAll(request.user!.sub);
-      reply.send({ success: true });
+      return reply.send({ success: true });
     }
   );
 };

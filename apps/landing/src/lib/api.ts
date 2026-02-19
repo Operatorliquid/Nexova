@@ -1,5 +1,11 @@
-export const API_URL = import.meta.env.VITE_API_URL || '';
-export const DASHBOARD_URL = import.meta.env.VITE_DASHBOARD_URL || 'http://localhost:5173';
+const apiUrlRaw: unknown = import.meta.env.VITE_API_URL;
+const dashboardUrlRaw: unknown = import.meta.env.VITE_DASHBOARD_URL;
+
+export const API_URL = typeof apiUrlRaw === 'string' ? apiUrlRaw : '';
+export const DASHBOARD_URL =
+  typeof dashboardUrlRaw === 'string' && dashboardUrlRaw.trim().length > 0
+    ? dashboardUrlRaw
+    : 'http://localhost:5173';
 
 export async function apiFetch(
   path: string,

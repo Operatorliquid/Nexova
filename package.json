@@ -12,6 +12,7 @@
     "dev:dashboard": "turbo run dev --filter=@nexova/dashboard",
     "dev:landing": "turbo run dev --filter=@nexova/landing",
     "lint": "turbo run lint",
+    "lint:security": "eslint apps/api/src/utils/remote-fetch-guard.ts apps/worker/src/utils/remote-fetch-guard.ts packages/agent-runtime/src/utils/remote-fetch-guard.ts",
     "lint:fix": "turbo run lint -- --fix",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",

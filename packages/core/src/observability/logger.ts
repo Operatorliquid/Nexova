@@ -1,7 +1,7 @@
 /**
  * Structured Logger with Pino
  */
-import pino, { Logger as PinoLogger } from 'pino';
+import pino, { type Logger as PinoLogger } from 'pino';
 
 export interface LogContext {
   requestId?: string;

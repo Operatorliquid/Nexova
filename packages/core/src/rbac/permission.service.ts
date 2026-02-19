@@ -2,7 +2,7 @@
  * RBAC Permission Service
  * Handles permission checking with wildcard support
  */
-import { PrismaClient } from '@prisma/client';
+import { type PrismaClient } from '@prisma/client';
 
 export type Permission = string;
 

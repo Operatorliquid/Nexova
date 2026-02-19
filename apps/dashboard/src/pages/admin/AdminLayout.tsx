@@ -2,11 +2,12 @@
  * Admin Panel Layout
  * Same aesthetic as main dashboard but with admin navigation
  */
-import { Outlet, NavLink, Navigate, useLocation } from 'react-router-dom';
 import { LayoutDashboard, Users, MessageCircle, Building2, Settings, LogOut, Shield, CreditCard } from 'lucide-react';
-import { cn } from '../../lib/utils';
-import { useAuth } from '../../contexts/AuthContext';
+import { Outlet, NavLink, Navigate, useLocation } from 'react-router-dom';
+
 import { AnimatePresence, motion } from '../../components/ui/motion';
+import { useAuth } from '../../contexts/AuthContext';
+import { cn } from '../../lib/utils';
 
 const adminNav = [
   { name: 'Dashboard', href: '/admin', icon: LayoutDashboard },
@@ -17,7 +18,7 @@ const adminNav = [
   { name: 'Configuración', href: '/admin/settings', icon: Settings },
 ];
 
-export default function AdminLayout() {
+export default function AdminLayout(): JSX.Element {
   const { user, logout } = useAuth();
   const location = useLocation();
 
@@ -100,7 +101,9 @@ export default function AdminLayout() {
               </div>
             </div>
             <button
-              onClick={logout}
+              onClick={() => {
+                void logout();
+              }}
               className="mt-3 w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-sm text-muted-foreground hover:text-red-500 hover:bg-red-500/10 transition-all duration-200"
             >
               <LogOut className="w-4 h-4" />

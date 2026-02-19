@@ -1,6 +1,7 @@
+import { Users, Building2, MessageSquare, Phone, RefreshCw, AlertTriangle } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Users, Building2, MessageSquare, Phone, RefreshCw, AlertTriangle } from 'lucide-react';
+
 import { Badge, Button, AnimatedPage, AnimatedStagger, StatCard } from '../../components/ui';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../components/ui/dialog';
 import { apiFetch } from '../../lib/api';
@@ -75,7 +76,7 @@ interface ApiErrorBody {
   error?: string;
 }
 
-const readApiError = async (response: Response, fallback: string) => {
+const readApiError = async (response: Response, fallback: string): Promise<string> => {
   try {
     const body = (await response.json()) as ApiErrorBody;
     if (typeof body.message === 'string' && body.message.trim()) return body.message;
@@ -86,25 +87,25 @@ const readApiError = async (response: Response, fallback: string) => {
   return fallback;
 };
 
-const formatUserName = (user: AdminUser) => {
+const formatUserName = (user: AdminUser): string => {
   const name = `${user.firstName || ''} ${user.lastName || ''}`.trim();
   return name || user.email;
 };
 
-const formatDate = (value: string) =>
+const formatDate = (value: string): string =>
   new Intl.DateTimeFormat('es-AR', {
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',
   }).format(new Date(value));
 
-const getStatusBadge = (status: AdminUser['status'] | AdminWorkspace['status']) => {
+const getStatusBadge = (status: AdminUser['status']): JSX.Element => {
   if (status === 'active') return <Badge variant="success">Activo</Badge>;
   if (status === 'suspended') return <Badge variant="warning">Suspendido</Badge>;
   return <Badge variant="secondary">Inactivo</Badge>;
 };
 
-const getUserRoleNames = (user: AdminUser) => {
+const getUserRoleNames = (user: AdminUser): string[] => {
   const names = user.memberships
     .map((membership) => membership.role?.name?.trim())
     .filter((name): name is string => Boolean(name));
@@ -112,7 +113,9 @@ const getUserRoleNames = (user: AdminUser) => {
   return unique.length > 0 ? unique : ['Sin rol'];
 };
 
-const getRoleVariant = (roleName: string) => {
+const getRoleVariant = (
+  roleName: string
+): 'default' | 'warning' | 'success' | 'info' | 'secondary' => {
   const normalized = roleName.trim().toLowerCase();
   if (normalized === 'owner') return 'default' as const;
   if (normalized === 'admin') return 'warning' as const;
@@ -121,7 +124,7 @@ const getRoleVariant = (roleName: string) => {
   return 'secondary' as const;
 };
 
-export default function AdminDashboard() {
+export default function AdminDashboard(): JSX.Element {
   const toastError = useToastStore((state) => state.error);
   const toastInfo = useToastStore((state) => state.info);
   const [stats, setStats] = useState<AdminStats | null>(null);
@@ -174,22 +177,22 @@ export default function AdminDashboard() {
   }, [toastError]);
 
   useEffect(() => {
-    loadDashboard();
+    void loadDashboard();
   }, [loadDashboard]);
 
-  const triggerOrdersLimitToast = () => {
+  const triggerOrdersLimitToast = (): void => {
     toastError('Alcanzaste el límite mensual de pedidos (200).');
   };
 
-  const triggerDebtReminderLimitToast = () => {
+  const triggerDebtReminderLimitToast = (): void => {
     toastError('Alcanzaste el límite mensual de recordatorios de deuda (50).');
   };
 
-  const triggerMetricsInsightsLimitToast = () => {
+  const triggerMetricsInsightsLimitToast = (): void => {
     toastError('Alcanzaste el límite mensual de resúmenes IA de métricas (40).');
   };
 
-  const triggerCustomerSummaryLimitToast = () => {
+  const triggerCustomerSummaryLimitToast = (): void => {
     toastError('Alcanzaste el límite mensual de resúmenes IA de clientes (80).');
   };
 
@@ -200,7 +203,7 @@ export default function AdminDashboard() {
           <h2 className="text-2xl font-semibold text-foreground">Dashboard</h2>
           <p className="text-sm text-muted-foreground">Resumen general de la plataforma</p>
         </div>
-        <Button variant="secondary" onClick={() => loadDashboard(true)} isLoading={isRefreshing}>
+        <Button variant="secondary" onClick={() => { void loadDashboard(true); }} isLoading={isRefreshing}>
           <RefreshCw className="w-4 h-4 mr-2" />
           Actualizar
         </Button>

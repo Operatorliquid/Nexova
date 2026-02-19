@@ -10,16 +10,19 @@
  * - get_customer_balance: Query customer debt/credit status
  * - get_unpaid_orders: List customer's unpaid orders
  */
-import { z } from 'zod';
-import { PrismaClient } from '@prisma/client';
-import { getCommercePlanCapabilities, resolveCommercePlan } from '@nexova/shared';
-import { BaseTool } from '../base.js';
-import { ToolCategory, ToolContext, ToolResult } from '../../types/index.js';
-import { LedgerService, decrypt } from '@nexova/core';
-import type { MercadoPagoIntegrationService } from '@nexova/integrations';
 import Anthropic from '@anthropic-ai/sdk';
+import { type PrismaClient } from '@prisma/client';
+import { z } from 'zod';
+
+import { type LedgerService, decrypt } from '@nexova/core';
+import type { MercadoPagoIntegrationService } from '@nexova/integrations';
+import { getCommercePlanCapabilities, resolveCommercePlan } from '@nexova/shared';
+
+import { ToolCategory, type ToolContext, type ToolResult } from '../../types/index.js';
 import { createNotificationIfEnabled } from '../../utils/notifications.js';
 import { withVisibleOrders } from '../../utils/orders.js';
+import { fetchBinaryWithGuards } from '../../utils/remote-fetch-guard.js';
+import { BaseTool } from '../base.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // DEPENDENCIES INTERFACE
@@ -227,6 +230,56 @@ function shouldAttachInfobipAuth(fileRef: string): boolean {
     return host === 'infobip.com' || host.endsWith('.infobip.com');
   } catch {
     // Relative URLs (/uploads/...) or invalid URLs should not receive auth headers.
+    return false;
+  }
+}
+
+function parseHost(value?: string | null): string | null {
+  const raw = (value || '').trim();
+  if (!raw) return null;
+  const candidate = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+  try {
+    return new URL(candidate).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+function isAllowedReceiptSource(fileRef: string, configuredApiUrl?: string | null): boolean {
+  try {
+    const url = new URL(fileRef);
+    const protocol = url.protocol.toLowerCase();
+    if (protocol !== 'https:' && protocol !== 'http:') return false;
+
+    const host = url.hostname.toLowerCase();
+    const configuredHost = parseHost(configuredApiUrl);
+    const envHosts = (process.env.RECEIPT_PROXY_ALLOWED_HOSTS || '')
+      .split(',')
+      .map((entry) => parseHost(entry))
+      .filter(Boolean);
+    const apiHosts = [
+      parseHost(process.env.API_BASE_URL),
+      parseHost(process.env.PUBLIC_BASE_URL),
+      parseHost(process.env.PUBLIC_API_URL),
+      parseHost(process.env.API_PUBLIC_URL),
+      parseHost(process.env.BASE_URL),
+      parseHost(process.env.API_URL),
+      configuredHost,
+      ...envHosts,
+    ]
+      .filter(Boolean) as string[];
+    const trustedUploadHosts = new Set(apiHosts);
+
+    if (
+      url.pathname.startsWith('/uploads/')
+      || url.pathname.startsWith('/api/v1/uploads/file/')
+    ) {
+      return trustedUploadHosts.has(host);
+    }
+
+    if (host === 'infobip.com' || host.endsWith('.infobip.com')) return true;
+    return trustedUploadHosts.has(host);
+  } catch {
     return false;
   }
 }
@@ -515,32 +568,33 @@ export class ExtractReceiptAmountTool extends BaseTool<typeof ExtractReceiptAmou
 
   private async fetchReceiptBuffer(
     fileRef: string,
-    apiKey?: string
+    expectedFileType: 'image' | 'pdf',
+    apiKey?: string,
+    configuredApiUrl?: string | null
   ): Promise<{ buffer: Buffer; contentType?: string }> {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
-
-    try {
-      const headers: Record<string, string> = {};
-      if (apiKey) {
-        headers.Authorization = `App ${apiKey}`;
-      }
-
-      const response = await fetch(fileRef, {
-        headers,
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        throw new Error(`No pude descargar el comprobante (HTTP ${response.status})`);
-      }
-
-      const contentType = response.headers.get('content-type')?.split(';')[0]?.trim() || undefined;
-      const arrayBuffer = await response.arrayBuffer();
-      return { buffer: Buffer.from(arrayBuffer), contentType };
-    } finally {
-      clearTimeout(timeout);
+    if (!isAllowedReceiptSource(fileRef, configuredApiUrl)) {
+      throw new Error('No pude descargar el comprobante: host no permitido');
     }
+
+    const headers: Record<string, string> = {};
+    if (apiKey) {
+      headers.Authorization = `App ${apiKey}`;
+    }
+
+    const allowedContentTypes = expectedFileType === 'pdf'
+      ? ['application/pdf']
+      : ['image/*'];
+
+    const { buffer, contentType } = await fetchBinaryWithGuards({
+      url: fileRef,
+      headers,
+      isAllowedHost: (host) => isAllowedReceiptSource(`https://${host}/`, configuredApiUrl),
+      allowedContentTypes,
+      maxBytes: 8 * 1024 * 1024,
+      timeoutMs: 15000,
+    });
+
+    return { buffer, contentType };
   }
 
   async execute(
@@ -551,7 +605,7 @@ export class ExtractReceiptAmountTool extends BaseTool<typeof ExtractReceiptAmou
 
     const whatsappNumber = await this.prisma.whatsAppNumber.findFirst({
       where: { workspaceId: context.workspaceId, isActive: true },
-      select: { apiKeyEnc: true, apiKeyIv: true, provider: true },
+      select: { apiKeyEnc: true, apiKeyIv: true, provider: true, apiUrl: true },
     });
 
     const wantsInfobipAuth = shouldAttachInfobipAuth(fileRef);
@@ -562,7 +616,12 @@ export class ExtractReceiptAmountTool extends BaseTool<typeof ExtractReceiptAmou
       : '';
 
     try {
-      const { buffer, contentType } = await this.fetchReceiptBuffer(fileRef, apiKey);
+      const { buffer, contentType } = await this.fetchReceiptBuffer(
+        fileRef,
+        fileType,
+        apiKey,
+        whatsappNumber?.apiUrl
+      );
 
       const resolvedContentType = contentType
         || (fileType === 'pdf' ? 'application/pdf' : inferMediaType(fileRef));
@@ -656,7 +715,7 @@ export class ProcessReceiptTool extends BaseTool<typeof ProcessReceiptInput> {
     const receipt = await this.prisma.receipt.create({
       data: {
         workspaceId: context.workspaceId,
-        customerId: context.customerId!,
+        customerId: context.customerId,
         sessionId: context.sessionId,
         fileRef,
         fileType,
@@ -873,7 +932,7 @@ export class ApplyReceiptToOrderTool extends BaseTool<typeof ApplyReceiptToOrder
 
     const result = await this.ledgerService.applyPaymentToOrder(
       context.workspaceId,
-      context.customerId!,
+      context.customerId,
       orderId,
       amount,
       'Receipt',
@@ -963,7 +1022,7 @@ export class ApplyPaymentToBalanceTool extends BaseTool<typeof ApplyPaymentToBal
 
     const result = await this.ledgerService.applyPayment({
       workspaceId: context.workspaceId,
-      customerId: context.customerId!,
+      customerId: context.customerId,
       amount,
       referenceType: receiptId ? 'Receipt' : 'Payment',
       referenceId: receiptId || crypto.randomUUID(),
@@ -1042,7 +1101,7 @@ export class GetCustomerBalanceTool extends BaseTool<typeof GetCustomerBalanceIn
   ): Promise<ToolResult<CustomerBalanceResult>> {
     const summary = await this.ledgerService.getCustomerDebtSummary(
       context.workspaceId,
-      context.customerId!
+      context.customerId
     );
 
     const oldestOrder = summary.unpaidOrders[0];
@@ -1094,7 +1153,7 @@ export class GetUnpaidOrdersTool extends BaseTool<typeof GetUnpaidOrdersInput> {
   ): Promise<ToolResult<UnpaidOrdersResult>> {
     const unpaidOrders = await this.ledgerService.getUnpaidOrders(
       context.workspaceId,
-      context.customerId!
+      context.customerId
     );
 
     const totalPending = unpaidOrders.reduce((sum, o) => sum + o.pendingAmount, 0);
@@ -1200,10 +1259,12 @@ export class GetPaymentStatusTool extends BaseTool<typeof GetPaymentStatusInput>
 /**
  * Create all payment tools
  */
-export function createPaymentTools(deps: PaymentToolsDependencies): BaseTool<any, any>[] {
+export function createPaymentTools(
+  deps: PaymentToolsDependencies
+): Array<BaseTool<z.ZodSchema, unknown>> {
   const { prisma, ledgerService, mpService } = deps;
 
-  const tools: BaseTool<any, any>[] = [
+  const tools: Array<BaseTool<z.ZodSchema, unknown>> = [
     new ExtractReceiptAmountTool(prisma),
     new ProcessReceiptTool(prisma),
     new UpdateReceiptAmountTool(prisma),

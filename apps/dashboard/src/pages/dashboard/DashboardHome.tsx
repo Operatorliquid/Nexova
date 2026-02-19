@@ -1,4 +1,3 @@
-import { useEffect, useMemo, useState } from 'react';
 import { ResponsiveLine } from '@nivo/line';
 import { ResponsivePie } from '@nivo/pie';
 import {
@@ -11,6 +10,9 @@ import {
   ShoppingCart,
   TrendingUp,
 } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+
 import {
   Button,
   Select,
@@ -24,10 +26,9 @@ import {
   AnimatedItem,
 } from '../../components/ui';
 import { ChartTooltip, TooltipLine } from '../../components/ui/chart-tooltip';
-import { getNivoTheme } from '../../lib/nivo-theme';
 import { useAuth } from '../../contexts/AuthContext';
 import { apiFetch } from '../../lib/api';
-import { Link } from 'react-router-dom';
+import { getNivoTheme } from '../../lib/nivo-theme';
 
 interface OrderItem {
   id: string;
@@ -67,6 +68,166 @@ interface ConversationPreview {
   lastActivityAt: string;
 }
 
+type JsonRecord = Record<string, unknown>;
+type RangeMeta = {
+  from: Date;
+  to: Date;
+  mode: 'hourly' | 'daily';
+  label: string;
+};
+
+function asRecord(value: unknown): JsonRecord | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as JsonRecord)
+    : null;
+}
+
+function readString(record: JsonRecord | null, key: string): string | undefined {
+  if (!record) {
+    return undefined;
+  }
+  const value = record[key];
+  return typeof value === 'string' ? value : undefined;
+}
+
+function readNumber(record: JsonRecord | null, key: string): number | undefined {
+  if (!record) {
+    return undefined;
+  }
+  const value = record[key];
+  return typeof value === 'number' ? value : undefined;
+}
+
+function readBoolean(record: JsonRecord | null, key: string): boolean | undefined {
+  if (!record) {
+    return undefined;
+  }
+  const value = record[key];
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+function readArray(record: JsonRecord | null, key: string): unknown[] {
+  if (!record) {
+    return [];
+  }
+  const value = record[key];
+  return Array.isArray(value) ? value : [];
+}
+
+async function readJsonRecord(response: Response): Promise<JsonRecord | null> {
+  try {
+    const payload: unknown = await response.json();
+    return asRecord(payload);
+  } catch {
+    return null;
+  }
+}
+
+function parseOrderItem(value: unknown): OrderItem | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  const id = readString(record, 'id');
+  const name = readString(record, 'name');
+  if (!id || !name) {
+    return null;
+  }
+  return {
+    id,
+    name,
+    quantity: readNumber(record, 'quantity') ?? 0,
+    unitPrice: readNumber(record, 'unitPrice') ?? 0,
+    total: readNumber(record, 'total') ?? 0,
+  };
+}
+
+function parseOrderSummary(value: unknown): OrderSummary | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  const customer = asRecord(record.customer);
+  const customerId = readString(customer, 'id');
+  const customerPhone = readString(customer, 'phone');
+  const customerName = readString(customer, 'name');
+  const id = readString(record, 'id');
+  const orderNumber = readString(record, 'orderNumber');
+  const status = readString(record, 'status');
+  const createdAt = readString(record, 'createdAt');
+  if (
+    !id ||
+    !orderNumber ||
+    !status ||
+    !createdAt ||
+    !customerId ||
+    !customerPhone ||
+    !customerName
+  ) {
+    return null;
+  }
+  return {
+    id,
+    orderNumber,
+    status,
+    customer: {
+      id: customerId,
+      phone: customerPhone,
+      name: customerName,
+    },
+    itemCount: readNumber(record, 'itemCount') ?? 0,
+    total: readNumber(record, 'total') ?? 0,
+    paidAmount: readNumber(record, 'paidAmount') ?? 0,
+    pendingAmount: readNumber(record, 'pendingAmount') ?? 0,
+    createdAt,
+    items: readArray(record, 'items')
+      .map(item => parseOrderItem(item))
+      .filter((item): item is OrderItem => item !== null),
+  };
+}
+
+function parseConversationPreview(value: unknown): ConversationPreview | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+  const id = readString(record, 'id');
+  const customerId = readString(record, 'customerId');
+  const customerPhone = readString(record, 'customerPhone');
+  const customerName = readString(record, 'customerName');
+  const channelType = readString(record, 'channelType');
+  const currentState = readString(record, 'currentState');
+  const lastActivityAt = readString(record, 'lastActivityAt');
+  if (
+    !id ||
+    !customerId ||
+    !customerPhone ||
+    !customerName ||
+    !channelType ||
+    !currentState ||
+    !lastActivityAt
+  ) {
+    return null;
+  }
+  const roleValue = readString(record, 'lastMessageRole');
+  const lastMessageRole: ConversationPreview['lastMessageRole'] =
+    roleValue === 'user' || roleValue === 'assistant' || roleValue === 'system'
+      ? roleValue
+      : null;
+  return {
+    id,
+    customerId,
+    customerPhone,
+    customerName,
+    channelType,
+    agentActive: readBoolean(record, 'agentActive') ?? false,
+    currentState,
+    lastMessage: readString(record, 'lastMessage') ?? null,
+    lastMessageRole,
+    lastActivityAt,
+  };
+}
+
 const RANGE_OPTIONS = [
   { value: 'today', label: 'Hoy' },
   { value: 'yesterday', label: 'Ayer' },
@@ -76,12 +237,12 @@ const RANGE_OPTIONS = [
 
 const STATUS_COLORS = ['#22c55e', 'hsl(var(--primary))', 'hsl(var(--primary) / 0.8)', '#ef4444', '#64748b'];
 
-const formatCurrency = (amount: number) => `$${(amount / 100).toLocaleString('es-AR')}`;
+const formatCurrency = (amount: number): string => `$${(amount / 100).toLocaleString('es-AR')}`;
 
-const resolveRange = (range: string) => {
+const resolveRange = (range: string): RangeMeta => {
   const now = new Date();
-  const startOfDay = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
-  const endOfDay = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999);
+  const startOfDay = (date: Date): Date => new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
+  const endOfDay = (date: Date): Date => new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999);
 
   if (range === 'yesterday') {
     const yesterday = new Date(now);
@@ -125,7 +286,7 @@ const resolveRange = (range: string) => {
   } as const;
 };
 
-const buildDailyBuckets = (from: Date, to: Date) => {
+const buildDailyBuckets = (from: Date, to: Date): Array<{ key: string; label: string; total: number; orders: number }> => {
   const buckets: Array<{ key: string; label: string; total: number; orders: number }> = [];
   const cursor = new Date(from);
   while (cursor <= to) {
@@ -141,7 +302,7 @@ const buildDailyBuckets = (from: Date, to: Date) => {
   return buckets;
 };
 
-const buildHourlyBuckets = () => {
+const buildHourlyBuckets = (): Array<{ key: string; label: string; total: number; orders: number }> => {
   const buckets: Array<{ key: string; label: string; total: number; orders: number }> = [];
   for (let hour = 0; hour < 24; hour += 1) {
     buckets.push({
@@ -154,7 +315,7 @@ const buildHourlyBuckets = () => {
   return buckets;
 };
 
-const mapStatus = (status: string) => {
+const mapStatus = (status: string): string => {
   if (['awaiting_acceptance', 'draft'].includes(status)) return 'Esperando aprobación';
   if (['accepted', 'processing', 'shipped', 'delivered', 'confirmed', 'preparing', 'ready'].includes(status)) {
     return 'En curso';
@@ -165,7 +326,7 @@ const mapStatus = (status: string) => {
   return 'Otros';
 };
 
-const timeAgo = (value: string) => {
+const timeAgo = (value: string): string => {
   const date = new Date(value);
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
@@ -178,12 +339,12 @@ const timeAgo = (value: string) => {
   return `hace ${diffDays}d`;
 };
 
-const truncateText = (value: string, max = 80) => {
+const truncateText = (value: string, max = 80): string => {
   if (value.length <= max) return value;
   return `${value.slice(0, max - 1).trim()}…`;
 };
 
-export default function DashboardHome() {
+export default function DashboardHome(): JSX.Element {
   const { user, workspace } = useAuth();
   const [range, setRange] = useState('today');
   const [orders, setOrders] = useState<OrderSummary[]>([]);
@@ -196,7 +357,7 @@ export default function DashboardHome() {
   useEffect(() => {
     if (!workspace?.id) return;
 
-    const fetchData = async () => {
+    const fetchData = async (): Promise<void> => {
       setIsLoading(true);
       try {
         const params = new URLSearchParams({
@@ -209,10 +370,14 @@ export default function DashboardHome() {
           includeTrashed: 'true',
         });
 
-        const response = await apiFetch(`/api/v1/orders?${params}`, {}, workspace.id);
+        const response = await apiFetch(`/api/v1/orders?${params.toString()}`, {}, workspace.id);
         if (response.ok) {
-          const data = await response.json();
-          setOrders(data.orders || []);
+          const data = await readJsonRecord(response);
+          setOrders(
+            readArray(data, 'orders')
+              .map(item => parseOrderSummary(item))
+              .filter((item): item is OrderSummary => item !== null)
+          );
         } else {
           setOrders([]);
         }
@@ -224,19 +389,23 @@ export default function DashboardHome() {
       }
     };
 
-    fetchData();
+    void fetchData();
   }, [workspace?.id, rangeMeta.from, rangeMeta.to]);
 
   useEffect(() => {
     if (!workspace?.id) return;
 
-    const fetchConversations = async () => {
+    const fetchConversations = async (): Promise<void> => {
       setIsMessagesLoading(true);
       try {
         const response = await apiFetch('/api/v1/conversations', {}, workspace.id);
         if (response.ok) {
-          const data = await response.json();
-          setConversations(data.conversations || []);
+          const data = await readJsonRecord(response);
+          setConversations(
+            readArray(data, 'conversations')
+              .map(item => parseConversationPreview(item))
+              .filter((item): item is ConversationPreview => item !== null)
+          );
         } else {
           setConversations([]);
         }
@@ -248,7 +417,7 @@ export default function DashboardHome() {
       }
     };
 
-    fetchConversations();
+    void fetchConversations();
   }, [workspace?.id]);
 
   const summary = useMemo(() => {
@@ -331,7 +500,7 @@ export default function DashboardHome() {
   }, [orders]);
 
   const recentMessages = useMemo(() => conversations.slice(0, 6), [conversations]);
-  const resolveMessagePrefix = (role: ConversationPreview['lastMessageRole']) => {
+  const resolveMessagePrefix = (role: ConversationPreview['lastMessageRole']): string => {
     if (role === 'user') return 'Cliente: ';
     if (role === 'assistant') return 'Bot: ';
     return '';

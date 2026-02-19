@@ -1,10 +1,11 @@
+import { Eye, EyeOff } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Eye, EyeOff } from 'lucide-react';
+
 import { Button, Input, Label } from '../../components/ui';
 import { useAuth } from '../../contexts/AuthContext';
 
-export default function LoginPage() {
+export default function LoginPage(): JSX.Element {
   const { login } = useAuth();
 
   const [email, setEmail] = useState('');
@@ -14,7 +15,7 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
     setError('');
     setIsLoading(true);
@@ -57,7 +58,12 @@ export default function LoginPage() {
           </p>
         </div>
         <div className="p-8">
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form
+            onSubmit={(event) => {
+              void handleSubmit(event);
+            }}
+            className="space-y-4"
+          >
             <Input
               type="email"
               label="Email"

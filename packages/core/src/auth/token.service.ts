@@ -2,8 +2,9 @@
  * JWT Token Service
  * Handles access and refresh token generation/verification
  */
-import jwt from 'jsonwebtoken';
 import { createHash, randomBytes } from 'crypto';
+
+import jwt from 'jsonwebtoken';
 
 export interface AccessTokenPayload {
   sub: string; // user ID

@@ -54,6 +54,10 @@ tmp/
 temp/
 .tmp/
 
+# Runtime uploads (do not version business files)
+apps/api/uploads/
+apps/worker/apps/api/uploads/
+
 # Secrets (never commit)
 *.pem
 *.key

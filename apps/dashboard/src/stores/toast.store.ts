@@ -100,7 +100,10 @@ export const useToastStore = create<ToastStore>((set) => ({
 }));
 
 // Hook helper for easy access
-export const useToast = () => {
+export const useToast = (): Pick<
+  ToastStore,
+  'success' | 'error' | 'info' | 'warning' | 'notify'
+> => {
   const { success, error, info, warning, notify } = useToastStore();
   return { success, error, info, warning, notify };
 };

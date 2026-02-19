@@ -1,5 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
 import { Plus, ImagePlus, Package, AlertTriangle } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+
+import { cn } from '../../lib/utils';
 import {
   Button,
   Dialog,
@@ -16,9 +18,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '../ui';
-import { cn } from '../../lib/utils';
 
-const API_URL = import.meta.env.VITE_API_URL || '';
+const API_URL: string =
+  typeof import.meta.env.VITE_API_URL === 'string' ? import.meta.env.VITE_API_URL : '';
 
 interface Category {
   id: string;
@@ -88,6 +90,22 @@ interface ProductModalProps {
   workspaceId: string;
 }
 
+interface UploadResponseBody {
+  url?: string;
+  error?: string;
+}
+
+const asRecord = (value: unknown): Record<string, unknown> | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+};
+
+const readString = (record: Record<string, unknown> | null, key: keyof UploadResponseBody): string | null => {
+  if (!record) return null;
+  const value = record[key];
+  return typeof value === 'string' && value.trim().length > 0 ? value : null;
+};
+
 export function ProductModal({
   isOpen,
   onClose,
@@ -96,7 +114,7 @@ export function ProductModal({
   categories,
   onCreateCategory,
   workspaceId,
-}: ProductModalProps) {
+}: ProductModalProps): JSX.Element {
   const [formData, setFormData] = useState<ProductFormData>({
     name: '',
     price: 0,
@@ -118,7 +136,7 @@ export function ProductModal({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
 
-  const handleImageUpload = async (file: File) => {
+  const handleImageUpload = (file: File): void => {
     setIsUploading(true);
     setError(null);
 
@@ -174,8 +192,8 @@ export function ProductModal({
     setPendingFile(null);
   }, [product, isOpen]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (e?: React.SyntheticEvent): Promise<void> => {
+    e?.preventDefault();
     if (!formData.name.trim()) {
       setError('El nombre es requerido');
       return;
@@ -208,12 +226,16 @@ export function ProductModal({
         });
 
         if (!response.ok) {
-          const data = await response.json();
-          throw new Error(data.error || 'Error al subir imagen');
+          const errorPayload = (await response.json()) as unknown;
+          const errorBody = asRecord(errorPayload);
+          throw new Error(readString(errorBody, 'error') ?? 'Error al subir imagen');
         }
 
-        const data = await response.json();
-        finalImageUrl = data.url;
+        const uploadPayload = (await response.json()) as unknown;
+        const uploadBody = asRecord(uploadPayload);
+        const uploadedUrl = readString(uploadBody, 'url');
+        if (!uploadedUrl) throw new Error('Error al subir imagen');
+        finalImageUrl = uploadedUrl;
       }
 
       await onSave({ ...formData, imageUrl: finalImageUrl });
@@ -226,7 +248,7 @@ export function ProductModal({
     }
   };
 
-  const handleCreateCategory = async () => {
+  const handleCreateCategory = async (): Promise<void> => {
     if (!newCategoryName.trim()) return;
 
     setIsLoading(true);
@@ -247,7 +269,7 @@ export function ProductModal({
     }
   };
 
-  const toggleCategory = (categoryId: string) => {
+  const toggleCategory = (categoryId: string): void => {
     setFormData((prev) => ({
       ...prev,
       categoryIds: prev.categoryIds.includes(categoryId)
@@ -292,7 +314,12 @@ export function ProductModal({
           </div>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto space-y-5 py-4 px-1 -mx-1">
+        <form
+          onSubmit={(event) => {
+            void handleSubmit(event);
+          }}
+          className="flex-1 overflow-y-auto space-y-5 py-4 px-1 -mx-1"
+        >
           {error && (
             <div className="flex items-center gap-2 p-3 rounded-xl bg-red-500/10 border border-red-500/20">
               <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0" />
@@ -564,7 +591,7 @@ export function ProductModal({
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
-                      handleCreateCategory();
+                      void handleCreateCategory();
                     }
                     if (e.key === 'Escape') {
                       setIsCreatingCategory(false);
@@ -575,7 +602,9 @@ export function ProductModal({
                 <Button
                   type="button"
                   size="sm"
-                  onClick={handleCreateCategory}
+                  onClick={() => {
+                    void handleCreateCategory();
+                  }}
                   disabled={!newCategoryName.trim()}
                 >
                   Agregar
@@ -612,7 +641,13 @@ export function ProductModal({
           <Button variant="secondary" className="flex-1" onClick={onClose} disabled={isLoading}>
             Cancelar
           </Button>
-          <Button className="flex-1" onClick={handleSubmit} isLoading={isLoading}>
+          <Button
+            className="flex-1"
+            onClick={() => {
+              void handleSubmit();
+            }}
+            isLoading={isLoading}
+          >
             {product ? 'Guardar cambios' : 'Crear producto'}
           </Button>
         </div>

@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+
 import { Button, Input } from '../../components/ui';
 import { useAuth } from '../../contexts/AuthContext';
 
-export default function RegisterPage() {
+export default function RegisterPage(): JSX.Element {
   const navigate = useNavigate();
   const { register } = useAuth();
 
@@ -16,13 +17,13 @@ export default function RegisterPage() {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>): void => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
     setError('');
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
     setError('');
 
@@ -87,7 +88,12 @@ export default function RegisterPage() {
           </p>
         </div>
         <div className="p-8">
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form
+            onSubmit={(event) => {
+              void handleSubmit(event);
+            }}
+            className="space-y-4"
+          >
             <Input
               name="firstName"
               label="Nombre"

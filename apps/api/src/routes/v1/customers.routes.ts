@@ -2,27 +2,43 @@
  * Customers Routes
  * CRUD operations for customer management
  */
-import { FastifyPluginAsync } from 'fastify';
-import { Prisma } from '@prisma/client';
+import { type Prisma } from '@prisma/client';
+import { type FastifyPluginAsync } from 'fastify';
+import { z } from 'zod';
+
+import { LedgerService, decrypt } from '@nexova/core';
+import { EvolutionClient, InfobipClient } from '@nexova/integrations/whatsapp';
+import { COMMERCE_USAGE_METRICS } from '@nexova/shared';
+
+import { getEffectiveCommercePlanLimits } from '../../utils/commerce-plan-limits.js';
+import { getWorkspacePlanContext } from '../../utils/commerce-plan.js';
 import {
   debtIgnoredStatuses,
   computePaymentScore,
   recalcCustomerFinancials,
 } from '../../utils/customer-financials.js';
-import { LedgerService, decrypt } from '@nexova/core';
-import { EvolutionClient, InfobipClient } from '@nexova/integrations/whatsapp';
-import { z } from 'zod';
-import { createNotificationIfEnabled } from '../../utils/notifications.js';
-import { getWorkspacePlanContext } from '../../utils/commerce-plan.js';
-import { getEffectiveCommercePlanLimits } from '../../utils/commerce-plan-limits.js';
 import { getMonthlyUsage, recordMonthlyUsage } from '../../utils/monthly-usage.js';
-import { COMMERCE_USAGE_METRICS } from '@nexova/shared';
+import { createNotificationIfEnabled } from '../../utils/notifications.js';
+
 
 type DebtStats = {
   debt: number;
   paidCount: number;
   unpaidCount: number;
   oldestUnpaidAt?: Date;
+};
+
+type PaymentStatusFilter = 'pending_payment' | 'partial_payment' | 'paid';
+
+const isPaymentStatusFilter = (value: unknown): value is PaymentStatusFilter =>
+  value === 'pending_payment' || value === 'partial_payment' || value === 'paid';
+
+const getErrorCode = (error: unknown): string | undefined => {
+  if (!error || typeof error !== 'object') {
+    return undefined;
+  }
+  const code = (error as Record<string, unknown>).code;
+  return typeof code === 'string' ? code : undefined;
 };
 
 const normalizePhone = (phone: string): string => {
@@ -67,7 +83,7 @@ const createCustomerSchema = z.object({
 });
 
 
-export const customersRoutes: FastifyPluginAsync = async (fastify) => {
+export const customersRoutes: FastifyPluginAsync = (fastify) => {
   const ledgerService = new LedgerService(fastify.prisma);
 
   const resolveWhatsAppApiKey = (number: { apiKeyEnc?: string | null; apiKeyIv?: string | null }): string => {
@@ -146,7 +162,7 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
   // Get customers list
   fastify.get(
     '/',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('customers:read')] },
     async (request, reply) => {
       const workspaceId = request.headers['x-workspace-id'] as string;
       if (!workspaceId) {
@@ -157,7 +173,7 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
       const { search, status, limit, offset, sortBy, sortOrder } = query;
 
       // Build where clause (exclude soft-deleted)
-      const where: any = { workspaceId, deletedAt: null };
+      const where: Prisma.CustomerWhereInput = { workspaceId, deletedAt: null };
 
       if (status) {
         where.status = status;
@@ -246,7 +262,7 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       // Format response (convert BigInt to Number for JSON serialization)
-      const updates: Promise<any>[] = [];
+      const updates: Array<Promise<Prisma.BatchPayload>> = [];
 
       const formattedCustomers = customers.map((c) => {
         const metadata = (c.metadata as Record<string, unknown>) || {};
@@ -304,7 +320,7 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
         await Promise.all(updates);
       }
 
-      reply.send({
+      return reply.send({
         customers: formattedCustomers,
         pagination: {
           total,
@@ -319,7 +335,7 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
   // Get unpaid orders for customer
   fastify.get<{ Params: { id: string } }>(
     '/:id/unpaid-orders',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('customers:read')] },
     async (request, reply) => {
       const workspaceId = request.headers['x-workspace-id'] as string;
       if (!workspaceId) {
@@ -344,7 +360,7 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
   // Send debt reminder to a customer
   fastify.post<{ Params: { id: string } }>(
     '/:id/debt-reminder',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('payments:update')] },
     async (request, reply) => {
       const workspaceId = request.headers['x-workspace-id'] as string;
       if (!workspaceId) {
@@ -458,7 +474,7 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
   // Send debt reminders to all debtors
   fastify.post(
     '/debt-reminders/bulk',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('payments:update')] },
     async (request, reply) => {
       const workspaceId = request.headers['x-workspace-id'] as string;
       if (!workspaceId) {
@@ -621,7 +637,7 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
   // Create customer (manual)
   fastify.post(
     '/',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('customers:create')] },
     async (request, reply) => {
       const workspaceId = request.headers['x-workspace-id'] as string;
       if (!workspaceId) {
@@ -648,7 +664,7 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
       const firstName = nameParts[0]?.slice(0, 100) || null;
       const lastName = nameParts.slice(1).join(' ').slice(0, 100) || null;
 
-	      const metadata: Prisma.InputJsonValue = dni ? { dni } : {};
+      const metadata: Prisma.InputJsonValue = dni ? { dni } : {};
 
       let createdCustomer;
       try {
@@ -669,8 +685,8 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
             lastSeenAt: new Date(),
           },
         });
-      } catch (error: any) {
-        if (error?.code === 'P2002') {
+      } catch (error: unknown) {
+        if (getErrorCode(error) === 'P2002') {
           return reply.code(409).send({ error: 'DUPLICATE_PHONE', message: 'Ese telefono ya existe' });
         }
         throw error;
@@ -696,7 +712,7 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const responseMetadata = (createdCustomer.metadata as Record<string, unknown>) || {};
-      reply.send({
+      return reply.send({
         customer: {
           id: createdCustomer.id,
           phone: createdCustomer.phone,
@@ -727,7 +743,7 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
   // Get customer stats
   fastify.get(
     '/stats',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('customers:read')] },
     async (request, reply) => {
       const workspaceId = request.headers['x-workspace-id'] as string;
       if (!workspaceId) {
@@ -814,7 +830,7 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
         }),
       ]);
 
-      reply.send({
+      return reply.send({
         totalCustomers,
         activeCustomers,
         newCustomers,
@@ -838,7 +854,7 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
   // Get single customer
   fastify.get(
     '/:id',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('customers:read')] },
     async (request, reply) => {
       const workspaceId = request.headers['x-workspace-id'] as string;
       if (!workspaceId) {
@@ -882,7 +898,7 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
       const metadata = (customer.metadata as Record<string, unknown>) || {};
       const recalculated = await recalcCustomerFinancials(fastify.prisma, workspaceId, customer.id);
 
-      reply.send({
+      return reply.send({
         customer: {
           id: customer.id,
           phone: customer.phone,
@@ -917,7 +933,7 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
   // Update customer
   fastify.patch(
     '/:id',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('customers:update')] },
     async (request, reply) => {
       const workspaceId = request.headers['x-workspace-id'] as string;
       if (!workspaceId) {
@@ -937,7 +953,7 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       // Build update data
-      const updateData: any = {};
+      const updateData: Prisma.CustomerUpdateManyMutationInput = {};
       if (body.firstName !== undefined) updateData.firstName = body.firstName;
       if (body.lastName !== undefined) updateData.lastName = body.lastName;
       if (body.email !== undefined) updateData.email = body.email;
@@ -951,11 +967,12 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
       // Handle metadata (dni, notes)
       if (body.dni !== undefined || body.notes !== undefined) {
         const currentMetadata = (existing.metadata as Record<string, unknown>) || {};
-        updateData.metadata = {
+        const mergedMetadata = {
           ...currentMetadata,
           ...(body.dni !== undefined && { dni: body.dni }),
           ...(body.notes !== undefined && { notes: body.notes }),
         };
+        updateData.metadata = mergedMetadata as Prisma.InputJsonValue;
       }
 
       await fastify.prisma.customer.updateMany({
@@ -998,7 +1015,7 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
       const metadata = (customer.metadata as Record<string, unknown>) || {};
       const recalculated = await recalcCustomerFinancials(fastify.prisma, workspaceId, customer.id);
 
-      reply.send({
+      return reply.send({
         customer: {
           id: customer.id,
           phone: customer.phone,
@@ -1033,7 +1050,7 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
   // Delete customer (soft delete)
   fastify.delete(
     '/:id',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('customers:delete')] },
     async (request, reply) => {
       const workspaceId = request.headers['x-workspace-id'] as string;
       if (!workspaceId) {
@@ -1058,7 +1075,7 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
         },
       });
 
-      reply.send({ success: true });
+      return reply.send({ success: true });
     }
   );
 
@@ -1073,7 +1090,7 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
   // Get customer notes
   fastify.get(
     '/:id/notes',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('customers:read')] },
     async (request, reply) => {
       const workspaceId = request.headers['x-workspace-id'] as string;
       if (!workspaceId) {
@@ -1096,14 +1113,14 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
         orderBy: { createdAt: 'desc' },
       });
 
-      reply.send({ notes });
+      return reply.send({ notes });
     }
   );
 
   // Create customer note
   fastify.post(
     '/:id/notes',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('customers:update')] },
     async (request, reply) => {
       const workspaceId = request.headers['x-workspace-id'] as string;
       if (!workspaceId) {
@@ -1130,14 +1147,14 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
         },
       });
 
-      reply.send({ note });
+      return reply.send({ note });
     }
   );
 
   // Delete customer note
   fastify.delete(
     '/:id/notes/:noteId',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('customers:update')] },
     async (request, reply) => {
       const workspaceId = request.headers['x-workspace-id'] as string;
       if (!workspaceId) {
@@ -1168,7 +1185,7 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: noteId },
       });
 
-      reply.send({ success: true });
+      return reply.send({ success: true });
     }
   );
 
@@ -1198,7 +1215,7 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
   // Get customer orders
   fastify.get(
     '/:id/orders',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('customers:read')] },
     async (request, reply) => {
       const workspaceId = request.headers['x-workspace-id'] as string;
       if (!workspaceId) {
@@ -1217,10 +1234,10 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(404).send({ error: 'NOT_FOUND', message: 'Customer not found' });
       }
 
-      const paymentFilters = ['pending_payment', 'partial_payment', 'paid'] as const;
-      const isPaymentFilter = query.status ? paymentFilters.includes(query.status as any) : false;
+      const paymentStatus = isPaymentStatusFilter(query.status) ? query.status : null;
+      const isPaymentFilter = paymentStatus !== null;
 
-      const where: any = { customerId: id, workspaceId, deletedAt: null };
+      const where: Prisma.OrderWhereInput = { customerId: id, workspaceId, deletedAt: null };
       if (!query.status || isPaymentFilter) {
         where.status = { not: 'trashed' };
       }
@@ -1273,7 +1290,10 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
         deliveredAt: o.deliveredAt,
       }));
 
-      const matchesPaymentFilter = (order: any, filter: string) => {
+      const matchesPaymentFilter = (
+        order: { total: number; paidAmount: number },
+        filter: PaymentStatusFilter
+      ): boolean => {
         if (filter === 'paid') {
           return order.total <= 0 || order.paidAmount >= order.total;
         }
@@ -1286,8 +1306,8 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
         return true;
       };
 
-      const filteredOrders = isPaymentFilter && query.status
-        ? formattedOrders.filter((o) => matchesPaymentFilter(o, query.status!))
+      const filteredOrders = isPaymentFilter && paymentStatus
+        ? formattedOrders.filter((o) => matchesPaymentFilter(o, paymentStatus))
         : formattedOrders;
 
       const pagedOrders = isPaymentFilter
@@ -1295,7 +1315,7 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
         : filteredOrders;
       const totalCount = isPaymentFilter ? filteredOrders.length : total;
 
-      reply.send({
+      return reply.send({
         orders: pagedOrders,
         pagination: {
           total: totalCount,
@@ -1312,9 +1332,9 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
   // ═══════════════════════════════════════════════════════════════════════════════
 
   // Get AI-generated customer summary
-	  fastify.post(
-	    '/:id/summary',
-	    { preHandler: [fastify.authenticate] },
+		  fastify.post(
+		    '/:id/summary',
+		    { preHandler: [fastify.requirePermission('customers:read')] },
 	    async (request, reply) => {
 	      const workspaceId = request.headers['x-workspace-id'] as string;
 	      if (!workspaceId) {
@@ -1462,7 +1482,7 @@ El resumen debe ser práctico y destacar lo más relevante para atenderlo mejor.
         metadata: { source: 'customers.summary' },
       });
 
-      reply.send({
+      return reply.send({
         summary,
         stats: {
           totalOrders,

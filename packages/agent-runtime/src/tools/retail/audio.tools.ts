@@ -2,19 +2,21 @@
  * Audio Tools
  * Owner tools for manual audio transcription lifecycle (enqueue + fetch transcript).
  */
+import { type Prisma, type PrismaClient } from '@prisma/client';
+import { type Queue } from 'bullmq';
 import { z } from 'zod';
-import { Prisma, PrismaClient } from '@prisma/client';
-import { Queue } from 'bullmq';
-import { BaseTool } from '../base.js';
-import { ToolCategory, ToolContext, ToolResult } from '../../types/index.js';
+
 import {
-  AudioTranscriptionPayload,
+  type AudioTranscriptionPayload,
   COMMERCE_USAGE_METRICS,
   QUEUES,
   getCommercePlanCapabilities,
 } from '@nexova/shared';
+
+import { ToolCategory, type ToolContext, type ToolResult } from '../../types/index.js';
 import { getEffectivePlanLimits, resolveWorkspacePlan } from '../../utils/commerce-plan-limits.js';
 import { getMonthlyUsage } from '../../utils/monthly-usage.js';
+import { BaseTool } from '../base.js';
 
 function asObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object') return {};
@@ -393,7 +395,7 @@ export interface AudioToolsDependencies {
   queue?: Queue<AudioTranscriptionPayload> | null;
 }
 
-export function createAudioTools(deps: AudioToolsDependencies): BaseTool<any, any>[] {
+export function createAudioTools(deps: AudioToolsDependencies): Array<BaseTool<z.ZodSchema, unknown>> {
   return [
     new TranscribeAudioMessageTool(deps.prisma, deps.queue ?? null),
     new GetAudioTranscriptTool(deps.prisma),

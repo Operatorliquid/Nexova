@@ -1,5 +1,6 @@
-import forge from 'node-forge';
 import { XMLParser } from 'fast-xml-parser';
+import forge from 'node-forge';
+
 import type { ArcaAccessTicket, ArcaEnvironment, ArcaInvoiceRequest, ArcaInvoiceLookup } from './types.js';
 
 const WSAA_URLS: Record<ArcaEnvironment, string> = {
@@ -81,6 +82,11 @@ function findNestedValue(obj: unknown, keyName: string): unknown {
     if (found !== null && found !== undefined) return found;
   }
   return null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
 }
 
 type WsaaSignAlgorithm = 'sha1' | 'sha256';
@@ -206,7 +212,7 @@ async function wsaaLoginWithAlg(params: {
 
   let loginCmsReturn = extractTag(text, 'loginCmsReturn');
   if (!loginCmsReturn) {
-    const parsed = parser.parse(text);
+    const parsed: unknown = parser.parse(text);
     const found = findNestedValue(parsed, 'loginCmsReturn');
     if (typeof found === 'string') loginCmsReturn = found;
   }
@@ -216,7 +222,7 @@ async function wsaaLoginWithAlg(params: {
   }
 
   const decoded = decodeXmlEntities(loginCmsReturn);
-  const ticket = parser.parse(decoded);
+  const ticket: unknown = parser.parse(decoded);
 
   const token = findNestedValue(ticket, 'token');
   const sign = findNestedValue(ticket, 'sign');
@@ -261,15 +267,15 @@ async function callWsfe(params: {
 export async function wsfeDummy(environment: ArcaEnvironment): Promise<{ appServer: string; dbServer: string; authServer: string }> {
   const payload = '';
   const xml = await callWsfe({ environment, action: 'FEDummy', payload });
-  const parsed = parser.parse(xml);
-  const result = findNestedValue(parsed, 'FEDummyResult') as Record<string, unknown> | null;
-  if (!result || typeof result !== 'object') {
+  const parsed: unknown = parser.parse(xml);
+  const result = asRecord(findNestedValue(parsed, 'FEDummyResult'));
+  if (!result) {
     throw new Error('WSFE dummy response invalid');
   }
   return {
-    appServer: String((result as any).AppServer || ''),
-    dbServer: String((result as any).DbServer || ''),
-    authServer: String((result as any).AuthServer || ''),
+    appServer: String(result['AppServer'] ?? ''),
+    dbServer: String(result['DbServer'] ?? ''),
+    authServer: String(result['AuthServer'] ?? ''),
   };
 }
 
@@ -290,9 +296,9 @@ export async function wsfeCompUltimoAutorizado(params: {
     `  <ar:CbteTipo>${params.cbteTipo}</ar:CbteTipo>`;
 
   const xml = await callWsfe({ environment: params.environment, action: 'FECompUltimoAutorizado', payload });
-  const parsed = parser.parse(xml);
-  const result = findNestedValue(parsed, 'FECompUltimoAutorizadoResult') as Record<string, unknown> | null;
-  const number = result ? (result as any).CbteNro : null;
+  const parsed: unknown = parser.parse(xml);
+  const result = asRecord(findNestedValue(parsed, 'FECompUltimoAutorizadoResult'));
+  const number = result?.['CbteNro'] ?? null;
   const parsedNumber = Number(number);
   if (!Number.isFinite(parsedNumber)) {
     throw new Error('No se pudo obtener el último comprobante autorizado');
@@ -321,18 +327,18 @@ export async function wsfeCompConsultar(params: {
     `  </ar:FeCompConsReq>`;
 
   const xml = await callWsfe({ environment: params.environment, action: 'FECompConsultar', payload });
-  const parsed = parser.parse(xml);
-  const result = findNestedValue(parsed, 'FECompConsultarResult') as Record<string, unknown> | null;
-  const detail = result ? (findNestedValue(result, 'ResultGet') as Record<string, unknown> | null) : null;
+  const parsed: unknown = parser.parse(xml);
+  const result = asRecord(findNestedValue(parsed, 'FECompConsultarResult'));
+  const detail = result ? asRecord(findNestedValue(result, 'ResultGet')) : null;
 
-  if (!detail || typeof detail !== 'object') {
+  if (!detail) {
     return null;
   }
 
-  const cbteFch = String((detail as any).CbteFch || '');
-  const impTotalRaw = (detail as any).ImpTotal;
-  const docTipoRaw = (detail as any).DocTipo;
-  const docNroRaw = (detail as any).DocNro;
+  const cbteFch = String(detail['CbteFch'] ?? '');
+  const impTotalRaw = detail['ImpTotal'];
+  const docTipoRaw = detail['DocTipo'];
+  const docNroRaw = detail['DocNro'];
 
   const impTotal = Number(impTotalRaw);
   const docTipo = Number(docTipoRaw);
@@ -367,14 +373,15 @@ export async function wsfeParamGetPtosVenta(params: {
     `  </ar:Auth>`;
 
   const xml = await callWsfe({ environment: params.environment, action: 'FEParamGetPtosVenta', payload });
-  const parsed = parser.parse(xml);
-  const result = findNestedValue(parsed, 'FEParamGetPtosVentaResult') as Record<string, unknown> | null;
-  const items = result ? (findNestedValue(result, 'ResultGet') as any) : null;
+  const parsed: unknown = parser.parse(xml);
+  const result = asRecord(findNestedValue(parsed, 'FEParamGetPtosVentaResult'));
+  const items = result ? findNestedValue(result, 'ResultGet') : null;
 
   const rows = Array.isArray(items) ? items : items ? [items] : [];
   const points: number[] = [];
   rows.forEach((row) => {
-    const value = Number((row as any).PtoVta ?? (row as any).PtoVtaNro ?? (row as any).ptoVta);
+    const rowRecord = asRecord(row);
+    const value = Number(rowRecord?.['PtoVta'] ?? rowRecord?.['PtoVtaNro'] ?? rowRecord?.['ptoVta']);
     if (Number.isFinite(value)) {
       points.push(value);
     }
@@ -445,16 +452,16 @@ export async function wsfeCaeSolicitar(params: {
     `  </ar:FeCAEReq>`;
 
   const xml = await callWsfe({ environment: params.environment, action: 'FECAESolicitar', payload });
-  const parsed = parser.parse(xml);
-  const result = findNestedValue(parsed, 'FECAESolicitarResult') as Record<string, unknown> | null;
+  const parsed: unknown = parser.parse(xml);
+  const result = asRecord(findNestedValue(parsed, 'FECAESolicitarResult'));
   if (!result) {
     throw new Error('Respuesta FECAESolicitar inválida');
   }
 
-  const detail = findNestedValue(result, 'FECAEDetResponse') as Record<string, unknown> | null;
-  const cae = detail ? (detail as any).CAE : undefined;
-  const caeFchVto = detail ? (detail as any).CAEFchVto : undefined;
-  const resultado = detail ? (detail as any).Resultado : undefined;
+  const detail = asRecord(findNestedValue(result, 'FECAEDetResponse'));
+  const cae = detail?.['CAE'];
+  const caeFchVto = detail?.['CAEFchVto'];
+  const resultado = detail?.['Resultado'];
   const approved = typeof resultado === 'string' ? resultado.toUpperCase() === 'A' : false;
 
   return {

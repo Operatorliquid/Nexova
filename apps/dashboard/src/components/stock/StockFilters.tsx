@@ -1,4 +1,5 @@
 import { Search, CheckSquare, X, LayoutGrid, List } from 'lucide-react';
+
 import { Input, Button } from '../ui';
 import {
   Select,
@@ -40,7 +41,7 @@ export function StockFilters({
   onSelectModeToggle,
   viewMode,
   onViewModeChange,
-}: StockFiltersProps) {
+}: StockFiltersProps): JSX.Element {
   const stockFilterOptions = [
     { value: 'all', label: 'Todos' },
     { value: 'inStock', label: 'Con stock' },

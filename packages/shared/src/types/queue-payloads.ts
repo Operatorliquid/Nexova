@@ -178,7 +178,7 @@ export interface AudioTranscriptionPayload {
   /** Source provider message ID */
   messageId: string;
   /** Source provider */
-  provider: 'infobip' | 'evolution' | string;
+  provider: 'infobip' | 'evolution' | (string & { readonly __provider?: never });
   /** Channel identifier (usually customer phone) */
   channelId?: string;
   /** Correlation ID for tracing */

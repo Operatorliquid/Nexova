@@ -1,7 +1,8 @@
 import { FileText, Calendar, DollarSign, Clock } from 'lucide-react';
+
 import { Button, Input, AnimatedPage, AnimatedStagger, StatCard } from '../../components/ui';
 
-export default function ReceiptsPage() {
+export default function ReceiptsPage(): JSX.Element {
   return (
     <div className="h-full overflow-y-auto scrollbar-hide p-4 md:p-6">
       <AnimatedPage className="max-w-7xl mx-auto space-y-4 md:space-y-6">

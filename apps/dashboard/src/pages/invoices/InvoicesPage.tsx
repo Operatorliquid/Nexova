@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle2, FileText, Printer, RefreshCw, Search } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+
 import {
   Badge,
   Button,
@@ -8,10 +10,46 @@ import {
 } from '../../components/ui';
 import { useAuth } from '../../contexts/AuthContext';
 import { apiFetch } from '../../lib/api';
+import { PENDING_INVOICING_BADGE } from '../../lib/statusStyles';
 import { cn } from '../../lib/utils';
 import { useToast } from '../../stores/toast.store';
-import { Link } from 'react-router-dom';
-import { PENDING_INVOICING_BADGE } from '../../lib/statusStyles';
+
+type JsonRecord = Record<string, unknown>;
+
+function asRecord(value: unknown): JsonRecord | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as JsonRecord;
+}
+
+function readString(record: JsonRecord | null, key: string): string | undefined {
+  const value = record?.[key];
+  return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
+}
+
+function readNumber(record: JsonRecord | null, key: string): number | undefined {
+  const value = record?.[key];
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value !== 'string' || value.trim().length === 0) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function readRecord(record: JsonRecord | null, key: string): JsonRecord | null {
+  return asRecord(record?.[key]);
+}
+
+function readErrorMessage(data: JsonRecord, fallback: string): string {
+  return readString(data, 'error') ?? readString(data, 'message') ?? fallback;
+}
+
+async function readJsonRecord(response: Response): Promise<JsonRecord> {
+  try {
+    const parsed = (await response.json()) as unknown;
+    return asRecord(parsed) ?? {};
+  } catch {
+    return {};
+  }
+}
 
 interface OrderItem {
   id: string;
@@ -97,6 +135,27 @@ interface BillingSummary {
   sync: { ok: boolean; error?: string | null };
 }
 
+function asOrder(value: unknown): Order | null {
+  return asRecord(value) as Order | null;
+}
+
+function asOrderArray(value: unknown): Order[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item) => asRecord(item) !== null) as Order[];
+}
+
+function asArcaStatus(value: unknown): ArcaStatus | null {
+  return asRecord(value) as ArcaStatus | null;
+}
+
+function asExistingInvoice(value: unknown): ExistingInvoice | null {
+  return asRecord(value) as ExistingInvoice | null;
+}
+
+function asBillingSummary(value: unknown): BillingSummary | null {
+  return asRecord(value) as BillingSummary | null;
+}
+
 type BillingLimit = { limit: number; used: number; remaining: number; percent: number };
 
 const STATUS_CONFIG: Record<string, { label: string; className: string }> = {
@@ -130,7 +189,7 @@ const VAT_CONDITION_LABELS = IVA_CONDITIONS.reduce<Record<string, string>>((acc,
   return acc;
 }, {});
 
-const normalizeText = (value: string) =>
+const normalizeText = (value: string): string =>
   value
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
@@ -143,7 +202,7 @@ const VAT_CONDITION_LOOKUP = IVA_CONDITIONS.reduce<Record<string, string>>((acc,
   return acc;
 }, {});
 
-const formatVatCondition = (value?: string | number | null) => {
+const formatVatCondition = (value?: string | number | null): string => {
   if (value === null || value === undefined) return 'No registrada';
   const raw = typeof value === 'number' ? String(value) : value;
   const trimmed = raw.trim();
@@ -151,7 +210,7 @@ const formatVatCondition = (value?: string | number | null) => {
   return VAT_CONDITION_LABELS[trimmed] || raw;
 };
 
-const normalizeVatConditionId = (value?: string | null) => {
+const normalizeVatConditionId = (value?: string | null): string | null => {
   if (!value) return null;
   const trimmed = value.trim();
   if (!trimmed) return null;
@@ -185,17 +244,17 @@ const resolveInvoiceType = (
   return { cbteTipo: 11, label: 'Factura C' };
 };
 
-const formatCurrency = (amount: number) => `$${(amount / 100).toLocaleString('es-AR')}`;
-const formatPercent = (value: number) => `${Math.round(value * 100)}%`;
+const formatCurrency = (amount: number): string => `$${(amount / 100).toLocaleString('es-AR')}`;
+const formatPercent = (value: number): string => `${Math.round(value * 100)}%`;
 
-const formatOrderDate = (value?: string) => {
+const formatOrderDate = (value?: string): string => {
   if (!value) return '—';
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
   return parsed.toLocaleDateString('es-AR', { day: '2-digit', month: 'short', year: 'numeric' });
 };
 
-const formatArcaDate = (value?: string | null) => {
+const formatArcaDate = (value?: string | null): string => {
   if (!value) return '—';
   if (/^\d{8}$/.test(value)) {
     const year = value.slice(0, 4);
@@ -210,7 +269,7 @@ const formatArcaDate = (value?: string | null) => {
   return value;
 };
 
-const formatCbteTipoLabel = (cbteTipo?: number | null) => {
+const formatCbteTipoLabel = (cbteTipo?: number | null): string => {
   if (!cbteTipo) return 'Factura';
   if (cbteTipo === 1) return 'Factura A';
   if (cbteTipo === 6) return 'Factura B';
@@ -218,14 +277,14 @@ const formatCbteTipoLabel = (cbteTipo?: number | null) => {
   return `Comprobante ${cbteTipo}`;
 };
 
-const formatCbteNumber = (pointOfSale?: number, cbteNro?: number | null) => {
+const formatCbteNumber = (pointOfSale?: number, cbteNro?: number | null): string => {
   if (!cbteNro) return '—';
   const pv = pointOfSale ? String(pointOfSale).padStart(4, '0') : '0000';
   const nro = String(cbteNro).padStart(8, '0');
   return `${pv}-${nro}`;
 };
 
-const escapeHtml = (value: string) =>
+const escapeHtml = (value: string): string =>
   value
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -233,13 +292,13 @@ const escapeHtml = (value: string) =>
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 
-const getCustomerName = (customer: Order['customer']) => {
+const getCustomerName = (customer: Order['customer']): string => {
   if (customer.name) return customer.name;
   if (customer.firstName && customer.lastName) return `${customer.firstName} ${customer.lastName}`;
   return customer.firstName || customer.lastName || customer.phone;
 };
 
-export default function InvoicesPage() {
+export default function InvoicesPage(): JSX.Element {
   const { workspace } = useAuth();
   const toast = useToast();
   const [orders, setOrders] = useState<Order[]>([]);
@@ -268,7 +327,7 @@ export default function InvoicesPage() {
     ? `Cat. ${billingSummary.limits.category} · ${billingSummary.limits.activity === 'goods' ? 'Bienes' : 'Servicios'}`
     : null;
 
-  const fetchOrders = async () => {
+  const fetchOrders = useCallback(async (): Promise<void> => {
     if (!workspace?.id) return;
     setIsLoading(true);
     try {
@@ -279,7 +338,7 @@ export default function InvoicesPage() {
         baseParams.search = search;
       }
 
-      const buildParams = (status: string) => {
+      const buildParams = (status: string): string => {
         const params = new URLSearchParams(baseParams);
         params.set('status', status);
         return params.toString();
@@ -295,11 +354,11 @@ export default function InvoicesPage() {
         throw new Error('No se pudieron cargar los pedidos');
       }
 
-      const pendingData = pendingRes.ok ? await pendingRes.json().catch(() => ({})) : {};
-      const invoicedData = invoicedRes.ok ? await invoicedRes.json().catch(() => ({})) : {};
+      const pendingData = pendingRes.ok ? await readJsonRecord(pendingRes) : {};
+      const invoicedData = invoicedRes.ok ? await readJsonRecord(invoicedRes) : {};
 
       const merged = new Map<string, Order>();
-      [...(pendingData.orders || []), ...(invoicedData.orders || [])].forEach((order: Order) => {
+      [...asOrderArray(pendingData.orders), ...asOrderArray(invoicedData.orders)].forEach((order) => {
         if (order?.id && !merged.has(order.id)) {
           merged.set(order.id, order);
         }
@@ -315,9 +374,9 @@ export default function InvoicesPage() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [search, toast, workspace?.id]);
 
-  const fetchOrderDetail = async (orderId: string) => {
+  const fetchOrderDetail = useCallback(async (orderId: string): Promise<void> => {
     if (!workspace?.id) return;
     setIsLoadingDetail(true);
     try {
@@ -325,17 +384,17 @@ export default function InvoicesPage() {
       if (!response.ok) {
         throw new Error('Error al cargar el pedido');
       }
-      const data = await response.json();
-      setSelectedOrder(data.order || null);
+      const data = await readJsonRecord(response);
+      setSelectedOrder(asOrder(data.order));
     } catch (error) {
       console.error('Failed to fetch order detail:', error);
       toast.error('No se pudo cargar el detalle del pedido');
     } finally {
       setIsLoadingDetail(false);
     }
-  };
+  }, [toast, workspace?.id]);
 
-  const fetchExistingInvoice = async (orderId: string) => {
+  const fetchExistingInvoice = useCallback(async (orderId: string): Promise<void> => {
     if (!workspace?.id) return;
     setIsLoadingExistingInvoice(true);
     setExistingInvoiceError('');
@@ -346,11 +405,11 @@ export default function InvoicesPage() {
         workspace.id
       );
       if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data.error || data.message || 'No se pudo cargar la factura');
+        const data = await readJsonRecord(response);
+        throw new Error(readErrorMessage(data, 'No se pudo cargar la factura'));
       }
-      const data = await response.json();
-      setExistingInvoice(data.invoice || null);
+      const data = await readJsonRecord(response);
+      setExistingInvoice(asExistingInvoice(data.invoice));
     } catch (error) {
       const message = error instanceof Error ? error.message : 'No se pudo cargar la factura';
       setExistingInvoiceError(message);
@@ -358,22 +417,25 @@ export default function InvoicesPage() {
     } finally {
       setIsLoadingExistingInvoice(false);
     }
-  };
+  }, [workspace?.id]);
 
-  const fetchSummary = async () => {
+  const fetchSummary = useCallback(async (): Promise<void> => {
     if (!workspace?.id) return;
     setIsLoadingSummary(true);
     setSummaryError('');
     try {
       const response = await apiFetch('/api/v1/integrations/arca/summary', {}, workspace.id);
       if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data.error || data.message || 'No se pudo cargar el resumen');
+        const data = await readJsonRecord(response);
+        throw new Error(readErrorMessage(data, 'No se pudo cargar el resumen'));
       }
-      const data = await response.json();
-      setBillingSummary(data);
-      if (data?.sync?.error) {
-        setSummaryError(String(data.sync.error));
+      const data = await readJsonRecord(response);
+      const summary = asBillingSummary(data);
+      setBillingSummary(summary);
+      const sync = readRecord(data, 'sync');
+      const syncError = readString(sync, 'error');
+      if (syncError) {
+        setSummaryError(syncError);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'No se pudo cargar el resumen';
@@ -381,34 +443,35 @@ export default function InvoicesPage() {
     } finally {
       setIsLoadingSummary(false);
     }
-  };
+  }, [workspace?.id]);
 
-  const fetchArcaStatus = async () => {
+  const fetchArcaStatus = useCallback(async (): Promise<void> => {
     if (!workspace?.id) return;
     setIsLoadingArca(true);
     try {
       const response = await apiFetch('/api/v1/integrations/arca/status', {}, workspace.id);
       if (response.ok) {
-        const data = await response.json();
-        setArcaStatus(data);
+        const data = await readJsonRecord(response);
+        setArcaStatus(asArcaStatus(data));
       }
     } catch (error) {
       console.error('Failed to fetch ARCA status:', error);
     } finally {
       setIsLoadingArca(false);
     }
-  };
+  }, [workspace?.id]);
 
-  const fetchCommerceSettings = async () => {
+  const fetchCommerceSettings = useCallback(async (): Promise<void> => {
     if (!workspace?.id) return;
     setIsLoadingCommerce(true);
     try {
       const response = await apiFetch(`/api/v1/workspaces/${workspace.id}`, {}, workspace.id);
       if (response.ok) {
-        const data = await response.json();
-        const settings = data.workspace?.settings || {};
-        setCommerceVatConditionId(settings.vatConditionId || null);
-        setCommerceBusinessName(settings.businessName || null);
+        const data = await readJsonRecord(response);
+        const workspaceData = readRecord(data, 'workspace');
+        const settings = readRecord(workspaceData, 'settings');
+        setCommerceVatConditionId(readString(settings, 'vatConditionId') ?? null);
+        setCommerceBusinessName(readString(settings, 'businessName') ?? null);
       } else {
         setCommerceVatConditionId(null);
         setCommerceBusinessName(null);
@@ -420,23 +483,23 @@ export default function InvoicesPage() {
     } finally {
       setIsLoadingCommerce(false);
     }
-  };
-
-  useEffect(() => {
-    fetchOrders();
-  }, [workspace?.id, search]);
-
-  useEffect(() => {
-    fetchArcaStatus();
   }, [workspace?.id]);
 
   useEffect(() => {
-    fetchCommerceSettings();
-  }, [workspace?.id]);
+    void fetchOrders();
+  }, [fetchOrders]);
 
   useEffect(() => {
-    fetchSummary();
-  }, [workspace?.id]);
+    void fetchArcaStatus();
+  }, [fetchArcaStatus]);
+
+  useEffect(() => {
+    void fetchCommerceSettings();
+  }, [fetchCommerceSettings]);
+
+  useEffect(() => {
+    void fetchSummary();
+  }, [fetchSummary]);
 
   const selectedOrderTotal = selectedOrder?.total ?? 0;
   const selectedOrderItems = selectedOrder?.items || [];
@@ -461,7 +524,7 @@ export default function InvoicesPage() {
       commerceVatConditionId
   );
 
-  const renderLimitBar = (limit: BillingLimit | null) => {
+  const renderLimitBar = (limit: BillingLimit | null): JSX.Element | null => {
     if (!limit) return null;
     const percent = Number.isFinite(limit.percent) ? limit.percent : 0;
     const color =
@@ -483,19 +546,19 @@ export default function InvoicesPage() {
   };
 
 
-  const handleSelectOrder = (order: Order) => {
+  const handleSelectOrder = (order: Order): void => {
     setSelectedOrder(order);
     setInvoiceResult(null);
     setInvoiceError('');
     setExistingInvoice(null);
     setExistingInvoiceError('');
-    fetchOrderDetail(order.id);
+    void fetchOrderDetail(order.id);
     if (order.status === 'invoiced') {
-      fetchExistingInvoice(order.id);
+      void fetchExistingInvoice(order.id);
     }
   };
 
-  const handleCreateInvoice = async () => {
+  const handleCreateInvoice = async (): Promise<{ approved: boolean }> => {
     if (!workspace?.id || !selectedOrder) return;
     if (selectedOrder.status !== 'pending_invoicing') {
       setInvoiceError('Este pedido no está pendiente de facturación.');
@@ -569,31 +632,32 @@ export default function InvoicesPage() {
       }, workspace.id);
 
       if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data.error || data.message || 'Error al emitir la factura');
+        const data = await readJsonRecord(response);
+        throw new Error(readErrorMessage(data, 'Error al emitir la factura'));
       }
 
-      const data = await response.json();
+      const data = await readJsonRecord(response);
+      const approved = data.approved === true;
       setInvoiceResult({
-        approved: Boolean(data.approved),
-        cae: data.cae,
-        caeExpiresAt: data.caeExpiresAt,
-        cbteNro: data.cbteNro,
+        approved,
+        cae: readString(data, 'cae'),
+        caeExpiresAt: readString(data, 'caeExpiresAt') ?? null,
+        cbteNro: readNumber(data, 'cbteNro') ?? null,
         cbteTipo: invoiceType.cbteTipo,
         pointOfSale: arcaStatus?.pointOfSale ?? null,
       });
 
-      if (data.approved) {
+      if (approved) {
         toast.success('Factura emitida correctamente');
         setSelectedOrder((prev) => (prev ? { ...prev, status: 'invoiced' } : prev));
-        fetchExistingInvoice(selectedOrder.id);
-        fetchOrders();
+        await fetchExistingInvoice(selectedOrder.id);
+        await fetchOrders();
       } else {
         toast.warning('La factura fue rechazada por ARCA');
       }
 
-      fetchSummary();
-      return { approved: Boolean(data.approved) };
+      await fetchSummary();
+      return { approved };
     } catch (error) {
       console.error('Failed to create invoice:', error);
       const message = error instanceof Error ? error.message : 'Error al emitir la factura';
@@ -605,7 +669,7 @@ export default function InvoicesPage() {
     }
   };
 
-  const handleSendInvoice = async () => {
+  const handleSendInvoice = async (): Promise<void> => {
     if (!workspace?.id || !selectedOrder) return;
     setIsSendingInvoice(true);
     setInvoiceSendError('');
@@ -617,11 +681,11 @@ export default function InvoicesPage() {
       );
 
       if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data.message || data.error || 'No se pudo enviar la factura');
+        const data = await readJsonRecord(response);
+        throw new Error(readErrorMessage(data, 'No se pudo enviar la factura'));
       }
 
-      await response.json().catch(() => ({}));
+      await readJsonRecord(response);
       toast.success('Factura enviada al cliente');
     } catch (error) {
       console.error('Failed to send invoice:', error);
@@ -633,14 +697,14 @@ export default function InvoicesPage() {
     }
   };
 
-  const handleCreateAndSendInvoice = async () => {
+  const handleCreateAndSendInvoice = async (): Promise<void> => {
     const result = await handleCreateInvoice();
     if (result?.approved) {
       await handleSendInvoice();
     }
   };
 
-  const handlePrint = () => {
+  const handlePrint = (): void => {
     if (!selectedOrder) return;
     const invoice = existingInvoice
       ? {
@@ -743,7 +807,7 @@ export default function InvoicesPage() {
             <p className="text-sm text-muted-foreground">Emití facturas ARCA para pedidos con solicitud.</p>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="secondary" onClick={fetchOrders} disabled={isLoading}>
+            <Button variant="secondary" onClick={() => { void fetchOrders(); }} disabled={isLoading}>
               <RefreshCw className="w-4 h-4 mr-2" />
               Actualizar
             </Button>
@@ -1055,7 +1119,7 @@ export default function InvoicesPage() {
 
                   {selectedOrder.status === 'pending_invoicing' && (
                     <Button
-                      onClick={handleCreateAndSendInvoice}
+                      onClick={() => { void handleCreateAndSendInvoice(); }}
                       isLoading={isCreating || isSendingInvoice}
                       disabled={!canCreateInvoice || isSendingInvoice}
                     >
@@ -1065,7 +1129,7 @@ export default function InvoicesPage() {
 
                   {selectedOrder.status === 'invoiced' && (
                     <Button
-                      onClick={handleSendInvoice}
+                      onClick={() => { void handleSendInvoice(); }}
                       isLoading={isSendingInvoice}
                       disabled={isSendingInvoice || isLoadingExistingInvoice}
                     >

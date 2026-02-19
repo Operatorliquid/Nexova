@@ -1,4 +1,5 @@
 import { AlertTriangle } from 'lucide-react';
+
 import { Button, Dialog, DialogContent } from '../ui';
 
 interface DeleteConfirmModalProps {
@@ -19,8 +20,8 @@ export function DeleteConfirmModal({
   message,
   itemCount,
   isLoading,
-}: DeleteConfirmModalProps) {
-  const handleConfirm = async () => {
+}: DeleteConfirmModalProps): JSX.Element {
+  const handleConfirm = async (): Promise<void> => {
     await onConfirm();
     onClose();
   };
@@ -44,7 +45,14 @@ export function DeleteConfirmModal({
           <Button variant="secondary" className="flex-1" onClick={onClose} disabled={isLoading}>
             Cancelar
           </Button>
-          <Button variant="destructive" className="flex-1" onClick={handleConfirm} isLoading={isLoading}>
+          <Button
+            variant="destructive"
+            className="flex-1"
+            onClick={() => {
+              void handleConfirm();
+            }}
+            isLoading={isLoading}
+          >
             Eliminar
           </Button>
         </div>

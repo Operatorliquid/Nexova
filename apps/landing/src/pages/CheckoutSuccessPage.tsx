@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+
 import { DASHBOARD_URL, apiFetch, readErrorMessage } from '../lib/api';
 
 type FinalizeResponse = {
@@ -8,7 +9,7 @@ type FinalizeResponse = {
   dashboardUrl?: string;
 };
 
-export default function CheckoutSuccessPage() {
+export default function CheckoutSuccessPage(): JSX.Element {
   const [searchParams] = useSearchParams();
   const flowToken = useMemo(() => searchParams.get('flowToken')?.trim() || '', [searchParams]);
   const sessionId = useMemo(
@@ -22,7 +23,7 @@ export default function CheckoutSuccessPage() {
   const [isSuccess, setIsSuccess] = useState(false);
   const [dashboardUrl, setDashboardUrl] = useState(`${DASHBOARD_URL}/login`);
 
-  const finalizeCheckout = async () => {
+  const finalizeCheckout = async (): Promise<void> => {
     if (!flowToken || !sessionId) {
       setError('Faltan parámetros de checkout para finalizar el pago.');
       setIsLoading(false);

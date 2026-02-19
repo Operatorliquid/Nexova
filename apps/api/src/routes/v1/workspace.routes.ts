@@ -1,12 +1,15 @@
 /**
  * Workspace Routes
  */
-import { FastifyPluginAsync } from 'fastify';
-import { Prisma } from '@prisma/client';
-import { z } from 'zod';
-import { WorkspaceService } from '@nexova/core';
 import { randomBytes, scryptSync } from 'crypto';
+
+import { type Prisma } from '@prisma/client';
+import { type FastifyPluginAsync } from 'fastify';
+import { z } from 'zod';
+
+import { WorkspaceService, type UpdateWorkspaceInput } from '@nexova/core';
 import { EvolutionAdminClient, EvolutionError } from '@nexova/integrations';
+
 import { getWorkspacePlanContext } from '../../utils/commerce-plan.js';
 
 const createWorkspaceSchema = z.object({
@@ -147,54 +150,98 @@ function getEvolutionInstanceName(providerConfig: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-function extractEvolutionQrFromConnectResponse(value: any): {
+type UnknownRecord = Record<string, unknown>;
+
+function isRecord(value: unknown): value is UnknownRecord {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function readMaybeString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function readRecordString(record: UnknownRecord | null, key: string): string {
+  return readMaybeString(record?.[key]);
+}
+
+function normalizeEvolutionInstances(instances: unknown): UnknownRecord[] {
+  if (Array.isArray(instances)) {
+    return instances.filter(isRecord);
+  }
+  if (isRecord(instances)) {
+    const response = instances.response;
+    if (Array.isArray(response)) return response.filter(isRecord);
+    const message = instances.message;
+    if (Array.isArray(message)) return message.filter(isRecord);
+  }
+  return [];
+}
+
+function matchesEvolutionInstance(item: UnknownRecord, instanceName: string): boolean {
+  const nestedInstance = isRecord(item.instance) ? item.instance : null;
+  return (
+    readRecordString(item, 'name') === instanceName
+    || readRecordString(item, 'instanceName') === instanceName
+    || readRecordString(nestedInstance, 'name') === instanceName
+    || readRecordString(nestedInstance, 'instanceName') === instanceName
+  );
+}
+
+function extractConnectCount(value: unknown): number | null {
+  if (!isRecord(value)) return null;
+  const count = value.count;
+  return typeof count === 'number' ? count : null;
+}
+
+function extractEvolutionQrFromConnectResponse(value: unknown): {
   qrCode: string | null;
   qrDataUrl: string | null;
   pairingCode: string | null;
 } {
-  const extractString = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
-
-  const pickQr = (obj: any): string => {
+  const pickQr = (input: unknown): string => {
+    const obj = isRecord(input) ? input : null;
     if (!obj) return '';
     const direct =
-      extractString(obj?.code)
-      || extractString(obj?.qrcode)
-      || extractString(obj?.qrCode)
-      || extractString(obj?.qr)
-      || extractString(obj?.base64);
+      readRecordString(obj, 'code')
+      || readRecordString(obj, 'qrcode')
+      || readRecordString(obj, 'qrCode')
+      || readRecordString(obj, 'qr')
+      || readRecordString(obj, 'base64');
     if (direct) return direct;
 
-    const qrobj = obj?.qrcode;
-    if (qrobj && typeof qrobj === 'object') {
+    const qrobj = isRecord(obj.qrcode) ? obj.qrcode : null;
+    if (qrobj) {
       const nested =
-        extractString(qrobj?.base64)
-        || extractString(qrobj?.qrcode)
-        || extractString(qrobj?.qrCode)
-        || extractString(qrobj?.qr)
-        || extractString(qrobj?.code);
+        readRecordString(qrobj, 'base64')
+        || readRecordString(qrobj, 'qrcode')
+        || readRecordString(qrobj, 'qrCode')
+        || readRecordString(qrobj, 'qr')
+        || readRecordString(qrobj, 'code');
       if (nested) return nested;
     }
 
-    const qrObj = obj?.qr;
-    if (qrObj && typeof qrObj === 'object') {
+    const qrObj = isRecord(obj.qr) ? obj.qr : null;
+    if (qrObj) {
       const nested =
-        extractString(qrObj?.base64)
-        || extractString(qrObj?.qrcode)
-        || extractString(qrObj?.qrCode)
-        || extractString(qrObj?.qr)
-        || extractString(qrObj?.code);
+        readRecordString(qrObj, 'base64')
+        || readRecordString(qrObj, 'qrcode')
+        || readRecordString(qrObj, 'qrCode')
+        || readRecordString(qrObj, 'qr')
+        || readRecordString(qrObj, 'code');
       if (nested) return nested;
     }
 
     return '';
   };
 
+  const root = isRecord(value) ? value : null;
+  const dataObj = isRecord(root?.data) ? root.data : null;
   const qrValue = pickQr(value);
   const pairingValue =
-    extractString(value?.pairingCode)
-    || extractString(value?.pairing_code)
-    || extractString(value?.data?.pairingCode)
-    || extractString(value?.data?.pairing_code);
+    readRecordString(root, 'pairingCode')
+    || readRecordString(root, 'pairing_code')
+    || readRecordString(dataObj, 'pairingCode')
+    || readRecordString(dataObj, 'pairing_code');
 
   const isDataUrl = !!qrValue && /^data:image\//i.test(qrValue);
   const looksLikeBase64Image =
@@ -267,7 +314,7 @@ function normalizeOwnerAgentNumberForSettings(raw: unknown, timezone: unknown): 
   return trimmed;
 }
 
-export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
+export const workspaceRoutes: FastifyPluginAsync = (fastify) => {
   const workspaceService = new WorkspaceService(fastify.prisma);
 
   // Get user's workspaces (protected)
@@ -276,39 +323,50 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
     { preHandler: [fastify.authenticate], config: { allowMissingWorkspace: true } },
     async (request, reply) => {
       const workspaces = await workspaceService.getUserWorkspaces(request.user!.sub);
-      reply.send({ workspaces });
+      return reply.send({ workspaces });
     }
   );
 
-  // Get available workspaces to join (protected)
-  // For now, returns all workspaces. In production, this should be invitation-based
+  // Get pending invitations for current user (protected)
   fastify.get(
     '/available',
     { preHandler: [fastify.authenticate], config: { allowMissingWorkspace: true } },
     async (request, reply) => {
-      // Get workspaces user is already a member of
-      const memberships = await fastify.prisma.membership.findMany({
-        where: { userId: request.user!.sub },
-        select: { workspaceId: true },
-      });
-
-      const memberWorkspaceIds = memberships.map((m) => m.workspaceId);
-
-      // Get all active workspaces (in a real app, this would be invite-based)
-      const workspaces = await fastify.prisma.workspace.findMany({
+      const invitations = await fastify.prisma.membership.findMany({
         where: {
-          status: 'active',
-          id: { notIn: memberWorkspaceIds },
+          userId: request.user!.sub,
+          status: { in: ['invited', 'INVITED'] },
+          OR: [{ inviteExpiresAt: null }, { inviteExpiresAt: { gt: new Date() } }],
+          workspace: { is: { status: 'active' } },
         },
-        select: {
-          id: true,
-          name: true,
-          slug: true,
+        include: {
+          workspace: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+            },
+          },
+          role: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
         },
+        orderBy: { createdAt: 'desc' },
         take: 20,
       });
 
-      reply.send({ workspaces });
+      const workspaces = invitations.map((invite) => ({
+        id: invite.workspace.id,
+        name: invite.workspace.name,
+        slug: invite.workspace.slug,
+        role: invite.role,
+        inviteExpiresAt: invite.inviteExpiresAt,
+      }));
+
+      return reply.send({ workspaces });
     }
   );
 
@@ -325,14 +383,14 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
         ownerId: request.user!.sub,
       });
 
-      reply.code(201).send({ workspace });
+      return reply.code(201).send({ workspace });
     }
   );
 
   // Get workspace by ID (protected)
   fastify.get(
     '/:id',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('settings:read')] },
     async (request, reply) => {
       const { id } = request.params as { id: string };
       if (!assertWorkspaceAccess(request, reply, id)) return;
@@ -346,7 +404,7 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      reply.send({ workspace });
+      return reply.send({ workspace });
     }
   );
 
@@ -362,10 +420,10 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
       const workspace = await workspaceService.update(id, {
         name: body.name,
         phone: body.phone,
-        settings: body.settings as import('@nexova/core').UpdateWorkspaceInput['settings'],
+        settings: body.settings as UpdateWorkspaceInput['settings'],
       });
 
-      reply.send({ workspace });
+      return reply.send({ workspace });
     }
   );
 
@@ -379,7 +437,7 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
 
       await workspaceService.delete(id);
 
-      reply.send({ success: true });
+      return reply.send({ success: true });
     }
   );
 
@@ -393,7 +451,7 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
 
       const members = await workspaceService.getMembers(id);
 
-      reply.send({ members });
+      return reply.send({ members });
     }
   );
 
@@ -413,7 +471,7 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
         request.user!.sub
       );
 
-      reply.code(201).send({ membership });
+      return reply.code(201).send({ membership });
     }
   );
 
@@ -427,14 +485,14 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
 
       await workspaceService.removeMember(id, userId);
 
-      reply.send({ success: true });
+      return reply.send({ success: true });
     }
   );
 
   // Get workspace roles (protected - only requires auth for own workspace)
   fastify.get(
     '/:id/roles',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('members:read')] },
     async (request, reply) => {
       const { id } = request.params as { id: string };
       if (!assertWorkspaceAccess(request, reply, id)) return;
@@ -451,7 +509,7 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
         },
       });
 
-      reply.send({ roles });
+      return reply.send({ roles });
     }
   );
 
@@ -463,55 +521,53 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
       const { id } = request.params as { id: string };
       const userId = request.user!.sub;
 
-      // Check if workspace exists
-      const workspace = await fastify.prisma.workspace.findUnique({
-        where: { id },
+      const invitedMembership = await fastify.prisma.membership.findUnique({
+        where: { userId_workspaceId: { userId, workspaceId: id } },
+        include: {
+          role: true,
+          workspace: true,
+        },
       });
 
-      if (!workspace) {
-        return reply.code(404).send({
-          error: 'NOT_FOUND',
-          message: 'Workspace not found',
+      if (!invitedMembership) {
+        return reply.code(403).send({
+          error: 'INVITE_REQUIRED',
+          message: 'You need a valid invitation to join this workspace',
         });
       }
 
-      // Check if already a member
-      const existing = await fastify.prisma.membership.findUnique({
-        where: { userId_workspaceId: { userId, workspaceId: id } },
-      });
-
-      if (existing) {
+      const membershipStatus = (invitedMembership.status || '').toLowerCase();
+      if (membershipStatus === 'active') {
         return reply.code(400).send({
           error: 'ALREADY_MEMBER',
           message: 'Already a member of this workspace',
         });
       }
 
-      // Get default role for commerce plans.
-      // Prefer Basic; keep Viewer fallback for legacy workspaces.
-      const defaultRole = await fastify.prisma.role.findFirst({
-        where: {
-          workspaceId: id,
-          name: { in: ['Basic', 'Viewer'] },
-        },
-        orderBy: { createdAt: 'asc' },
-      });
-
-      if (!defaultRole) {
+      if (membershipStatus !== 'invited') {
         return reply.code(400).send({
-          error: 'NO_ROLE',
-          message: 'No default role available',
+          error: 'INVALID_MEMBERSHIP_STATUS',
+          message: 'Only invited memberships can be accepted',
         });
       }
 
-      // Create membership
-      const membership = await fastify.prisma.membership.create({
+      if (
+        invitedMembership.inviteExpiresAt
+        && invitedMembership.inviteExpiresAt.getTime() <= Date.now()
+      ) {
+        return reply.code(410).send({
+          error: 'INVITE_EXPIRED',
+          message: 'Invitation expired',
+        });
+      }
+
+      const membership = await fastify.prisma.membership.update({
+        where: { id: invitedMembership.id },
         data: {
-          userId,
-          workspaceId: id,
-          roleId: defaultRole.id,
           status: 'ACTIVE',
           joinedAt: new Date(),
+          inviteToken: null,
+          inviteExpiresAt: null,
         },
         include: {
           role: true,
@@ -519,49 +575,29 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
         },
       });
 
-      reply.code(201).send({ membership });
+      return reply.send({ membership });
     }
   );
 
-  // Update own role in workspace (protected)
+  // Update own role in workspace (disabled to prevent privilege escalation)
   fastify.patch(
     '/:id/members/me/role',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('members:update')] },
     async (request, reply) => {
       const { id } = request.params as { id: string };
-      const userId = request.user!.sub;
       if (!assertWorkspaceAccess(request, reply, id)) return;
-      const { roleId } = z.object({ roleId: z.string().uuid() }).parse(request.body);
 
-      // Verify role exists in workspace
-      const role = await fastify.prisma.role.findFirst({
-        where: { id: roleId, workspaceId: id },
+      return reply.code(403).send({
+        error: 'SELF_ROLE_CHANGE_DISABLED',
+        message: 'Changing your own role is disabled for security reasons',
       });
-
-      if (!role) {
-        return reply.code(404).send({
-          error: 'ROLE_NOT_FOUND',
-          message: 'Role not found in this workspace',
-        });
-      }
-
-      // Update membership
-      const membership = await fastify.prisma.membership.update({
-        where: { userId_workspaceId: { userId, workspaceId: id } },
-        data: { roleId },
-        include: {
-          role: true,
-        },
-      });
-
-      reply.send({ membership });
     }
   );
 
   // Get available WhatsApp numbers for workspace to claim (protected)
   fastify.get(
     '/:id/whatsapp-numbers/available',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('connections:read')] },
     async (request, reply) => {
       const { id } = request.params as { id: string };
       if (!assertWorkspaceAccess(request, reply, id)) return;
@@ -599,14 +635,14 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
         },
       });
 
-      reply.send({ numbers });
+      return reply.send({ numbers });
     }
   );
 
   // Get workspace's connected WhatsApp number (protected)
   fastify.get(
     '/:id/whatsapp-numbers',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('connections:read')] },
     async (request, reply) => {
       const { id } = request.params as { id: string };
       if (!assertWorkspaceAccess(request, reply, id)) return;
@@ -628,14 +664,14 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
         },
       });
 
-      reply.send({ number });
+      return reply.send({ number });
     }
   );
 
   // Claim a WhatsApp number for workspace (protected - owner only)
   fastify.post(
     '/:id/whatsapp-numbers/:numberId/claim',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('connections:create')] },
     async (request, reply) => {
       const { id, numberId } = request.params as { id: string; numberId: string };
       if (!assertWorkspaceAccess(request, reply, id)) return;
@@ -711,14 +747,14 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      reply.send({ number: claimed });
+      return reply.send({ number: claimed });
     }
   );
 
   // Release/disconnect a WhatsApp number (protected - owner only)
   fastify.post(
     '/:id/whatsapp-numbers/release',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('connections:delete')] },
     async (request, reply) => {
       const { id } = request.params as { id: string };
       if (!assertWorkspaceAccess(request, reply, id)) return;
@@ -743,14 +779,14 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
         },
       });
 
-      reply.send({ success: true });
+      return reply.send({ success: true });
     }
   );
 
   // Get available WhatsApp providers for workspace (protected)
   fastify.get(
     '/:id/whatsapp/providers',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('connections:read')] },
     async (request, reply) => {
       const { id } = request.params as { id: string };
       if (!assertWorkspaceAccess(request, reply, id)) return;
@@ -780,7 +816,7 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
   // Start Evolution QR connection flow (protected)
   fastify.post(
     '/:id/whatsapp/evolution/connect',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('connections:create')] },
     async (request, reply) => {
       const { id } = request.params as { id: string };
       if (!assertWorkspaceAccess(request, reply, id)) return;
@@ -868,13 +904,11 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
             : {};
         // Clear previous QR/pairing artifacts to avoid showing stale QR codes.
         // New QR will arrive either in the connect response or via webhook `QRCODE_UPDATED`.
-        const {
-          qrCode: _qrCode,
-          qrDataUrl: _qrDataUrl,
-          pairingCode: _pairingCode,
-          qrUpdatedAt: _qrUpdatedAt,
-          ...cfgRest
-        } = currentCfg;
+        const cfgRest = { ...currentCfg };
+        delete cfgRest.qrCode;
+        delete cfgRest.qrDataUrl;
+        delete cfgRest.pairingCode;
+        delete cfgRest.qrUpdatedAt;
         // Keep record fresh if env/baseUrl changed
         await fastify.prisma.whatsAppNumber.updateMany({
           where: { id: number.id, workspaceId: id },
@@ -899,25 +933,9 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
         baseUrl: evolutionCfg.baseUrl,
       });
 
-      const normalizeInstances = (instances: unknown): any[] => {
-        if (Array.isArray(instances)) return instances;
-        if (instances && typeof instances === 'object') {
-          const anyInst = instances as any;
-          if (Array.isArray(anyInst.response)) return anyInst.response;
-          if (Array.isArray(anyInst.message)) return anyInst.message;
-        }
-        return [];
-      };
-
       const hasInstance = (instances: unknown): boolean => {
-        const list = normalizeInstances(instances);
-        return list.some(
-          (item: any) =>
-            item?.name === instanceName
-            || item?.instance?.name === instanceName
-            || item?.instance?.instanceName === instanceName
-            || item?.instanceName === instanceName
-        );
+        const list = normalizeEvolutionInstances(instances);
+        return list.some((item) => matchesEvolutionInstance(item, instanceName));
       };
 
       const safeFetchInstances = async (query?: { instanceName?: string; instanceId?: string }): Promise<unknown> => {
@@ -997,12 +1015,12 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       // Some Evolution builds generate the QR asynchronously; retry a few times so the UI doesn't look "stuck".
-      let extracted = extractEvolutionQrFromConnectResponse(connect as any);
+      let extracted = extractEvolutionQrFromConnectResponse(connect);
       for (let attempt = 0; attempt < 6 && !extracted.qrCode && !extracted.qrDataUrl && !extracted.pairingCode; attempt++) {
         await new Promise((r) => setTimeout(r, 500));
         try {
           connect = await admin.connectInstance(instanceName);
-          extracted = extractEvolutionQrFromConnectResponse(connect as any);
+          extracted = extractEvolutionQrFromConnectResponse(connect);
         } catch (err) {
           fastify.log.warn(err, 'Evolution connectInstance retry failed (continuing)');
         }
@@ -1026,7 +1044,7 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
           ...(qrDataUrl ? { qrDataUrl } : {}),
           ...(pairingCode ? { pairingCode } : {}),
           lastConnectAt: new Date().toISOString(),
-          lastConnectCount: typeof (connect as any)?.count === 'number' ? (connect as any).count : null,
+          lastConnectCount: extractConnectCount(connect),
           ...(qrCode || qrDataUrl || pairingCode ? { qrUpdatedAt: new Date().toISOString() } : {}),
         };
 
@@ -1044,7 +1062,7 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
         pairingCode,
         qrCode,
         qrDataUrl,
-        count: typeof connect?.count === 'number' ? connect.count : null,
+        count: extractConnectCount(connect),
       });
       } finally {
         releaseEvolutionConnectLock(id);
@@ -1055,7 +1073,7 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
   // Evolution connection status (protected)
   fastify.get(
     '/:id/whatsapp/evolution/status',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('connections:read')] },
     async (request, reply) => {
       const { id } = request.params as { id: string };
       if (!assertWorkspaceAccess(request, reply, id)) return;
@@ -1089,7 +1107,7 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
       let state = 'unknown';
       try {
         const res = await admin.getConnectionState(instanceName);
-        state = (res?.instance?.state || 'unknown') as string;
+        state = (res?.instance?.state || 'unknown');
       } catch (err) {
         fastify.log.warn(err, 'Evolution getConnectionState failed');
       }
@@ -1100,30 +1118,17 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
         // Fetch owner number and mark active
         try {
           const instances = await admin.fetchInstances({ instanceName });
-          const list =
-            Array.isArray(instances)
-              ? instances
-              : Array.isArray((instances as any)?.response)
-                ? (instances as any).response
-                : Array.isArray((instances as any)?.message)
-                  ? (instances as any).message
-                  : [];
-          const row =
-            list.find(
-              (item: any) =>
-                item?.name === instanceName
-                || item?.instance?.name === instanceName
-                || item?.instance?.instanceName === instanceName
-                || item?.instanceName === instanceName
-            )
-            || list[0]
+          const list = normalizeEvolutionInstances(instances);
+          const row = list.find((item) => matchesEvolutionInstance(item, instanceName)) || list[0] || null;
+          const rowInstance = row && isRecord(row.instance) ? row.instance : null;
+          const rowProfile = rowInstance && isRecord(rowInstance.profile) ? rowInstance.profile : null;
+          const ownerJidRaw =
+            (rowInstance ? rowInstance.owner : null)
+            || (rowInstance ? rowInstance.ownerJid : null)
+            || (row ? row.owner : null)
+            || (rowProfile ? rowProfile.owner : null)
             || null;
-          const ownerJid =
-            row?.instance?.owner
-            || row?.instance?.ownerJid
-            || row?.owner
-            || row?.instance?.profile?.owner
-            || null;
+          const ownerJid = typeof ownerJidRaw === 'string' ? ownerJidRaw : null;
           const ownerDigits =
             typeof ownerJid === 'string'
               ? ownerJid.split('@')[0]?.replace(/\D/g, '') || ''
@@ -1194,7 +1199,7 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
         if (shouldRetry) {
           try {
             const connectRes = await admin.connectInstance(instanceName);
-            const extracted = extractEvolutionQrFromConnectResponse(connectRes as any);
+            const extracted = extractEvolutionQrFromConnectResponse(connectRes);
             if (extracted.qrCode) effectiveQrCode = extracted.qrCode;
             if (extracted.qrDataUrl) effectiveQrDataUrl = extracted.qrDataUrl;
             if (extracted.pairingCode) effectivePairingCode = extracted.pairingCode;
@@ -1256,7 +1261,7 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
   // Disconnect Evolution instance (protected)
   fastify.post(
     '/:id/whatsapp/evolution/disconnect',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('connections:delete')] },
     async (request, reply) => {
       const { id } = request.params as { id: string };
       if (!assertWorkspaceAccess(request, reply, id)) return;
@@ -1305,16 +1310,16 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // Update workspace settings (protected - owner only)
+  // Update workspace settings (protected - requires settings:update)
   fastify.patch(
     '/:id/settings',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('settings:update')] },
     async (request, reply) => {
       const { id } = request.params as { id: string };
       const userId = request.user!.sub;
       if (!assertWorkspaceAccess(request, reply, id)) return;
 
-      // Verify user is owner of this workspace
+      // Verify user membership and load role context
       const membership = await fastify.prisma.membership.findUnique({
         where: { userId_workspaceId: { userId, workspaceId: id } },
         include: { role: true },
@@ -1327,8 +1332,7 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      // Workspace settings are editable by any member.
-      // Current product model: 1 user = 1 workspace.
+      // Settings updates are restricted by RBAC (`settings:update`).
 
       const planContext = await getWorkspacePlanContext(
         fastify.prisma,
@@ -1392,6 +1396,29 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
           availabilityStatus: z.enum(['available', 'unavailable', 'vacation']).optional(),
 	        })
 	        .parse(request.body);
+
+      const updatesPaymentSettings =
+        'paymentAlias' in body
+        || 'paymentCbu' in body
+        || 'paymentMethodsEnabled' in body
+        || 'vatConditionId' in body
+        || 'monotributoCategory' in body
+        || 'monotributoActivity' in body;
+      if (updatesPaymentSettings) {
+        const paymentsGuard = fastify.requirePermission('payments:update');
+        await paymentsGuard(request, reply);
+        if (reply.sent) return;
+      }
+
+      const updatesOwnerAgentSettings =
+        'ownerAgentEnabled' in body
+        || 'ownerAgentNumber' in body
+        || 'ownerAgentPin' in body;
+      if (updatesOwnerAgentSettings) {
+        const ownerAgentGuard = fastify.requirePermission('sessions:takeover');
+        await ownerAgentGuard(request, reply);
+        if (reply.sent) return;
+      }
 
 	      // Get current settings and merge
       const workspace = await fastify.prisma.workspace.findUnique({
@@ -1479,7 +1506,7 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
         });
       });
 
-      reply.send({ workspace: updated });
+      return reply.send({ workspace: updated });
     }
   );
 

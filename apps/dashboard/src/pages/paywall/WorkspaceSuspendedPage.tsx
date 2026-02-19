@@ -1,16 +1,19 @@
 import { AlertTriangle, CreditCard, Lock, LogOut, RefreshCw } from 'lucide-react';
 import type { ReactNode } from 'react';
+
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/Card';
 import { AnimatedPage } from '@/components/ui/motion';
 import { useAuth } from '@/contexts/AuthContext';
 
-export function normalizeWorkspaceStatus(status?: string | null) {
+export function normalizeWorkspaceStatus(status?: string | null): string {
   return (status || '').trim().toLowerCase();
 }
 
-export function buildWorkspaceSuspendedCopy(status: string) {
+export function buildWorkspaceSuspendedCopy(
+  status: string
+): { title: string; description: string } {
   if (status === 'cancelled' || status === 'canceled') {
     return {
       title: 'Suscripcion cancelada',
@@ -65,7 +68,7 @@ export function WorkspacePaywallCard({
   rightTitleOverride,
   rightDescriptionOverride,
   topRightIcon,
-}: WorkspacePaywallCardProps) {
+}: WorkspacePaywallCardProps): JSX.Element {
   const normalizedStatus = normalizeWorkspaceStatus(status);
   const copy = buildWorkspaceSuspendedCopy(normalizedStatus);
   const isCancelled = normalizedStatus === 'cancelled' || normalizedStatus === 'canceled';
@@ -143,7 +146,7 @@ export function WorkspacePaywallCard({
   );
 }
 
-export default function WorkspaceSuspendedPage() {
+export default function WorkspaceSuspendedPage(): JSX.Element {
   const { workspace, logout, refreshUser } = useAuth();
 
   return (
@@ -164,8 +167,12 @@ export default function WorkspaceSuspendedPage() {
           <WorkspacePaywallCard
             status={workspace?.status}
             workspaceName={workspace?.name}
-            onRetry={refreshUser}
-            onLogout={logout}
+            onRetry={() => {
+              void refreshUser();
+            }}
+            onLogout={() => {
+              void logout();
+            }}
           />
         </AnimatedPage>
       </div>

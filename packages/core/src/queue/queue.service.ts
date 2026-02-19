@@ -2,7 +2,8 @@
  * Queue Service
  * Manages BullMQ queues for message processing
  */
-import { Queue, QueueOptions } from 'bullmq';
+import { Queue, type QueueOptions } from 'bullmq';
+
 import { QUEUES } from '@nexova/shared';
 
 export interface QueueConnection {

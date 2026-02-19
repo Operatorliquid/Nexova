@@ -2,26 +2,27 @@
  * Retail Tools Index
  * Exports all retail-specific tools and initializer
  */
-import { PrismaClient } from '@prisma/client';
-import { Queue } from 'bullmq';
-import { BaseTool } from '../base.js';
-import { ToolRegistry, toolRegistry } from '../registry.js';
-import { MemoryManager } from '../../core/memory-manager.js';
-import { LedgerService } from '@nexova/core';
+import { type PrismaClient } from '@prisma/client';
+import { type Queue } from 'bullmq';
+import type { z } from 'zod';
+
+import { type LedgerService } from '@nexova/core';
 import type { MercadoPagoIntegrationService } from '@nexova/integrations';
 import type { AudioTranscriptionPayload } from '@nexova/shared';
 
-// Import tool creators
+import { type MemoryManager } from '../../core/memory-manager.js';
+import { type BaseTool } from '../base.js';
+import { type ToolRegistry, toolRegistry } from '../registry.js';
+import { createAudioTools } from './audio.tools.js';
+import { createCartTools } from './cart.tools.js';
+import { createCatalogTools, type CatalogToolsDependencies, type FileUploader } from './catalog.tools.js';
+import { createCommerceTools } from './commerce.tools.js';
 import { createCustomerTools } from './customer.tools.js';
+import { createOrderTools } from './order.tools.js';
+import { createPaymentTools } from './payment.tools.js';
 import { createProductTools } from './product.tools.js';
 import { createStockTools } from './stock.tools.js';
-import { createCartTools } from './cart.tools.js';
-import { createOrderTools } from './order.tools.js';
-import { createCommerceTools } from './commerce.tools.js';
 import { createSystemTools } from './system.tools.js';
-import { createPaymentTools, type PaymentToolsDependencies } from './payment.tools.js';
-import { createCatalogTools, type CatalogToolsDependencies, type FileUploader } from './catalog.tools.js';
-import { createAudioTools } from './audio.tools.js';
 
 // Re-export individual tools for direct access if needed
 export * from './customer.tools.js';
@@ -69,8 +70,8 @@ export function createAllRetailTools(
       queue: Queue<AudioTranscriptionPayload>;
     };
   }
-): BaseTool<any, any>[] {
-  const tools = [
+): Array<BaseTool<z.ZodSchema, unknown>> {
+  const tools: Array<BaseTool<z.ZodSchema, unknown>> = [
     ...createCustomerTools(prisma),
     ...createProductTools(prisma),
     ...createStockTools(prisma),
@@ -142,7 +143,7 @@ export function initializeRetailTools(
   const tools = createAllRetailTools(prisma, memoryManager, options);
   registry.registerAll(tools);
 
-  console.log(`[RetailTools] Initialized ${tools.length} tools`);
+  console.warn(`[RetailTools] Initialized ${tools.length} tools`);
 }
 
 /**

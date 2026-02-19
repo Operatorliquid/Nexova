@@ -2,8 +2,9 @@
  * Conversations Routes
  * Handles inbox conversations and messages
  */
-import { FastifyPluginAsync } from 'fastify';
+import { type FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
+
 import { decrypt } from '@nexova/core';
 
 function resolveWhatsAppApiKey(number: {
@@ -61,11 +62,11 @@ function getEvolutionInstanceName(providerConfig: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-export const conversationsRoutes: FastifyPluginAsync = async (fastify) => {
+export const conversationsRoutes: FastifyPluginAsync = (fastify) => {
   // Get all conversations for workspace
   fastify.get(
     '/',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('sessions:read')] },
     async (request, reply) => {
       const workspaceId = request.workspaceId;
 
@@ -110,14 +111,14 @@ export const conversationsRoutes: FastifyPluginAsync = async (fastify) => {
         lastActivityAt: session.lastActivityAt,
       }));
 
-      reply.send({ conversations });
+      return reply.send({ conversations });
     }
   );
 
   // Get messages for a conversation
   fastify.get<{ Params: { sessionId: string } }>(
     '/:sessionId/messages',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('sessions:read')] },
     async (request, reply) => {
       const { sessionId } = request.params;
       const workspaceId = request.workspaceId;
@@ -157,7 +158,7 @@ export const conversationsRoutes: FastifyPluginAsync = async (fastify) => {
         },
       });
 
-      reply.send({
+      return reply.send({
         session: {
           id: session.id,
           customer: session.customer,
@@ -172,7 +173,7 @@ export const conversationsRoutes: FastifyPluginAsync = async (fastify) => {
   // Send a message (human takeover)
   fastify.post<{ Params: { sessionId: string }; Body: { content: string } }>(
     '/:sessionId/messages',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('sessions:message')] },
     async (request, reply) => {
       const { sessionId } = request.params;
       const { content } = z.object({ content: z.string().min(1) }).parse(request.body);
@@ -254,14 +255,14 @@ export const conversationsRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
-      reply.send({ message });
+      return reply.send({ message });
     }
   );
 
   // Toggle agent active status
   fastify.patch<{ Params: { sessionId: string }; Body: { agentActive: boolean } }>(
     '/:sessionId/agent',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('sessions:takeover')] },
     async (request, reply) => {
       const { sessionId } = request.params;
       const { agentActive } = z.object({ agentActive: z.boolean() }).parse(request.body);
@@ -280,14 +281,14 @@ export const conversationsRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(404).send({ error: 'Conversation not found' });
       }
 
-      reply.send({ success: true, agentActive });
+      return reply.send({ success: true, agentActive });
     }
   );
 
   // Delete a conversation
   fastify.delete<{ Params: { sessionId: string } }>(
     '/:sessionId',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requirePermission('sessions:release')] },
     async (request, reply) => {
       const { sessionId } = request.params;
       const workspaceId = request.workspaceId;
@@ -315,7 +316,7 @@ export const conversationsRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: sessionId, workspaceId },
       });
 
-      reply.send({ success: true });
+      return reply.send({ success: true });
     }
   );
 };

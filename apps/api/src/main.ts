@@ -1,48 +1,49 @@
 /**
  * Nexova API - Entry Point
  */
-import dotenv from 'dotenv';
-import { existsSync } from 'fs';
-import Fastify from 'fastify';
-import cors from '@fastify/cors';
-import helmet from '@fastify/helmet';
-import cookie from '@fastify/cookie';
-import multipart from '@fastify/multipart';
-import fastifyStatic from '@fastify/static';
+import { existsSync, mkdirSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+
+import cookie from '@fastify/cookie';
+import cors from '@fastify/cors';
+import helmet from '@fastify/helmet';
+import multipart from '@fastify/multipart';
+import fastifyStatic from '@fastify/static';
 import { PrismaClient } from '@prisma/client';
 import { Queue } from 'bullmq';
+import dotenv from 'dotenv';
+import Fastify from 'fastify';
+
 import { logger } from '@nexova/core';
 import { QUEUES } from '@nexova/shared';
 
 // Import plugins
-import { prismaPlugin } from './plugins/prisma.plugin.js';
 import { authPlugin } from './plugins/auth.plugin.js';
 import { errorPlugin } from './plugins/error.plugin.js';
+import { prismaPlugin } from './plugins/prisma.plugin.js';
 import { realtimePlugin } from './plugins/realtime.plugin.js';
-
 // Import routes
-import { authRoutes } from './routes/v1/auth.routes.js';
-import { workspaceRoutes } from './routes/v1/workspace.routes.js';
 import { adminRoutes } from './routes/v1/admin.routes.js';
-import { healthRoutes } from './routes/v1/health.routes.js';
-import { webhookRoutes } from './routes/v1/webhook.routes.js';
-import { conversationsRoutes } from './routes/v1/conversations.routes.js';
-import { integrationsRoutes } from './routes/v1/integrations.routes.js';
-import { quickActionsRoutes } from './routes/v1/quick-actions.routes.js';
-import { customersRoutes } from './routes/v1/customers.routes.js';
-import { productsRoutes } from './routes/v1/products.routes.js';
-import { categoriesRoutes } from './routes/v1/categories.routes.js';
-import { ordersRoutes } from './routes/v1/orders.routes.js';
-import { uploadsRoutes } from './routes/v1/uploads.routes.js';
-import { stockReceiptsRoutes } from './routes/v1/stock-receipts.routes.js';
 import { analyticsRoutes } from './routes/v1/analytics.routes.js';
-import { notificationsRoutes } from './routes/v1/notifications.routes.js';
-import { billingRoutes } from './routes/v1/billing.routes.js';
 import { audioTranscriptionsRoutes } from './routes/v1/audio-transcriptions.routes.js';
+import { authRoutes } from './routes/v1/auth.routes.js';
+import { billingRoutes } from './routes/v1/billing.routes.js';
+import { categoriesRoutes } from './routes/v1/categories.routes.js';
+import { conversationsRoutes } from './routes/v1/conversations.routes.js';
+import { customersRoutes } from './routes/v1/customers.routes.js';
+import { healthRoutes } from './routes/v1/health.routes.js';
+import { integrationsRoutes } from './routes/v1/integrations.routes.js';
+import { notificationsRoutes } from './routes/v1/notifications.routes.js';
+import { ordersRoutes } from './routes/v1/orders.routes.js';
+import { productsRoutes } from './routes/v1/products.routes.js';
+import { quickActionsRoutes } from './routes/v1/quick-actions.routes.js';
+import { stockReceiptsRoutes } from './routes/v1/stock-receipts.routes.js';
+import { uploadsRoutes } from './routes/v1/uploads.routes.js';
+import { webhookRoutes } from './routes/v1/webhook.routes.js';
+import { workspaceRoutes } from './routes/v1/workspace.routes.js';
 
-const loadEnvFile = () => {
+const loadEnvFile = (): void => {
   const candidates = [
     path.resolve(process.cwd(), '.env'),
     path.resolve(process.cwd(), '../.env'),
@@ -61,6 +62,7 @@ loadEnvFile();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, '..', 'uploads');
+const PRODUCTS_UPLOAD_DIR = path.join(UPLOAD_DIR, 'products');
 
 const prisma = new PrismaClient();
 const DEPLOY_STAMP = '2026-02-16.api.8';
@@ -76,7 +78,7 @@ const redisConnection = {
 let agentQueue: Queue | undefined;
 let audioTranscriptionQueue: Queue | undefined;
 
-async function bootstrap() {
+async function bootstrap(): Promise<void> {
   const app = Fastify({
     logger: {
       level: process.env.LOG_LEVEL || 'info',
@@ -114,10 +116,14 @@ async function bootstrap() {
     },
   });
 
-  // Serve uploaded files
+  // Serve only product images as static public assets.
+  // Sensitive categories are served through signed/authenticated routes.
+  if (!existsSync(PRODUCTS_UPLOAD_DIR)) {
+    mkdirSync(PRODUCTS_UPLOAD_DIR, { recursive: true });
+  }
   await app.register(fastifyStatic, {
-    root: UPLOAD_DIR,
-    prefix: '/uploads/',
+    root: PRODUCTS_UPLOAD_DIR,
+    prefix: '/uploads/products/',
     decorateReply: false,
   });
 
@@ -184,18 +190,22 @@ async function bootstrap() {
 
   // Graceful shutdown
   const signals = ['SIGINT', 'SIGTERM'];
+  const shutdown = async (signal: string): Promise<void> => {
+    logger.info(`Received ${signal}, shutting down...`);
+    await app.close();
+    if (agentQueue) {
+      await agentQueue.close();
+    }
+    if (audioTranscriptionQueue) {
+      await audioTranscriptionQueue.close();
+    }
+    await prisma.$disconnect();
+    process.exit(0);
+  };
+
   for (const signal of signals) {
-    process.on(signal, async () => {
-      logger.info(`Received ${signal}, shutting down...`);
-      await app.close();
-      if (agentQueue) {
-        await agentQueue.close();
-      }
-      if (audioTranscriptionQueue) {
-        await audioTranscriptionQueue.close();
-      }
-      await prisma.$disconnect();
-      process.exit(0);
+    process.on(signal, () => {
+      void shutdown(signal);
     });
   }
 
@@ -213,4 +223,4 @@ async function bootstrap() {
   }
 }
 
-bootstrap();
+void bootstrap();
