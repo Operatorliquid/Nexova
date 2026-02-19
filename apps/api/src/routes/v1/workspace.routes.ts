@@ -314,7 +314,7 @@ function normalizeOwnerAgentNumberForSettings(raw: unknown, timezone: unknown): 
   return trimmed;
 }
 
-export const workspaceRoutes: FastifyPluginAsync = (fastify) => {
+export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
   const workspaceService = new WorkspaceService(fastify.prisma);
 
   // Get user's workspaces (protected)

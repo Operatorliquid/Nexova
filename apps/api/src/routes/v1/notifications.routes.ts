@@ -20,7 +20,7 @@ const parseUnread = (value?: string): boolean | undefined => {
   return undefined;
 };
 
-export const notificationsRoutes: FastifyPluginAsync = (fastify) => {
+export const notificationsRoutes: FastifyPluginAsync = async (fastify) => {
   // Get notifications list
   fastify.get(
     '/',

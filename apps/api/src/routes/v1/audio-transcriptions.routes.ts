@@ -140,7 +140,7 @@ function pickAudioMetaFromWebhook(payload: unknown): {
 
 export const audioTranscriptionsRoutes: FastifyPluginAsync<{
   queue?: Queue<AudioTranscriptionPayload>;
-}> = (fastify, opts): void => {
+}> = async (fastify, opts) => {
   const audioQueue = opts.queue;
 
   const enforcePlanAccess = async (workspaceId: string, userId: string): Promise<PlanAccessResult> => {

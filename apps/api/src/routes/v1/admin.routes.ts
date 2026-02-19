@@ -63,6 +63,13 @@ function getWhatsAppCredentialsStatus(number: { provider?: string | null; apiKey
   };
 }
 
+function sanitizeWhatsAppNumber<T extends { apiKeyEnc?: string | null; apiKeyIv?: string | null }>(
+  number: T
+): Omit<T, 'apiKeyEnc' | 'apiKeyIv'> {
+  const { apiKeyEnc: _apiKeyEnc, apiKeyIv: _apiKeyIv, ...sanitized } = number;
+  return sanitized;
+}
+
 const createWhatsAppNumberSchema = z.object({
   phoneNumber: z
     .string()
@@ -148,7 +155,7 @@ const updateSystemSettingsSchema = z.object({
     .optional(),
 });
 
-export const adminRoutes: FastifyPluginAsync = (fastify) => {
+export const adminRoutes: FastifyPluginAsync = async (fastify) => {
   // All routes require super admin
   fastify.addHook('preHandler', fastify.requireSuperAdmin);
 
@@ -451,10 +458,7 @@ export const adminRoutes: FastifyPluginAsync = (fastify) => {
       },
     });
 
-    // Don't expose API key in response
-    const sanitized = { ...number };
-    delete sanitized.apiKeyEnc;
-    delete sanitized.apiKeyIv;
+    const sanitized = sanitizeWhatsAppNumber(number);
 
     return reply.code(201).send({
       number: {
@@ -494,10 +498,7 @@ export const adminRoutes: FastifyPluginAsync = (fastify) => {
       data: updateData,
     });
 
-    // Don't expose API key in response
-    const sanitized = { ...number };
-    delete sanitized.apiKeyEnc;
-    delete sanitized.apiKeyIv;
+    const sanitized = sanitizeWhatsAppNumber(number);
 
     return reply.send({
       number: {
@@ -532,9 +533,7 @@ export const adminRoutes: FastifyPluginAsync = (fastify) => {
       },
     });
 
-    const sanitized = { ...number };
-    delete sanitized.apiKeyEnc;
-    delete sanitized.apiKeyIv;
+    const sanitized = sanitizeWhatsAppNumber(number);
 
     return reply.send({ number: sanitized });
   });
@@ -552,9 +551,7 @@ export const adminRoutes: FastifyPluginAsync = (fastify) => {
       },
     });
 
-    const sanitized = { ...number };
-    delete sanitized.apiKeyEnc;
-    delete sanitized.apiKeyIv;
+    const sanitized = sanitizeWhatsAppNumber(number);
 
     return reply.send({ number: sanitized });
   });
@@ -853,11 +850,7 @@ export const adminRoutes: FastifyPluginAsync = (fastify) => {
       });
     }
 
-    // Don't expose encrypted keys
-    const sanitized = { ...settings };
-    const anthropicKeyEnc = sanitized.anthropicKeyEnc;
-    delete sanitized.anthropicKeyEnc;
-    delete sanitized.anthropicKeyIv;
+    const { anthropicKeyEnc, anthropicKeyIv: _anthropicKeyIv, ...sanitized } = settings;
 
     return reply.send({
       settings: {
@@ -908,22 +901,44 @@ export const adminRoutes: FastifyPluginAsync = (fastify) => {
       const currentLimits = asObject(featureFlags.commercePlanLimits);
       const mergedLimits = mergeByPlan(currentLimits, asObject(body.commercePlanLimits));
 
-      updateData.featureFlags = {
+      const nextFeatureFlags = {
         ...featureFlags,
         commercePlanLimits: mergedLimits,
       };
+      updateData.featureFlags = nextFeatureFlags as Prisma.InputJsonValue;
+    }
+
+    const createData: Prisma.SystemSettingsCreateInput = { id: 'system' };
+    if (typeof updateData.anthropicKeyEnc === 'string') createData.anthropicKeyEnc = updateData.anthropicKeyEnc;
+    if (typeof updateData.anthropicKeyIv === 'string') createData.anthropicKeyIv = updateData.anthropicKeyIv;
+    if (updateData.defaultLlmModel !== undefined) {
+      createData.defaultLlmModel =
+        typeof updateData.defaultLlmModel === 'string'
+          ? updateData.defaultLlmModel
+          : undefined;
+    }
+    if (typeof updateData.maintenanceMode === 'boolean') createData.maintenanceMode = updateData.maintenanceMode;
+    if (updateData.maintenanceMsg !== undefined) {
+      createData.maintenanceMsg =
+        typeof updateData.maintenanceMsg === 'string'
+          ? updateData.maintenanceMsg
+          : null;
+    }
+    if (body.rateLimits !== undefined) {
+      createData.rateLimits = body.rateLimits as Prisma.InputJsonValue;
+      updateData.rateLimits = body.rateLimits as Prisma.InputJsonValue;
+    }
+    if (updateData.featureFlags !== undefined) {
+      createData.featureFlags = updateData.featureFlags;
     }
 
     const settings = await fastify.prisma.systemSettings.upsert({
       where: { id: 'system' },
-      create: { id: 'system', ...updateData },
+      create: createData,
       update: updateData,
     });
 
-    const sanitized = { ...settings };
-    const anthropicKeyEnc = sanitized.anthropicKeyEnc;
-    delete sanitized.anthropicKeyEnc;
-    delete sanitized.anthropicKeyIv;
+    const { anthropicKeyEnc, anthropicKeyIv: _anthropicKeyIv, ...sanitized } = settings;
 
     return reply.send({
       settings: {

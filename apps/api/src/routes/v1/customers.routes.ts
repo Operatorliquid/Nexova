@@ -83,7 +83,7 @@ const createCustomerSchema = z.object({
 });
 
 
-export const customersRoutes: FastifyPluginAsync = (fastify) => {
+export const customersRoutes: FastifyPluginAsync = async (fastify) => {
   const ledgerService = new LedgerService(fastify.prisma);
 
   const resolveWhatsAppApiKey = (number: { apiKeyEnc?: string | null; apiKeyIv?: string | null }): string => {

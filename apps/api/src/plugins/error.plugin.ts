@@ -13,7 +13,7 @@ interface ErrorResponse {
   details?: unknown;
 }
 
-const errorPluginCallback: FastifyPluginAsync = (fastify) => {
+const errorPluginCallback: FastifyPluginAsync = async (fastify) => {
   fastify.setErrorHandler((error: FastifyError, request, reply) => {
     const requestId = request.id;
 

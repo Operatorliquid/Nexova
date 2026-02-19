@@ -3,7 +3,7 @@
  */
 import { type FastifyPluginAsync } from 'fastify';
 
-export const healthRoutes: FastifyPluginAsync = (fastify) => {
+export const healthRoutes: FastifyPluginAsync = async (fastify) => {
   // Basic health check (liveness)
   fastify.get('/', async (request, reply) => {
     return reply.send({

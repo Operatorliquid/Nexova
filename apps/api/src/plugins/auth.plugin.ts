@@ -39,7 +39,7 @@ const readCookie = (request: FastifyRequest, cookieName: string): string | undef
   return typeof value === 'string' ? value : undefined;
 };
 
-const authPluginCallback: FastifyPluginAsync = (fastify) => {
+const authPluginCallback: FastifyPluginAsync = async (fastify) => {
   const permissionService = new PermissionService(fastify.prisma);
 
   // Authentication decorator

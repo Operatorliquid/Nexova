@@ -62,7 +62,7 @@ function getEvolutionInstanceName(providerConfig: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-export const conversationsRoutes: FastifyPluginAsync = (fastify) => {
+export const conversationsRoutes: FastifyPluginAsync = async (fastify) => {
   // Get all conversations for workspace
   fastify.get(
     '/',

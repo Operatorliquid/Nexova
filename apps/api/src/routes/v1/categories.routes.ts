@@ -29,7 +29,7 @@ const assignProductsSchema = z.object({
   productIds: z.array(z.string().uuid()).min(1),
 });
 
-export const categoriesRoutes: FastifyPluginAsync = (fastify) => {
+export const categoriesRoutes: FastifyPluginAsync = async (fastify) => {
   // Get all categories
   fastify.get(
     '/',

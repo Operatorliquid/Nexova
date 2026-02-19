@@ -237,7 +237,7 @@ type BillingWorkspaceSummary = {
   businessType: 'bookings' | 'commerce';
 };
 
-export const billingRoutes: FastifyPluginAsync = (fastify) => {
+export const billingRoutes: FastifyPluginAsync = async (fastify) => {
   const workspaceService = new WorkspaceService(fastify.prisma);
   const stripeWebhookSecret = (process.env.STRIPE_WEBHOOK_SECRET || '').trim();
 

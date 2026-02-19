@@ -162,7 +162,7 @@ const getWorkspaceLowStockThreshold = async (
   return threshold ?? DEFAULT_LOW_STOCK_THRESHOLD;
 };
 
-export const productsRoutes: FastifyPluginAsync = (fastify) => {
+export const productsRoutes: FastifyPluginAsync = async (fastify) => {
   // Get products list
   fastify.get(
     '/',
@@ -721,8 +721,18 @@ export const productsRoutes: FastifyPluginAsync = (fastify) => {
       }
 
       // Build update data with proper typing
-      const { categoryIds, ...restBody } = body;
-      const updateData: Prisma.ProductUpdateManyMutationInput = { ...restBody };
+      const { categoryIds } = body;
+      const updateData: Prisma.ProductUpdateManyMutationInput = {};
+      if (body.sku !== undefined) updateData.sku = body.sku;
+      if (body.name !== undefined) updateData.name = body.name;
+      if (body.description !== undefined) updateData.description = body.description;
+      if (body.shortDesc !== undefined) updateData.shortDesc = body.shortDesc;
+      if (body.category !== undefined) updateData.category = body.category;
+      if (body.price !== undefined) updateData.price = body.price;
+      if (body.comparePrice !== undefined) updateData.comparePrice = body.comparePrice;
+      if (body.images !== undefined) updateData.images = body.images as Prisma.InputJsonValue;
+      if (body.keywords !== undefined) updateData.keywords = body.keywords;
+      if (body.status !== undefined) updateData.status = body.status;
       if (body.attributes) {
         updateData.attributes = body.attributes as Prisma.InputJsonValue;
       }

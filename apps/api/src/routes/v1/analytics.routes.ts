@@ -18,7 +18,7 @@ const metricsQuerySchema = z.object({
   range: z.enum(['today', 'week', 'month', '30d', '90d', '12m', 'all']).optional(),
 });
 
-export const analyticsRoutes: FastifyPluginAsync = (fastify) => {
+export const analyticsRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get(
     '/metrics',
     { preHandler: [fastify.requirePermission('analytics:read')] },

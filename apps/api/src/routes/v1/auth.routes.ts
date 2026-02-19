@@ -74,7 +74,7 @@ type MembershipWithWorkspaceAndRole = Prisma.MembershipGetPayload<{
   include: typeof membershipInclude;
 }>;
 
-export const authRoutes: FastifyPluginAsync = (fastify) => {
+export const authRoutes: FastifyPluginAsync = async (fastify) => {
   const authService = new AuthService(fastify.prisma);
   const workspaceService = new WorkspaceService(fastify.prisma);
   const cookieSameSiteRaw = (process.env.AUTH_COOKIE_SAMESITE || 'lax').toLowerCase();

@@ -165,7 +165,7 @@ const updateOrderSchema = z.object({
   discount: z.number().int().min(0).optional(),
 });
 
-export const ordersRoutes: FastifyPluginAsync = (fastify) => {
+export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
   const ledgerService = new LedgerService(fastify.prisma);
   // Helper to generate order number
   const generateOrderNumber = async (workspaceId: string): Promise<string> => {
@@ -337,7 +337,13 @@ export const ordersRoutes: FastifyPluginAsync = (fastify) => {
       };
 
       const filteredOrders = isPaymentFilter && status
-        ? formattedOrders.filter((o) => matchesPaymentFilter(o, status))
+        ? formattedOrders.filter((o) => {
+            const paymentStatus =
+              status === 'pending_payment' || status === 'partial_payment' || status === 'paid'
+                ? status
+                : null;
+            return paymentStatus ? matchesPaymentFilter(o, paymentStatus) : true;
+          })
         : formattedOrders;
 
       const pagedOrders = isPaymentFilter
