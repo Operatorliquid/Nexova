@@ -65,7 +65,38 @@ const __dirname = path.dirname(__filename);
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, '..', 'uploads');
 const PRODUCTS_UPLOAD_DIR = path.join(UPLOAD_DIR, 'products');
 
-const prisma = new PrismaClient();
+function buildPrismaDatasourceUrl(baseUrl?: string): string | null {
+  if (!baseUrl || !baseUrl.trim()) return null;
+
+  try {
+    const url = new URL(baseUrl);
+    const connectionLimit = (process.env.PRISMA_CONNECTION_LIMIT || '2').trim();
+    const poolTimeout = (process.env.PRISMA_POOL_TIMEOUT || '20').trim();
+
+    if (!url.searchParams.has('connection_limit')) {
+      url.searchParams.set('connection_limit', connectionLimit);
+    }
+    if (!url.searchParams.has('pool_timeout')) {
+      url.searchParams.set('pool_timeout', poolTimeout);
+    }
+    return url.toString();
+  } catch {
+    return baseUrl;
+  }
+}
+
+const prismaDatasourceUrl = buildPrismaDatasourceUrl(process.env.DATABASE_URL);
+const prisma = new PrismaClient(
+  prismaDatasourceUrl
+    ? {
+        datasources: {
+          db: {
+            url: prismaDatasourceUrl,
+          },
+        },
+      }
+    : undefined
+);
 const DEPLOY_STAMP = '2026-02-16.api.8';
 
 // Redis connection for BullMQ
