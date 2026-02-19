@@ -28,6 +28,7 @@ import {
   sanitizeUploadCategory,
   sanitizeUploadFilename,
 } from '../../utils/upload-access.js';
+import { resolveUploadDir } from '../../utils/upload-dir.js';
 
 // MercadoPago config from environment
 const getMercadoPagoConfig = (): MercadoPagoConfig => ({
@@ -41,7 +42,7 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
   // Initialize services
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = path.dirname(__filename);
-  const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, '..', '..', '..', 'uploads');
+  const UPLOAD_DIR = resolveUploadDir(__dirname);
   const mpConfig = getMercadoPagoConfig();
   const mpService = new MercadoPagoIntegrationService(app.prisma, mpConfig);
   const arcaService = new ArcaIntegrationService(app.prisma);

@@ -293,6 +293,7 @@ export default function OrdersPage(): JSX.Element {
   const [isTrashOpen, setIsTrashOpen] = useState(false);
   const [isTrashLoading, setIsTrashLoading] = useState(false);
   const [trashedOrders, setTrashedOrders] = useState<Order[]>([]);
+  const trashedOrdersRequestIdRef = useRef(0);
   const [trashCandidate, setTrashCandidate] = useState<Order | null>(null);
   const [trashReasonDraft, setTrashReasonDraft] = useState('');
   const [isTrashing, setIsTrashing] = useState(false);
@@ -363,18 +364,25 @@ export default function OrdersPage(): JSX.Element {
       if (ordersRes.ok) {
         const data = await readJsonRecord(ordersRes);
         setOrders(asOrderArray(data.orders));
+      } else {
+        const errorBody = await readJsonRecord(ordersRes);
+        throw new Error(readErrorMessage(errorBody, 'No se pudieron cargar los pedidos'));
       }
 
       if (statsRes.ok) {
         const data = await readJsonRecord(statsRes);
         setStats(asStats(data));
+      } else {
+        const errorBody = await readJsonRecord(statsRes);
+        throw new Error(readErrorMessage(errorBody, 'No se pudieron cargar las métricas de pedidos'));
       }
     } catch (error) {
       console.error('Failed to fetch orders:', error);
+      toast.error(error instanceof Error ? error.message : 'No se pudieron cargar los pedidos');
     } finally {
       setIsLoading(false);
     }
-  }, [dateFilter, search, statusFilter, workspace?.id]);
+  }, [dateFilter, search, statusFilter, toast, workspace?.id]);
 
   const fetchOrderDetail = useCallback(async (orderId: string, options?: { silent?: boolean }): Promise<void> => {
     if (!workspace?.id) return;
@@ -1055,24 +1063,34 @@ export default function OrdersPage(): JSX.Element {
     if (!isTrashOpen || !workspace?.id) return;
 
     const loadTrashed = async (): Promise<void> => {
+      const requestId = ++trashedOrdersRequestIdRef.current;
       setIsTrashLoading(true);
       try {
         const res = await apiFetch('/api/v1/orders?status=trashed&limit=100', {}, workspace.id);
+        if (requestId !== trashedOrdersRequestIdRef.current) return;
         if (res.ok) {
           const data = await readJsonRecord(res);
           setTrashedOrders(asOrderArray(data.orders));
         } else {
-          toast.error('No se pudieron cargar los pedidos en papelera');
+          const errorBody = await readJsonRecord(res);
+          throw new Error(readErrorMessage(errorBody, 'No se pudieron cargar los pedidos en papelera'));
         }
       } catch (error) {
+        if (requestId !== trashedOrdersRequestIdRef.current) return;
         console.error('Failed to load trashed orders:', error);
-        toast.error('No se pudieron cargar los pedidos en papelera');
+        toast.error(error instanceof Error ? error.message : 'No se pudieron cargar los pedidos en papelera');
       } finally {
-        setIsTrashLoading(false);
+        if (requestId === trashedOrdersRequestIdRef.current) {
+          setIsTrashLoading(false);
+        }
       }
     };
 
     void loadTrashed();
+
+    return () => {
+      trashedOrdersRequestIdRef.current += 1;
+    };
   }, [isTrashOpen, toast, workspace?.id]);
 
   const selectedItems = products
@@ -1253,7 +1271,8 @@ export default function OrdersPage(): JSX.Element {
   };
 
   const handleMoveToTrash = async (): Promise<void> => {
-    if (!workspace?.id || !trashCandidate) return;
+    const candidate = trashCandidate;
+    if (!workspace?.id || !candidate) return;
     const reason = trashReasonDraft.trim();
     if (reason.length < 3) {
       toast.error('Indicá un motivo de al menos 3 caracteres');
@@ -1262,7 +1281,7 @@ export default function OrdersPage(): JSX.Element {
     setIsTrashing(true);
     try {
       const res = await apiFetch(
-        `/api/v1/orders/${trashCandidate.id}`,
+        `/api/v1/orders/${candidate.id}`,
         {
           method: 'PATCH',
           body: JSON.stringify({ status: 'trashed', cancelReason: reason }),
@@ -1277,8 +1296,8 @@ export default function OrdersPage(): JSX.Element {
       const payload = await readJsonRecord(res);
       const customerNotification = readRecord(payload, 'customerNotification');
 
-      setOrders((prev) => prev.filter((o) => o.id !== trashCandidate.id));
-      if (selectedOrder?.id === trashCandidate.id) {
+      setOrders((prev) => prev.filter((o) => o.id !== candidate.id));
+      if (selectedOrder?.id === candidate.id) {
         setSelectedOrder(null);
       }
       setTrashCandidate(null);
@@ -1305,26 +1324,45 @@ export default function OrdersPage(): JSX.Element {
   };
 
   const handleRestoreFromTrash = async (): Promise<void> => {
-    if (!workspace?.id || !restoreCandidate) return;
+    const candidate = restoreCandidate;
+    if (!workspace?.id || !candidate) return;
     setIsRestoring(true);
     try {
       const res = await apiFetch(
-        `/api/v1/orders/${restoreCandidate.id}/restore`,
+        `/api/v1/orders/${candidate.id}/restore`,
         { method: 'POST' },
         workspace.id
       );
 
       if (!res.ok) {
-        throw new Error('No se pudo restaurar el pedido');
+        const errorBody = await readJsonRecord(res);
+        throw new Error(readErrorMessage(errorBody, 'No se pudo restaurar el pedido'));
       }
 
-      setTrashedOrders((prev) => prev.filter((o) => o.id !== restoreCandidate.id));
+      const payload = await readJsonRecord(res);
+      const restoredOrderRecord = readRecord(payload, 'order');
+      const restoredStatus = readString(restoredOrderRecord, 'status') || 'cancelled';
+      const restoredOrder: Order = {
+        ...candidate,
+        status: restoredStatus,
+        isTrashed: false,
+        trashReason: null,
+        trash: null,
+      };
+
+      setOrders((prev) => {
+        const withoutRestored = prev.filter((order) => order.id !== candidate.id);
+        if (statusFilter !== 'all' && statusFilter !== 'cancelled') {
+          return withoutRestored;
+        }
+        return [restoredOrder, ...withoutRestored];
+      });
+      setTrashedOrders((prev) => prev.filter((o) => o.id !== candidate.id));
       setRestoreCandidate(null);
-      await fetchOrdersAndStats();
       toast.success('Pedido restaurado (sigue en estado cancelado)');
     } catch (error) {
       console.error('Failed to restore order:', error);
-      toast.error('No se pudo restaurar el pedido');
+      toast.error(error instanceof Error ? error.message : 'No se pudo restaurar el pedido');
     } finally {
       setIsRestoring(false);
     }

@@ -25,12 +25,13 @@ import {
 } from './types.js';
 import { createNotificationIfEnabled } from '../../utils/notifications.js';
 import { buildSignedUploadPath, resolveSignedUploadTtlSeconds } from '../../utils/upload-access.js';
+import { resolveUploadDir } from '../../utils/upload-dir.js';
 import { generateBusinessInsights } from '../analytics/insights.service.js';
 import { buildMetrics, normalizeRange } from '../analytics/metrics.service.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, '..', '..', '..', 'uploads');
+const UPLOAD_DIR = resolveUploadDir(__dirname);
 const CATALOG_DIR = path.join(UPLOAD_DIR, 'catalogs');
 
 const UNIT_SHORT_LABELS: Record<string, string> = {

@@ -603,29 +603,42 @@ export class SendCatalogPdfTool extends BaseTool<typeof SendCatalogPdfInput> {
     filename: string;
     buffer: Buffer;
   }): Promise<{ messageId: string; status: string; to: string }> {
-    const inlineBase64 = this.buildPdfBase64(params.buffer);
+    const inlineDataUrl = this.buildPdfDataUrl(params.buffer);
+    const inlineRawBase64 = this.buildPdfRawBase64(params.buffer);
     try {
-      return await params.client.sendDocument(params.to, inlineBase64, params.caption, {
+      return await params.client.sendDocument(params.to, inlineDataUrl, params.caption, {
         mimetype: 'application/pdf',
         fileName: params.filename,
       });
-    } catch (inlineError) {
-      if (!(inlineError instanceof EvolutionError)) throw inlineError;
+    } catch (inlineDataUrlError) {
+      if (!(inlineDataUrlError instanceof EvolutionError)) throw inlineDataUrlError;
       try {
-        return await params.client.sendDocument(params.to, params.mediaUrl, params.caption, {
+        return await params.client.sendDocument(params.to, inlineRawBase64, params.caption, {
           mimetype: 'application/pdf',
           fileName: params.filename,
         });
-      } catch (urlError) {
-        if (!(urlError instanceof EvolutionError)) throw urlError;
-        throw new Error(
-          `No se pudo enviar el catálogo en PDF por Evolution (inline: ${this.formatEvolutionError(inlineError)} | url: ${this.formatEvolutionError(urlError)})`
-        );
+      } catch (inlineRawError) {
+        if (!(inlineRawError instanceof EvolutionError)) throw inlineRawError;
+        try {
+          return await params.client.sendDocument(params.to, params.mediaUrl, params.caption, {
+            mimetype: 'application/pdf',
+            fileName: params.filename,
+          });
+        } catch (urlError) {
+          if (!(urlError instanceof EvolutionError)) throw urlError;
+          throw new Error(
+            `No se pudo enviar el catálogo en PDF por Evolution (data-url: ${this.formatEvolutionError(inlineDataUrlError)} | base64: ${this.formatEvolutionError(inlineRawError)} | url: ${this.formatEvolutionError(urlError)})`
+          );
+        }
       }
     }
   }
 
-  private buildPdfBase64(buffer: Buffer): string {
+  private buildPdfDataUrl(buffer: Buffer): string {
+    return `data:application/pdf;base64,${buffer.toString('base64')}`;
+  }
+
+  private buildPdfRawBase64(buffer: Buffer): string {
     return buffer.toString('base64');
   }
 
@@ -883,7 +896,14 @@ export class SendOrderPdfTool extends BaseTool<typeof SendOrderPdfInput> {
           return { success: false, error: 'Evolution no está configurado (baseUrl / instanceName).' };
         }
         const client = new EvolutionClient({ apiKey, baseUrl, instanceName });
-        result = await client.sendDocument(to, mediaUrl, caption);
+        result = await this.sendEvolutionPdfWithInlineFallback({
+          client,
+          to,
+          mediaUrl,
+          caption,
+          filename: receipt.filename || 'pedido.pdf',
+          buffer: receipt.buffer,
+        });
       } else {
         const client = new InfobipClient({
           apiKey,
@@ -939,6 +959,60 @@ export class SendOrderPdfTool extends BaseTool<typeof SendOrderPdfInput> {
     const digits = trimmed.replace(/\D/g, '');
     if (!digits) return trimmed;
     return `+${digits}`;
+  }
+
+  private async sendEvolutionPdfWithInlineFallback(params: {
+    client: EvolutionClient;
+    to: string;
+    mediaUrl: string;
+    caption: string;
+    filename: string;
+    buffer: Buffer;
+  }): Promise<{ messageId: string; status: string; to: string }> {
+    const inlineDataUrl = this.buildPdfDataUrl(params.buffer);
+    const inlineRawBase64 = this.buildPdfRawBase64(params.buffer);
+    try {
+      return await params.client.sendDocument(params.to, inlineDataUrl, params.caption, {
+        mimetype: 'application/pdf',
+        fileName: params.filename,
+      });
+    } catch (inlineDataUrlError) {
+      if (!(inlineDataUrlError instanceof EvolutionError)) throw inlineDataUrlError;
+      try {
+        return await params.client.sendDocument(params.to, inlineRawBase64, params.caption, {
+          mimetype: 'application/pdf',
+          fileName: params.filename,
+        });
+      } catch (inlineRawError) {
+        if (!(inlineRawError instanceof EvolutionError)) throw inlineRawError;
+        try {
+          return await params.client.sendDocument(params.to, params.mediaUrl, params.caption, {
+            mimetype: 'application/pdf',
+            fileName: params.filename,
+          });
+        } catch (urlError) {
+          if (!(urlError instanceof EvolutionError)) throw urlError;
+          throw new Error(
+            `No se pudo enviar la boleta en PDF por Evolution (data-url: ${this.formatEvolutionError(inlineDataUrlError)} | base64: ${this.formatEvolutionError(inlineRawError)} | url: ${this.formatEvolutionError(urlError)})`
+          );
+        }
+      }
+    }
+  }
+
+  private buildPdfDataUrl(buffer: Buffer): string {
+    return `data:application/pdf;base64,${buffer.toString('base64')}`;
+  }
+
+  private buildPdfRawBase64(buffer: Buffer): string {
+    return buffer.toString('base64');
+  }
+
+  private formatEvolutionError(error: EvolutionError): string {
+    const response = (error.responseBody || '').trim();
+    if (response.length === 0) return `${error.statusCode}`;
+    const compact = response.replace(/\s+/g, ' ');
+    return `${error.statusCode} ${compact.slice(0, 240)}`;
   }
 
   private resolveWhatsAppApiKey(number: {

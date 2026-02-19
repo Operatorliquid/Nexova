@@ -15,10 +15,11 @@ import { StockPurchaseReceiptService } from '@nexova/core';
 
 import { getWorkspacePlanContext } from '../../utils/commerce-plan.js';
 import { extractStockReceiptWithClaude } from '../../utils/stock-receipt-claude.js';
+import { resolveUploadDir } from '../../utils/upload-dir.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, '..', '..', '..', 'uploads');
+const UPLOAD_DIR = resolveUploadDir(__dirname);
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB (matches multipart plugin limit)
 const ALLOWED_TYPES = [

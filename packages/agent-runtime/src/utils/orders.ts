@@ -4,11 +4,7 @@ export const withVisibleOrders = (where: Prisma.OrderWhereInput): Prisma.OrderWh
   AND: [
     where,
     { deletedAt: null },
-    {
-      NOT: [
-        { status: 'trashed' },
-        { metadata: { path: ['trash', 'isTrashed'], equals: true } },
-      ],
-    },
+    { status: { not: 'trashed' } },
+    { NOT: { metadata: { path: ['trash', 'isTrashed'], equals: true } } },
   ],
 });

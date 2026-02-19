@@ -43,6 +43,7 @@ import { stockReceiptsRoutes } from './routes/v1/stock-receipts.routes.js';
 import { uploadsRoutes } from './routes/v1/uploads.routes.js';
 import { webhookRoutes } from './routes/v1/webhook.routes.js';
 import { workspaceRoutes } from './routes/v1/workspace.routes.js';
+import { resolveUploadDir } from './utils/upload-dir.js';
 
 const loadEnvFile = (): void => {
   const candidates = [
@@ -62,7 +63,7 @@ loadEnvFile();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, '..', 'uploads');
+const UPLOAD_DIR = resolveUploadDir(__dirname);
 const PRODUCTS_UPLOAD_DIR = path.join(UPLOAD_DIR, 'products');
 
 function buildPrismaDatasourceUrl(baseUrl?: string): string | null {

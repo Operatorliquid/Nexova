@@ -21,10 +21,11 @@ import { recalcCustomerFinancials } from '../../utils/customer-financials.js';
 import { createNotificationIfEnabled } from '../../utils/notifications.js';
 import { calculatePromotionDiscount, promotionIsUsable } from '../../utils/promotions.js';
 import { extractReceiptAmountWithClaude, parseAmountInputToCents } from '../../utils/receipt-claude.js';
+import { resolveUploadDir } from '../../utils/upload-dir.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, '..', '..', '..', 'uploads');
+const UPLOAD_DIR = resolveUploadDir(__dirname);
 const RECEIPTS_DIR = path.join(UPLOAD_DIR, 'receipts');
 const DEFAULT_LOW_STOCK_THRESHOLD = 10;
 
@@ -76,9 +77,9 @@ const resolveTrashReason = (
 };
 
 const buildNotTrashedWhere = (): Prisma.OrderWhereInput => ({
-  NOT: [
-    { status: ORDER_TRASH_STATUS },
-    { metadata: { path: ['trash', 'isTrashed'], equals: true } },
+  AND: [
+    { status: { not: ORDER_TRASH_STATUS } },
+    { NOT: { metadata: { path: ['trash', 'isTrashed'], equals: true } } },
   ],
 });
 
@@ -338,6 +339,10 @@ const updateOrderSchema = z.object({
   discount: z.number().int().min(0).optional(),
   promotionId: z.string().uuid().optional().nullable(),
   cancelReason: z.string().max(500).optional().nullable(),
+});
+
+const orderIdParamsSchema = z.object({
+  id: z.string().uuid(),
 });
 
 export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
@@ -766,7 +771,7 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(400).send({ error: 'MISSING_WORKSPACE', message: 'X-Workspace-Id header required' });
       }
 
-      const { id } = request.params as { id: string };
+      const { id } = orderIdParamsSchema.parse(request.params);
 
       const order = await fastify.prisma.order.findFirst({
         where: { id, workspaceId, deletedAt: null },
@@ -868,7 +873,7 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(400).send({ error: 'MISSING_WORKSPACE', message: 'X-Workspace-Id header required' });
       }
 
-      const { id } = request.params as { id: string };
+      const { id } = orderIdParamsSchema.parse(request.params);
 
       const order = await fastify.prisma.order.findFirst({
         where: { id, workspaceId, deletedAt: null },
@@ -949,7 +954,7 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
       const canAutoDetectManualReceiptAmount = planContext.capabilities.autoDetectManualReceiptAmount;
       const canUsePaymentLinks = planContext.capabilities.showMercadoPagoIntegration;
 
-      const { id } = request.params as { id: string };
+      const { id } = orderIdParamsSchema.parse(request.params);
       const order = await fastify.prisma.order.findFirst({
         where: { id, workspaceId, deletedAt: null },
         select: { id: true, orderNumber: true, customerId: true, total: true, paidAmount: true },
@@ -1804,7 +1809,7 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(400).send({ error: 'MISSING_WORKSPACE', message: 'X-Workspace-Id header required' });
       }
 
-      const { id } = request.params as { id: string };
+      const { id } = orderIdParamsSchema.parse(request.params);
       const body = updateOrderSchema.parse(request.body);
 
       // Check order exists
@@ -1902,7 +1907,7 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       // Build update data
-      const updateData: Prisma.OrderUncheckedUpdateManyInput = {};
+      const updateData: Prisma.OrderUncheckedUpdateInput = {};
       if (body.notes !== undefined) updateData.notes = body.notes;
       if (body.internalNotes !== undefined) updateData.internalNotes = body.internalNotes;
       if (body.shippingAddress !== undefined) {
@@ -2010,8 +2015,8 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
         updateData.metadata = mergedMetadata as Prisma.InputJsonValue;
       }
 
-      await fastify.prisma.order.updateMany({
-        where: { id, workspaceId, deletedAt: null },
+      await fastify.prisma.order.update({
+        where: { id },
         data: updateData,
       });
 
@@ -2133,7 +2138,7 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(400).send({ error: 'MISSING_WORKSPACE', message: 'X-Workspace-Id header required' });
       }
 
-      const { id } = request.params as { id: string };
+      const { id } = orderIdParamsSchema.parse(request.params);
 
       const existing = await fastify.prisma.order.findFirst({
         where: { id, workspaceId, deletedAt: null },
@@ -2202,7 +2207,7 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(400).send({ error: 'MISSING_WORKSPACE', message: 'X-Workspace-Id header required' });
       }
 
-      const { id } = request.params as { id: string };
+      const { id } = orderIdParamsSchema.parse(request.params);
 
       const existing = await fastify.prisma.order.findFirst({
         where: { id, workspaceId, deletedAt: null },
@@ -2220,8 +2225,8 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      await fastify.prisma.order.updateMany({
-        where: { id, workspaceId, deletedAt: null },
+      await fastify.prisma.order.update({
+        where: { id },
         data: { deletedAt: new Date() },
       });
 

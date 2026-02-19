@@ -1250,9 +1250,9 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
         });
       } else {
         andConditions.push({
-          NOT: [
-            { status: 'trashed' },
-            { metadata: { path: ['trash', 'isTrashed'], equals: true } },
+          AND: [
+            { status: { not: 'trashed' } },
+            { NOT: { metadata: { path: ['trash', 'isTrashed'], equals: true } } },
           ],
         });
       }

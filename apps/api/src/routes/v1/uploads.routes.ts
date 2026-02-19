@@ -20,10 +20,11 @@ import {
   sanitizeUploadFilename,
   verifySignedUploadAccess,
 } from '../../utils/upload-access.js';
+import { resolveUploadDir } from '../../utils/upload-dir.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, '..', '..', '..', 'uploads');
+const UPLOAD_DIR = resolveUploadDir(__dirname);
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
 const INTERNAL_MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];

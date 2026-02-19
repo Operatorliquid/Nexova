@@ -24,6 +24,7 @@ import { getEffectiveCommercePlanLimits } from '../../utils/commerce-plan-limits
 import { getWorkspacePlanContext } from '../../utils/commerce-plan.js';
 import { getMonthlyUsage } from '../../utils/monthly-usage.js';
 import { buildSignedUploadUrl, resolveSignedUploadTtlSeconds } from '../../utils/upload-access.js';
+import { resolveUploadDir } from '../../utils/upload-dir.js';
 
 // BullMQ queue - initialized when routes are registered
 let agentQueue: Queue;
@@ -472,7 +473,7 @@ export async function webhookRoutes(
 ): Promise<void> {
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = path.dirname(__filename);
-  const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, '..', '..', '..', 'uploads');
+  const UPLOAD_DIR = resolveUploadDir(__dirname);
   const WHATSAPP_MEDIA_DIR = path.join(UPLOAD_DIR, 'whatsapp-media');
 
   const sanitizeFilename = (name: string): string =>
