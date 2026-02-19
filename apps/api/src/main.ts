@@ -43,7 +43,7 @@ import { stockReceiptsRoutes } from './routes/v1/stock-receipts.routes.js';
 import { uploadsRoutes } from './routes/v1/uploads.routes.js';
 import { webhookRoutes } from './routes/v1/webhook.routes.js';
 import { workspaceRoutes } from './routes/v1/workspace.routes.js';
-import { resolveUploadDir } from './utils/upload-dir.js';
+import { resolveUploadDir, resolveUploadDirCandidates } from './utils/upload-dir.js';
 
 const loadEnvFile = (): void => {
   const candidates = [
@@ -64,7 +64,11 @@ loadEnvFile();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const UPLOAD_DIR = resolveUploadDir(__dirname);
-const PRODUCTS_UPLOAD_DIR = path.join(UPLOAD_DIR, 'products');
+const UPLOAD_DIR_CANDIDATES = resolveUploadDirCandidates(__dirname);
+const PRODUCTS_UPLOAD_DIRS = Array.from(
+  new Set((UPLOAD_DIR_CANDIDATES.length > 0 ? UPLOAD_DIR_CANDIDATES : [UPLOAD_DIR]).map((dir) => path.join(dir, 'products')))
+);
+const PRODUCTS_UPLOAD_DIR = PRODUCTS_UPLOAD_DIRS[0] || path.join(UPLOAD_DIR, 'products');
 
 function buildPrismaDatasourceUrl(baseUrl?: string): string | null {
   if (!baseUrl || !baseUrl.trim()) return null;
@@ -155,10 +159,17 @@ async function bootstrap(): Promise<void> {
     mkdirSync(PRODUCTS_UPLOAD_DIR, { recursive: true });
   }
   await app.register(fastifyStatic, {
-    root: PRODUCTS_UPLOAD_DIR,
+    root: PRODUCTS_UPLOAD_DIRS.length > 1 ? PRODUCTS_UPLOAD_DIRS : PRODUCTS_UPLOAD_DIR,
     prefix: '/uploads/products/',
     decorateReply: false,
   });
+  logger.info(
+    {
+      primaryUploadDir: UPLOAD_DIR,
+      productUploadDirs: PRODUCTS_UPLOAD_DIRS,
+    },
+    'Product static upload directories configured'
+  );
 
   // Custom plugins
   await app.register(prismaPlugin, { prisma });
