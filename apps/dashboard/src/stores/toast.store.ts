@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { useMemo } from 'react';
 
 export type ToastType = 'success' | 'error' | 'info' | 'warning';
 export type ToastChannel = 'action' | 'notification';
@@ -104,6 +105,14 @@ export const useToast = (): Pick<
   ToastStore,
   'success' | 'error' | 'info' | 'warning' | 'notify'
 > => {
-  const { success, error, info, warning, notify } = useToastStore();
-  return { success, error, info, warning, notify };
+  const success = useToastStore((state) => state.success);
+  const error = useToastStore((state) => state.error);
+  const info = useToastStore((state) => state.info);
+  const warning = useToastStore((state) => state.warning);
+  const notify = useToastStore((state) => state.notify);
+
+  return useMemo(
+    () => ({ success, error, info, warning, notify }),
+    [success, error, info, warning, notify]
+  );
 };

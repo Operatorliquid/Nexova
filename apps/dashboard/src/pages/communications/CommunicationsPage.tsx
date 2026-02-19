@@ -1,5 +1,5 @@
 import { Megaphone, Percent, BadgeDollarSign, Send, Image as ImageIcon, Clock, AlertTriangle } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   AnimatedPage,
@@ -23,7 +23,7 @@ import {
 import { useAuth } from '../../contexts/AuthContext';
 import { getWorkspaceCommerceCapabilities } from '../../lib/commerce-plan';
 import { apiFetch } from '../../lib/api';
-import { useToast } from '../../stores/toast.store';
+import { useToastStore } from '../../stores/toast.store';
 
 type JsonRecord = Record<string, unknown>;
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -226,7 +226,11 @@ function statusClass(status: string): string {
 export default function CommunicationsPage(): JSX.Element {
   const { workspace } = useAuth();
   const capabilities = getWorkspaceCommerceCapabilities(workspace);
-  const toast = useToast();
+  const toastSuccess = useToastStore((state) => state.success);
+  const toastError = useToastStore((state) => state.error);
+  const toastWarning = useToastStore((state) => state.warning);
+  const lastLoadIssueRef = useRef<'none' | 'partial' | 'full'>('none');
+  const autoLoadedWorkspaceIdRef = useRef<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<'promotions' | 'broadcasts'>('promotions');
   const [isLoading, setIsLoading] = useState(true);
@@ -266,6 +270,20 @@ export default function CommunicationsPage(): JSX.Element {
     [promotions]
   );
 
+  const notifyLoadIssue = useCallback(
+    (issue: 'partial' | 'full') => {
+      if (lastLoadIssueRef.current === issue) return;
+
+      if (issue === 'full') {
+        toastError('No se pudo cargar comunicacion');
+      } else {
+        toastWarning('Se cargaron datos parciales de comunicacion');
+      }
+      lastLoadIssueRef.current = issue;
+    },
+    [toastError, toastWarning]
+  );
+
   const loadAll = useCallback(async (): Promise<void> => {
     if (!workspace?.id) {
       setIsLoading(false);
@@ -273,7 +291,13 @@ export default function CommunicationsPage(): JSX.Element {
     }
     setIsLoading(true);
     try {
-      const [productsResult, promotionsResult, campaignsResult, metricsResult] = await Promise.allSettled([
+      const metricsPromise = withTimeout(
+        apiFetch('/api/v1/communications/metrics', {}, workspace.id),
+        REQUEST_TIMEOUT_MS,
+        'metrics'
+      );
+
+      const [productsResult, promotionsResult, campaignsResult] = await Promise.allSettled([
         withTimeout(apiFetch('/api/v1/products?limit=200', {}, workspace.id), REQUEST_TIMEOUT_MS, 'products'),
         withTimeout(
           apiFetch('/api/v1/communications/promotions?limit=100', {}, workspace.id),
@@ -285,11 +309,10 @@ export default function CommunicationsPage(): JSX.Element {
           REQUEST_TIMEOUT_MS,
           'campaigns'
         ),
-        withTimeout(apiFetch('/api/v1/communications/metrics', {}, workspace.id), REQUEST_TIMEOUT_MS, 'metrics'),
       ]);
 
       const failures: string[] = [];
-      let loadedOk = 0;
+      let loadedCommunicationsOk = 0;
 
       if (productsResult.status === 'fulfilled') {
         const productsRes = productsResult.value;
@@ -301,7 +324,6 @@ export default function CommunicationsPage(): JSX.Element {
             price: readNumber(item, 'price'),
           }));
           setProducts(parsed.filter((item) => item.id));
-          loadedOk += 1;
         } else {
           const data = await readJsonRecord(productsRes);
           failures.push(`products (${productsRes.status}): ${readString(data, 'message') || 'request failed'}`);
@@ -334,7 +356,7 @@ export default function CommunicationsPage(): JSX.Element {
             };
           });
           setPromotions(parsed.filter((item) => item.id));
-          loadedOk += 1;
+          loadedCommunicationsOk += 1;
         } else {
           const data = await readJsonRecord(promotionsRes);
           failures.push(`promotions (${promotionsRes.status}): ${readString(data, 'message') || 'request failed'}`);
@@ -363,7 +385,7 @@ export default function CommunicationsPage(): JSX.Element {
             };
           });
           setCampaigns(parsed.filter((item) => item.id));
-          loadedOk += 1;
+          loadedCommunicationsOk += 1;
         } else {
           const data = await readJsonRecord(campaignsRes);
           failures.push(`campaigns (${campaignsRes.status}): ${readString(data, 'message') || 'request failed'}`);
@@ -371,6 +393,14 @@ export default function CommunicationsPage(): JSX.Element {
       } else {
         failures.push(`campaigns: ${toErrorMessage(campaignsResult.reason)}`);
       }
+
+      // Avoid blocking the whole page while metrics resolve.
+      setIsLoading(false);
+
+      const metricsResult = await metricsPromise.then(
+        (value) => ({ status: 'fulfilled' as const, value }),
+        (reason) => ({ status: 'rejected' as const, reason })
+      );
 
       if (metricsResult.status === 'fulfilled') {
         const metricsRes = metricsResult.value;
@@ -406,7 +436,7 @@ export default function CommunicationsPage(): JSX.Element {
               },
             },
           });
-          loadedOk += 1;
+          loadedCommunicationsOk += 1;
         } else {
           const data = await readJsonRecord(metricsRes);
           failures.push(`metrics (${metricsRes.status}): ${readString(data, 'message') || 'request failed'}`);
@@ -416,45 +446,53 @@ export default function CommunicationsPage(): JSX.Element {
       }
 
       if (failures.length > 0) {
-        if (loadedOk === 0) {
-          toast.error('No se pudo cargar comunicacion');
-        } else {
-          toast.warning('Se cargaron datos parciales de comunicacion');
-        }
+        notifyLoadIssue(loadedCommunicationsOk === 0 ? 'full' : 'partial');
         console.error('Failed to load communications data:', failures);
+      } else {
+        lastLoadIssueRef.current = 'none';
       }
     } catch (error) {
       console.error('Failed to load communications data:', error);
-      toast.error('No se pudo cargar comunicacion');
+      notifyLoadIssue('full');
     } finally {
       setIsLoading(false);
     }
-  }, [toast, workspace?.id]);
+  }, [notifyLoadIssue, workspace?.id]);
 
   useEffect(() => {
     if (!capabilities.showCommunicationsModule) {
       setIsLoading(false);
+      autoLoadedWorkspaceIdRef.current = null;
       return;
     }
+    if (!workspace?.id) {
+      setIsLoading(false);
+      autoLoadedWorkspaceIdRef.current = null;
+      return;
+    }
+    if (autoLoadedWorkspaceIdRef.current === workspace.id) {
+      return;
+    }
+    autoLoadedWorkspaceIdRef.current = workspace.id;
     void loadAll();
-  }, [capabilities.showCommunicationsModule, loadAll]);
+  }, [capabilities.showCommunicationsModule, loadAll, workspace?.id]);
 
   const handleCreatePromotion = async (): Promise<void> => {
     if (!workspace?.id) return;
     if (isCommunicationsLimitReached) {
-      toast.error(
+      toastError(
         `Alcanzaste el límite mensual de comunicación (${communicationsUsage.limit ?? 0}).`
       );
       return;
     }
     if (!promoName.trim() || !promoProductId || !promoValue || !promoStartsAt || !promoEndsAt) {
-      toast.error('Completa todos los campos de la promocion');
+      toastError('Completa todos los campos de la promocion');
       return;
     }
 
     const value = Number(promoValue);
     if (!Number.isFinite(value) || value <= 0) {
-      toast.error('El valor de la promocion no es valido');
+      toastError('El valor de la promocion no es valido');
       return;
     }
 
@@ -488,10 +526,10 @@ export default function CommunicationsPage(): JSX.Element {
       setPromoValue('');
       setPromoStartsAt(toLocalDatetimeValue(new Date().toISOString()));
       setPromoEndsAt(toLocalDatetimeValue(new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString()));
-      toast.success('Promocion creada');
+      toastSuccess('Promocion creada');
       await loadAll();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'No se pudo crear la promocion');
+      toastError(error instanceof Error ? error.message : 'No se pudo crear la promocion');
     } finally {
       setIsCreatingPromo(false);
     }
@@ -500,13 +538,13 @@ export default function CommunicationsPage(): JSX.Element {
   const handleCreateCampaign = async (): Promise<void> => {
     if (!workspace?.id) return;
     if (isCommunicationsLimitReached) {
-      toast.error(
+      toastError(
         `Alcanzaste el límite mensual de comunicación (${communicationsUsage.limit ?? 0}).`
       );
       return;
     }
     if (!campaignName.trim() || !campaignMessage.trim()) {
-      toast.error('Completa nombre y mensaje de la difusion');
+      toastError('Completa nombre y mensaje de la difusion');
       return;
     }
 
@@ -536,10 +574,10 @@ export default function CommunicationsPage(): JSX.Element {
       setCampaignMessage('');
       setCampaignImageUrl('');
       setCampaignPromotionId('none');
-      toast.success('Difusion enviada a cola');
+      toastSuccess('Difusion enviada a cola');
       await loadAll();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'No se pudo lanzar la difusion');
+      toastError(error instanceof Error ? error.message : 'No se pudo lanzar la difusion');
     } finally {
       setIsCreatingCampaign(false);
     }
