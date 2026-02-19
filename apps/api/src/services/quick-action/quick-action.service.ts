@@ -192,6 +192,12 @@ type ProductWithStockItems = Prisma.ProductGetPayload<{ include: { stockItems: t
 type CustomerRecord = Prisma.CustomerGetPayload<Record<string, never>>;
 type OrderRecord = Prisma.OrderGetPayload<Record<string, never>>;
 type CategoryRecord = Prisma.ProductCategoryGetPayload<Record<string, never>>;
+type CustomerIdentifier = {
+  customerId?: string;
+  name?: string;
+  phone?: string;
+  email?: string;
+};
 type ToolResult = { data: unknown; canRollback?: boolean; rollbackData?: unknown };
 type ResolvedConversation = {
   id: string;
@@ -247,7 +253,7 @@ HERRAMIENTAS DISPONIBLES:
 - get_product_details(productId?: string, sku?: string, name?: string): Ver detalle de producto
 - list_categories(limit?: number): Listar categorías de productos
 - get_order_details(orderId?: string, orderNumber?: string): Ver detalles de pedido
-- list_orders(status?: string, customerId?: string, date?: 'today'|'week'|'month', limit?: number): Listar pedidos
+- list_orders(status?: string, customerId?: string, phone?: string, name?: string, email?: string, date?: 'today'|'week'|'month', limit?: number): Listar pedidos
 - update_customer(customerId?: string, phone?: string, name?: string, data: object): Actualizar datos de cliente
 - update_order_status(orderId?: string, orderNumber?: string, status: string, notes?: string): Cambiar estado de pedido
 - add_order_note(orderId?: string, orderNumber?: string, note: string): Agregar nota a pedido
@@ -571,20 +577,17 @@ export class QuickActionService {
     const storedTools = pending.parsedTools as unknown as ParsedToolCall[];
     const hydratedTools = storedTools.map((tool) => {
       if (tool.toolName !== 'send_debt_reminder') return tool;
-      const hasTarget = Boolean(
-        tool.input?.customerId ||
-          tool.input?.phone ||
-          tool.input?.name ||
-          tool.input?.email
-      );
+      const hasTarget = this.hasCustomerSelectorInput(tool.input || {});
       if (hasTarget) return tool;
 
       const extracted =
         this.extractCustomerIdentifierFromReminder(pending.command) ||
         this.extractCustomerIdentifierFromReminder(this.normalizeText(pending.command)) ||
+        this.extractCustomerIdentifierFromCommand(pending.command) ||
+        this.extractCustomerIdentifierFromCommand(this.normalizeText(pending.command)) ||
         null;
       if (extracted) {
-        return { ...tool, input: { ...tool.input, ...extracted } };
+        return { ...tool, input: { ...extracted, ...tool.input } };
       }
 
       const looseName = this.extractCustomerNameLoose(pending.command);
@@ -1116,7 +1119,7 @@ export class QuickActionService {
         workspaceId,
         customerId: { in: customerIds },
         deletedAt: null,
-        status: { notIn: ['cancelled', 'draft'] },
+        status: { notIn: ['cancelled', 'draft', 'returned', 'trashed'] },
         OR: [
           { paidAt: null },
           {
@@ -1605,6 +1608,9 @@ export class QuickActionService {
 
     if (input.customerId) {
       where.customerId = String(input.customerId);
+    } else if (input.phone || input.name || input.email) {
+      const customer = await this.resolveCustomer(input, workspaceId);
+      where.customerId = customer.id;
     }
 
     if (input.date === 'today' || input.date === 'hoy') {
@@ -1723,7 +1729,7 @@ export class QuickActionService {
       where: {
         customerId,
         workspaceId,
-        status: { notIn: ['cancelled', 'draft'] },
+        status: { notIn: ['cancelled', 'draft', 'returned', 'trashed'] },
       },
       select: { orderNumber: true, total: true, paidAmount: true },
     });
@@ -1740,18 +1746,45 @@ export class QuickActionService {
   }
 
   private async toolUpdateOrderStatus(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
-    const status = String(input.status || '').trim();
-    if (!status) {
+    const requestedStatus = String(input.status || '').trim();
+    if (!requestedStatus) {
       throw new Error('Estado inválido');
     }
 
     const order = await this.resolveOrder(input, workspaceId);
 
     const previousStatus = order.status;
+    const status = requestedStatus === 'trashed' ? 'cancelled' : requestedStatus;
+    const cancelReasonRaw = String(input.reason || input.notes || '').trim();
+    const cancelReason =
+      cancelReasonRaw || (requestedStatus === 'trashed' ? 'Cancelado y enviado a papelera via Quick Action' : '');
 
-    const updateData: { status: string; notes?: string } = { status };
+    const updateData: Prisma.OrderUpdateManyMutationInput = { status };
     if (input.notes) {
       updateData.notes = String(input.notes);
+    }
+
+    if (status === 'cancelled') {
+      updateData.cancelledAt = new Date();
+      if (cancelReason) {
+        updateData.cancelReason = cancelReason;
+      }
+    }
+
+    if (requestedStatus === 'trashed') {
+      const metadata =
+        order.metadata && typeof order.metadata === 'object' && !Array.isArray(order.metadata)
+          ? ({ ...(order.metadata as Record<string, unknown>) } as Record<string, unknown>)
+          : {};
+      updateData.metadata = {
+        ...metadata,
+        trash: {
+          isTrashed: true,
+          previousStatus: order.status,
+          trashedAt: new Date().toISOString(),
+          reason: cancelReason,
+        },
+      } as Prisma.InputJsonValue;
     }
 
     await this.prisma.order.updateMany({
@@ -3598,6 +3631,7 @@ export class QuickActionService {
     const colorIntent = this.resolveCategoryColorFromCommand(command);
     const debtReminderBulk = this.extractDebtReminderBulkIntent(command);
     const debtReminderIntent = this.extractDebtReminderIntent(command);
+    const customerIdentifier = this.extractCustomerIdentifierFromCommand(command);
 
     if (debtReminderBulk) {
       return [this.buildParsedToolCall('send_debt_reminders_bulk', {})];
@@ -3640,6 +3674,10 @@ export class QuickActionService {
         }
         return tool;
       });
+    }
+
+    if (customerIdentifier) {
+      tools = tools.map((tool) => this.applyCustomerIdentifierToTool(tool, customerIdentifier));
     }
 
     const hasTool = (name: string): boolean => tools.some((t) => t.toolName === name);
@@ -3774,7 +3812,10 @@ export class QuickActionService {
       }
     }
 
-    if (this.commandWantsDebtors(normalized) && !hasTool('list_debtors')) {
+    const hasTargetedBalanceTool = tools.some(
+      (tool) => tool.toolName === 'get_customer_balance' && this.hasCustomerSelectorInput(tool.input)
+    );
+    if (this.commandWantsDebtors(normalized) && !hasTool('list_debtors') && !hasTargetedBalanceTool && !customerIdentifier) {
       tools = [...tools, this.buildParsedToolCall('list_debtors', { limit: 10 })];
     }
 
@@ -3788,19 +3829,15 @@ export class QuickActionService {
 
     tools = tools.map((tool) => {
       if (tool.toolName !== 'send_debt_reminder') return tool;
-      const hasTarget = Boolean(
-        tool.input.customerId ||
-        tool.input.phone ||
-        tool.input.name ||
-        tool.input.email
-      );
+      const hasTarget = this.hasCustomerSelectorInput(tool.input);
       if (hasTarget) return tool;
       const extracted =
         this.extractCustomerIdentifierFromReminder(command) ||
         this.extractCustomerIdentifierFromReminder(normalized) ||
+        customerIdentifier ||
         null;
       if (extracted) {
-        tool.input = { ...tool.input, ...extracted };
+        tool.input = { ...extracted, ...tool.input };
       }
       return tool;
     });
@@ -3815,6 +3852,7 @@ export class QuickActionService {
   ): ParsedToolCall[] {
     const normalized = this.normalizeText(command);
     if (!normalized) return [];
+    const customerIdentifier = this.extractCustomerIdentifierFromCommand(command);
 
     if (this.commandWantsSalesSummary(normalized)) {
       const input: Record<string, unknown> = {};
@@ -3849,7 +3887,10 @@ export class QuickActionService {
       if (this.extractDebtReminderBulkIntent(normalized)) {
         return [this.buildParsedToolCall('send_debt_reminders_bulk', {})];
       }
-      const extracted = this.extractCustomerIdentifierFromReminder(normalized);
+      const extracted =
+        this.extractCustomerIdentifierFromReminder(command) ||
+        this.extractCustomerIdentifierFromReminder(normalized) ||
+        customerIdentifier;
       return [this.buildParsedToolCall('send_debt_reminder', extracted || {})];
     }
 
@@ -3861,6 +3902,9 @@ export class QuickActionService {
     }
 
     if (this.commandWantsDebtors(normalized)) {
+      if (customerIdentifier) {
+        return [this.buildParsedToolCall('get_customer_balance', customerIdentifier)];
+      }
       return [this.buildParsedToolCall('list_debtors', { limit: 10 })];
     }
 
@@ -3881,11 +3925,25 @@ export class QuickActionService {
     }
 
     if (normalized.includes('clientes') || normalized.includes('cliente')) {
+      if (customerIdentifier) {
+        const hasPluralCustomers = /\bclientes\b/.test(normalized);
+        if (hasPluralCustomers) {
+          const query = this.customerIdentifierToQuery(customerIdentifier);
+          const input: Record<string, unknown> = { limit: 10 };
+          if (query) input.query = query;
+          return [this.buildParsedToolCall('list_customers', input)];
+        }
+        return [this.buildParsedToolCall('get_customer_info', { ...customerIdentifier, limit: 5 })];
+      }
       return [this.buildParsedToolCall('list_customers', { limit: 10 })];
     }
 
     if (normalized.includes('pedidos') || normalized.includes('pedido')) {
-      return [this.buildParsedToolCall('list_orders', { limit: 10 })];
+      const input: Record<string, unknown> = { limit: 10 };
+      if (customerIdentifier) {
+        Object.assign(input, customerIdentifier);
+      }
+      return [this.buildParsedToolCall('list_orders', input)];
     }
 
     return [];
@@ -4050,7 +4108,8 @@ export class QuickActionService {
       normalized.includes('deudores') ||
       normalized.includes('clientes con deuda') ||
       normalized.includes('deudas') ||
-      normalized.includes('deuda')
+      normalized.includes('deuda') ||
+      normalized.includes('saldo')
     );
   }
 
@@ -4091,6 +4150,73 @@ export class QuickActionService {
       normalized.includes('notificaciones') ||
       normalized.includes('alertas')
     );
+  }
+
+  private hasCustomerSelectorInput(input: Record<string, unknown>): boolean {
+    const asString = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
+    return Boolean(
+      asString(input.customerId) ||
+      asString(input.phone) ||
+      asString(input.name) ||
+      asString(input.email)
+    );
+  }
+
+  private customerIdentifierToQuery(identifier: CustomerIdentifier): string | null {
+    const queryCandidate = identifier.name || identifier.phone || identifier.email || null;
+    if (!queryCandidate) return null;
+    const cleaned = String(queryCandidate).trim();
+    return cleaned.length > 0 ? cleaned : null;
+  }
+
+  private applyCustomerIdentifierToTool(tool: ParsedToolCall, identifier: CustomerIdentifier): ParsedToolCall {
+    const baseInput = { ...tool.input };
+    if (typeof baseInput.name === 'string') {
+      const cleanedName = this.cleanCustomerIdentifierCandidate(baseInput.name);
+      if (cleanedName && !this.isGenericCustomerCandidate(cleanedName)) {
+        baseInput.name = cleanedName;
+      } else if (this.isGenericCustomerCandidate(baseInput.name)) {
+        delete baseInput.name;
+      }
+    }
+
+    const mergeIdentifier = (): CustomerIdentifier => {
+      const merged: CustomerIdentifier = {};
+      if (identifier.customerId && !baseInput.customerId) merged.customerId = identifier.customerId;
+      if (identifier.phone && !baseInput.phone) merged.phone = identifier.phone;
+      if (identifier.name && !baseInput.name) merged.name = identifier.name;
+      if (identifier.email && !baseInput.email) merged.email = identifier.email;
+      return merged;
+    };
+
+    switch (tool.toolName) {
+      case 'list_customers': {
+        if (typeof baseInput.query === 'string' && baseInput.query.trim()) {
+          return { ...tool, input: baseInput };
+        }
+        const query = this.customerIdentifierToQuery(identifier);
+        if (!query) return { ...tool, input: baseInput };
+        return { ...tool, input: { ...baseInput, query } };
+      }
+      case 'list_orders':
+      case 'get_customer_info':
+      case 'get_customer_balance':
+      case 'get_unpaid_orders':
+      case 'update_customer':
+      case 'send_debt_reminder':
+      case 'open_conversation':
+      case 'get_conversation_messages':
+      case 'send_conversation_message':
+      case 'set_agent_active':
+      case 'apply_payment': {
+        if (this.hasCustomerSelectorInput(baseInput)) return { ...tool, input: baseInput };
+        const mergedIdentifier = mergeIdentifier();
+        if (Object.keys(mergedIdentifier).length === 0) return { ...tool, input: baseInput };
+        return { ...tool, input: { ...mergedIdentifier, ...baseInput } };
+      }
+      default:
+        return { ...tool, input: baseInput };
+    }
   }
 
   private extractBulkStockIntent(
@@ -4369,6 +4495,8 @@ export class QuickActionService {
 
     const extracted = this.extractCustomerIdentifierFromReminder(command);
     if (extracted) return extracted;
+    const generic = this.extractCustomerIdentifierFromCommand(command);
+    if (generic) return generic;
     const looseName = this.extractCustomerNameLoose(command);
     if (looseName) return { name: looseName };
     return null;
@@ -4383,6 +4511,157 @@ export class QuickActionService {
       normalized.includes('deudores') ||
       normalized.includes('clientes con deuda');
     return hasAll && hasCustomers;
+  }
+
+  private extractCustomerIdentifierFromCommand(command: string): CustomerIdentifier | null {
+    const cleaned = command.replace(/[¿?]/g, ' ').trim();
+    if (!cleaned) return null;
+
+    const normalized = this.normalizeText(cleaned);
+    if (!normalized) return null;
+    const hasCustomerContext =
+      normalized.includes('cliente') ||
+      normalized.includes('deuda') ||
+      normalized.includes('saldo') ||
+      normalized.includes('pedido') ||
+      normalized.includes('orden') ||
+      normalized.includes('conversacion') ||
+      normalized.includes('mensaje') ||
+      normalized.includes('deudor') ||
+      normalized.includes('pago') ||
+      normalized.includes('cobranza');
+    if (!hasCustomerContext) return null;
+
+    if ((normalized.includes('todos') || normalized.includes('todas')) && (normalized.includes('clientes') || normalized.includes('deudores'))) {
+      return null;
+    }
+
+    const emailPattern = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
+    const emailMatch = cleaned.match(emailPattern);
+    if (emailMatch?.[0]) {
+      return { email: emailMatch[0].trim() };
+    }
+
+    const patterns: RegExp[] = [
+      /(?:^|\b)(?:buscar|ver|mostrar|mostrame|dame|traeme|trae|abrir)\s+(?:el\s+|al\s+)?cliente\s+(.+)$/i,
+      /(?:^|\b)cliente\s+(.+)$/i,
+      /(?:^|\b)clientes\s+(.+)$/i,
+      /(?:^|\b)(?:deuda|saldo)\s+(?:de|del|de la|del cliente|de cliente)?\s*(.+)$/i,
+      /(?:^|\b)(?:pedidos?|ordenes?)\s+(?:de|del|de la|del cliente|de cliente|para)?\s*(.+)$/i,
+      /(?:^|\b)(?:conversaciones?|mensajes?)\s+(?:de|del|de la|del cliente|de cliente|con)?\s*(.+)$/i,
+      /(?:^|\b)(?:a|al|para)\s+(?:el\s+)?cliente\s+(.+)$/i,
+    ];
+
+    for (const pattern of patterns) {
+      const match = cleaned.match(pattern);
+      if (!match?.[1]) continue;
+
+      const candidate = this.cleanCustomerIdentifierCandidate(match[1]);
+      if (!candidate) continue;
+
+      const emailCandidate = candidate.match(emailPattern);
+      if (emailCandidate?.[0]) {
+        return { email: emailCandidate[0].trim() };
+      }
+
+      const digits = candidate.replace(/\D/g, '');
+      if (digits.length >= 8 && digits.length <= 15) {
+        return { phone: candidate };
+      }
+
+      if (this.isGenericCustomerCandidate(candidate)) continue;
+
+      return { name: candidate };
+    }
+
+    return null;
+  }
+
+  private cleanCustomerIdentifierCandidate(value: string): string {
+    let candidate = value
+      .replace(/[¿?]/g, ' ')
+      .replace(/[“”]/g, '"')
+      .replace(/^["'`([{]+/, '')
+      .replace(/["'`)\]}]+$/, '')
+      .replace(/[.,;:!]+$/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    candidate = candidate
+      .replace(/^(?:el|la|los|las)\s+/i, '')
+      .replace(/^(?:cliente|clientes)\s+/i, '')
+      .replace(/\b(?:por\s+favor|gracias)\b.*$/i, '')
+      .replace(/\b(?:de\s+hoy|de\s+ayer|de\s+esta\s+semana|de\s+este\s+mes)\b.*$/i, '')
+      .replace(/\b(?:con|que\s+tiene|que\s+tengan)\s+(?:deuda|saldo|pedidos?|ordenes?|impagos?|sin pagar)\b.*$/i, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    return candidate;
+  }
+
+  private isGenericCustomerCandidate(value: string): boolean {
+    const normalized = this.normalizeText(value).replace(/\s+/g, ' ').trim();
+    if (!normalized || normalized.length < 2) return true;
+    if (/^#?\d+$/.test(normalized)) return true;
+    if (/^pedido\s*#?\d+$/i.test(normalized) || /^orden\s*#?\d+$/i.test(normalized)) return true;
+
+    if (/^(todos?|todas?)\b/.test(normalized)) return true;
+
+    const blockedExact = new Set([
+      'cliente',
+      'clientes',
+      'deudor',
+      'deudores',
+      'deuda',
+      'deudas',
+      'saldo',
+      'saldos',
+      'pendiente',
+      'pendientes',
+      'impago',
+      'impagos',
+      'sin pagar',
+      'hoy',
+      'ayer',
+      'pedido',
+      'pedidos',
+      'orden',
+      'ordenes',
+    ]);
+    if (blockedExact.has(normalized)) return true;
+
+    const blockedStartsWith = [
+      'con deuda',
+      'con saldo',
+      'clientes con deuda',
+      'clientes con saldo',
+      'de hoy',
+      'de ayer',
+      'de esta semana',
+      'de este mes',
+      'pendiente',
+      'pendientes',
+      'impago',
+      'impagos',
+      'sin pagar',
+      'cancelado',
+      'cancelados',
+      'aceptado',
+      'aceptados',
+      'entregado',
+      'entregados',
+    ];
+    if (blockedStartsWith.some((term) => normalized === term || normalized.startsWith(`${term} `))) {
+      return true;
+    }
+
+    const stopwords = new Set(['de', 'del', 'la', 'el', 'los', 'las', 'al', 'para', 'con', 'cliente', 'clientes']);
+    const tokens = normalized.split(' ').filter(Boolean);
+    if (tokens.length > 0 && tokens.every((token) => stopwords.has(token))) {
+      return true;
+    }
+
+    return false;
   }
 
   private extractCustomerIdentifierFromReminder(command: string): { name?: string; phone?: string } | null {

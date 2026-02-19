@@ -1946,8 +1946,9 @@ export class RetailAgent {
               where: { id: flow.orderId, workspaceId },
               select: { status: true, orderNumber: true },
             });
+            const invoiceSource = flow.source || 'checkout_prompt';
 
-            if (order) {
+            if (order && !['pending_invoicing', 'invoiced'].includes(order.status)) {
               await this.prisma.$transaction([
                 this.prisma.order.updateMany({
                   where: { id: flow.orderId, workspaceId },
@@ -1958,7 +1959,10 @@ export class RetailAgent {
                     orderId: flow.orderId,
                     previousStatus: order.status,
                     newStatus: 'pending_invoicing',
-                    reason: 'Datos fiscales confirmados por cliente',
+                    reason:
+                      invoiceSource === 'active_orders'
+                        ? 'Datos fiscales confirmados por cliente'
+                        : 'Datos fiscales confirmados luego de solicitar factura',
                     changedBy: 'customer',
                   },
                 }),
@@ -1970,7 +1974,7 @@ export class RetailAgent {
 
             return await respondInvoiceFlow({
               response: order
-                ? `Perfecto, ya guardé tus datos fiscales. Tu pedido ${order.orderNumber} quedó pendiente de facturación.`
+                ? `Perfecto, ya guardé tus datos fiscales. Tu pedido ${order.orderNumber} quedó pendiente de facturación y esperando aprobación.`
                 : 'Perfecto, ya guardé tus datos fiscales.',
             });
           } catch (error) {
@@ -2181,11 +2185,30 @@ export class RetailAgent {
             if (!order) {
               response = 'No encontré tu pedido para actualizar la factura.';
             } else {
+              const resolvedOrderNumber = orderNumber || order.orderNumber;
               response = decision
-                ? `Perfecto, vamos a preparar la factura del pedido ${orderNumber || order.orderNumber}.`
-                : `Perfecto, tu pedido ${orderNumber || order.orderNumber} quedó confirmado. Gracias.`;
+                ? `Perfecto, vamos a preparar la factura del pedido ${resolvedOrderNumber}.`
+                : `Perfecto, tu pedido ${resolvedOrderNumber} quedó confirmado. Gracias por tu compra.`;
 
               if (decision) {
+                if (!['pending_invoicing', 'invoiced'].includes(order.status)) {
+                  await this.prisma.$transaction([
+                    this.prisma.order.updateMany({
+                      where: { id: orderId, workspaceId },
+                      data: { status: 'pending_invoicing' },
+                    }),
+                    this.prisma.orderStatusHistory.create({
+                      data: {
+                        orderId,
+                        previousStatus: order.status,
+                        newStatus: 'pending_invoicing',
+                        reason: 'Solicitud de factura al confirmar pedido',
+                        changedBy: 'customer',
+                      },
+                    }),
+                  ]);
+                }
+
                 const customer = await this.prisma.customer.findFirst({
                   where: { id: customerId, workspaceId },
                   select: {
@@ -2208,6 +2231,7 @@ export class RetailAgent {
                   memory.context.invoiceDataCollection = {
                     orderId,
                     orderNumber,
+                    source: 'checkout_prompt',
                     step: nextField,
                     data,
                     vatPage: 0,
@@ -2221,6 +2245,7 @@ export class RetailAgent {
                   memory.context.invoiceDataCollection = {
                     orderId,
                     orderNumber,
+                    source: 'checkout_prompt',
                     step: 'confirm',
                     data,
                     vatPage: 0,
@@ -2230,6 +2255,18 @@ export class RetailAgent {
                   response = confirmContent.text;
                   responseType = confirmContent.responseType;
                   responsePayload = confirmContent.responsePayload;
+                }
+              } else {
+                const pdfExecution = await toolRegistry.execute(
+                  'send_order_pdf',
+                  { orderId },
+                  toolContext
+                );
+                toolsUsed.push(pdfExecution);
+                if (pdfExecution.result.success) {
+                  response = `${response} Te envié la boleta en PDF con el resumen del pedido.`;
+                } else {
+                  response = `${response} No pude enviarte la boleta en PDF ahora mismo.`;
                 }
               }
             }
@@ -4030,6 +4067,7 @@ export class RetailAgent {
               memory.context.invoiceDataCollection = {
                 orderId: selected.id,
                 orderNumber: selected.orderNumber,
+                source: 'active_orders',
                 step: nextField,
                 data,
                 vatPage: 0,
@@ -4579,7 +4617,7 @@ export class RetailAgent {
                 where: withVisibleOrders({
                   workspaceId,
                   customerId,
-                  status: { notIn: ['cancelled', 'draft'] },
+                  status: { notIn: ['cancelled', 'draft', 'returned', 'trashed'] },
                 }),
                 orderBy: { createdAt: 'desc' },
                 take: 3,
@@ -5173,7 +5211,7 @@ export class RetailAgent {
           where: withVisibleOrders({
             workspaceId,
             customerId,
-            status: { notIn: ['cancelled', 'draft'] },
+            status: { notIn: ['cancelled', 'draft', 'returned', 'trashed'] },
           }),
           orderBy: { createdAt: 'desc' },
           take: 3,
@@ -8739,14 +8777,96 @@ function resolvePaymentMethodsEnabled(settings?: Record<string, unknown>): {
   };
 }
 
+type SecondaryUnitSummaryDescriptor = {
+  baseName: string;
+  unitLabel: 'pack' | 'caja' | 'bulto' | 'docena';
+  unitSize: number | null;
+};
+
+function parseSecondaryUnitSummaryDescriptor(name: string): SecondaryUnitSummaryDescriptor | null {
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+
+  const variantSeparator = ' - ';
+  const variantIndex = trimmed.indexOf(variantSeparator);
+  const mainPart = variantIndex > 0 ? trimmed.slice(0, variantIndex).trim() : trimmed;
+  const variantPart = variantIndex > 0 ? trimmed.slice(variantIndex).trim() : '';
+
+  const match = mainPart.match(/^(.*)\s+(Pack|Caja|Bulto|Docena)(?:\s+(\d+(?:[.,]\d+)?))?$/i);
+  if (!match) return null;
+
+  const productBase = (match[1] || '').trim();
+  const labelRaw = (match[2] || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const normalizedLabel = ((): 'pack' | 'caja' | 'bulto' | 'docena' | null => {
+    if (labelRaw === 'pack') return 'pack';
+    if (labelRaw === 'caja') return 'caja';
+    if (labelRaw === 'bulto') return 'bulto';
+    if (labelRaw === 'docena') return 'docena';
+    return null;
+  })();
+  if (!normalizedLabel) return null;
+
+  let unitSize: number | null = null;
+  if (normalizedLabel === 'docena') {
+    unitSize = 12;
+  } else if (match[3]) {
+    const parsed = Number.parseFloat(match[3].replace(',', '.'));
+    if (Number.isFinite(parsed) && parsed > 1 && Math.floor(parsed) === parsed) {
+      unitSize = parsed;
+    }
+  }
+
+  const baseName = [productBase, variantPart].filter(Boolean).join(' ').trim() || trimmed;
+  return {
+    baseName,
+    unitLabel: normalizedLabel,
+    unitSize,
+  };
+}
+
+function formatOrderItemForSummary(item: {
+  name: string;
+  quantity: number;
+}): {
+  lineLabel: string;
+  unitPriceMultiplier: number;
+  normalizedName: string;
+} {
+  const descriptor = parseSecondaryUnitSummaryDescriptor(item.name);
+  const normalizedName = descriptor?.baseName || item.name;
+
+  if (
+    descriptor?.unitSize &&
+    item.quantity >= descriptor.unitSize &&
+    item.quantity % descriptor.unitSize === 0
+  ) {
+    const secondaryQty = item.quantity / descriptor.unitSize;
+    return {
+      lineLabel: `${secondaryQty} ${descriptor.unitLabel} de ${normalizedName}`,
+      unitPriceMultiplier: descriptor.unitSize,
+      normalizedName,
+    };
+  }
+
+  return {
+    lineLabel: `${item.quantity}x ${normalizedName}`,
+    unitPriceMultiplier: 1,
+    normalizedName,
+  };
+}
+
 function buildExistingOrderSummaryMessage(order: {
   orderNumber: string;
   items: Array<{ name: string; quantity: number; total: number }>;
   total: number;
 }): string {
   const lines = order.items.map((item) => {
+    const display = formatOrderItemForSummary({
+      name: item.name,
+      quantity: item.quantity,
+    });
     const lineTotal = formatMoneyCents(item.total);
-    return `• ${item.quantity} ${item.name} - $${lineTotal}`;
+    return `• ${display.lineLabel} - $${lineTotal}`;
   });
 
   const total = formatMoneyCents(order.total);
@@ -8859,12 +8979,16 @@ function buildOrderExample(names: string[]): string {
 
 function buildOrderSummaryMessage(cart: Cart): string {
   const lines = cart.items.map((item) => {
-    const unit = formatMoneyCents(item.unitPrice);
+    const display = formatOrderItemForSummary({
+      name: item.name,
+      quantity: item.quantity,
+    });
+    const unit = formatMoneyCents(item.unitPrice * display.unitPriceMultiplier);
     const lineTotal = formatMoneyCents(item.total);
     if (item.quantity > 1) {
-      return `• ${item.quantity}x ${item.name} - $${unit} c/u = $${lineTotal}`;
+      return `• ${display.lineLabel} - $${unit} c/u = $${lineTotal}`;
     }
-    return `• ${item.quantity}x ${item.name} - $${lineTotal}`;
+    return `• ${display.lineLabel} - $${lineTotal}`;
   });
 
   const total = formatMoneyCents(cart.total);
@@ -9458,7 +9582,10 @@ function buildCartSummaryPayload(
   return {
     orderNumber: orderNumber || 'PEDIDO EN CURSO',
     items: cart.items.map((item) => ({
-      name: item.name,
+      name: formatOrderItemForSummary({
+        name: item.name,
+        quantity: item.quantity,
+      }).normalizedName,
       quantity: item.quantity,
       unitPrice: item.unitPrice,
       total: item.total,

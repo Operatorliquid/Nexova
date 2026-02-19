@@ -70,6 +70,8 @@ function toPhoneDigits(value: string): string {
   return (value || '').trim().replace(/\D/g, '');
 }
 
+const WHATSAPP_CONTACT_REGEX = /^\+?\d{8,15}$/;
+
 function randomNumericString(length: number): string {
   const bytes = randomBytes(Math.max(8, length));
   let out = '';
@@ -312,6 +314,27 @@ function normalizeOwnerAgentNumberForSettings(raw: unknown, timezone: unknown): 
   }
 
   return trimmed;
+}
+
+function normalizeWhatsappContactForSettings(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+
+  const hasLeadingPlus = trimmed.startsWith('+');
+  const digits = toPhoneDigits(trimmed);
+  if (!digits) return trimmed;
+
+  const canonical = `${hasLeadingPlus ? '+' : ''}${digits}`;
+  return canonical;
+}
+
+function isValidWhatsappContactForSettings(raw: unknown): boolean {
+  if (typeof raw !== 'string') return false;
+  const trimmed = raw.trim();
+  if (!trimmed) return true;
+  return WHATSAPP_CONTACT_REGEX.test(trimmed);
 }
 
 export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
@@ -1350,7 +1373,12 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
           businessName: z.string().max(120).optional(),
           // Commerce profile fields
           companyLogo: z.string().url().optional().nullable(),
-	          whatsappContact: z.string().max(20).optional(),
+	          whatsappContact: z
+	            .string()
+	            .trim()
+	            .max(20)
+	            .regex(/^\+?[0-9()\-\s]{8,20}$/, 'WhatsApp de contacto invalido')
+	            .optional(),
 	          ownerAgentEnabled: z.boolean().optional(),
 	          ownerAgentNumber: z.string().max(20).optional(),
 	          ownerAgentPin: z
@@ -1473,6 +1501,19 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
           );
           if (typeof normalized === 'string') {
             newSettings.ownerAgentNumber = normalized;
+          }
+        }
+
+        if (typeof newSettings.whatsappContact === 'string') {
+          const normalized = normalizeWhatsappContactForSettings(newSettings.whatsappContact);
+          if (typeof normalized === 'string') {
+            newSettings.whatsappContact = normalized;
+          }
+          if (!isValidWhatsappContactForSettings(newSettings.whatsappContact)) {
+            return reply.code(400).send({
+              error: 'INVALID_WHATSAPP_CONTACT',
+              message: 'WhatsApp de contacto invalido. Usa 8 a 15 digitos (opcional + al inicio).',
+            });
           }
         }
 

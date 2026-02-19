@@ -543,7 +543,7 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
           workspaceId,
           customerId: { in: customerIds },
           deletedAt: null,
-          status: { notIn: ['cancelled', 'draft'] },
+          status: { notIn: ['cancelled', 'draft', 'returned', 'trashed'] },
           OR: [
             { paidAt: null },
             {
@@ -1238,23 +1238,43 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
       const isPaymentFilter = paymentStatus !== null;
 
       const where: Prisma.OrderWhereInput = { customerId: id, workspaceId, deletedAt: null };
-      if (!query.status || isPaymentFilter) {
-        where.status = { not: 'trashed' };
+      const andConditions: Prisma.OrderWhereInput[] = [];
+      const showOnlyTrashed = query.status === 'trashed';
+
+      if (showOnlyTrashed) {
+        andConditions.push({
+          OR: [
+            { status: 'trashed' },
+            { metadata: { path: ['trash', 'isTrashed'], equals: true } },
+          ],
+        });
+      } else {
+        andConditions.push({
+          NOT: [
+            { status: 'trashed' },
+            { metadata: { path: ['trash', 'isTrashed'], equals: true } },
+          ],
+        });
       }
-      if (query.status && !isPaymentFilter) {
-        if (query.status === 'trashed') {
-          where.status = 'trashed';
-        } else if (query.status === 'awaiting_acceptance') {
-          where.status = { in: ['awaiting_acceptance', 'draft'] };
+
+      if (query.status && !isPaymentFilter && !showOnlyTrashed) {
+        if (query.status === 'awaiting_acceptance') {
+          andConditions.push({ status: { in: ['awaiting_acceptance', 'draft', 'pending_invoicing'] } });
         } else if (query.status === 'accepted') {
-          where.status = {
-            in: ['accepted', 'processing', 'shipped', 'delivered', 'confirmed', 'preparing', 'ready', 'paid'],
-          };
+          andConditions.push({
+            status: {
+              in: ['accepted', 'processing', 'shipped', 'delivered', 'confirmed', 'preparing', 'ready', 'paid'],
+            },
+          });
         } else if (query.status === 'cancelled') {
-          where.status = { in: ['cancelled', 'returned'] };
+          andConditions.push({ status: { in: ['cancelled', 'returned'] } });
         } else {
-          where.status = query.status;
+          andConditions.push({ status: query.status });
         }
+      }
+
+      if (andConditions.length > 0) {
+        where.AND = andConditions;
       }
 
       const [orders, total] = await Promise.all([

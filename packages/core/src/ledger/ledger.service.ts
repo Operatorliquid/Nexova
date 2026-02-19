@@ -101,7 +101,7 @@ export class LedgerService {
         workspaceId,
         customerId,
         status: {
-          notIn: ['cancelled', 'draft'],
+          notIn: ['cancelled', 'draft', 'returned', 'trashed'],
         },
         // Has unpaid balance
         OR: [
@@ -616,7 +616,7 @@ export class LedgerService {
       where: {
         workspaceId,
         customerId,
-        status: { notIn: ['cancelled', 'draft'] },
+        status: { notIn: ['cancelled', 'draft', 'returned', 'trashed'] },
       },
       orderBy: { createdAt: 'asc' },
       select: {

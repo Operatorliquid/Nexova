@@ -753,7 +753,7 @@ export class ProcessReceiptTool extends BaseTool<typeof ProcessReceiptInput> {
       where: withVisibleOrders({
         workspaceId: context.workspaceId,
         customerId: context.customerId,
-        status: { notIn: ['cancelled', 'draft'] },
+        status: { notIn: ['cancelled', 'draft', 'returned', 'trashed'] },
         paidAt: null,
       }),
       orderBy: { createdAt: 'asc' },

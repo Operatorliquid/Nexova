@@ -78,7 +78,7 @@ export interface MetricsResponse {
   promotion: MetricsPromotionSummary;
 }
 
-const EXCLUDED_STATUSES = ['cancelled', 'returned', 'draft'];
+const EXCLUDED_STATUSES = ['cancelled', 'returned', 'draft', 'trashed'];
 
 export function normalizeRange(range?: string): MetricsRange {
   if (

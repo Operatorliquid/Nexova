@@ -12,7 +12,8 @@ import { Prisma } from '@prisma/client';
 import { type FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 
-import { OrderReceiptPdfService, LedgerService } from '@nexova/core';
+import { OrderReceiptPdfService, LedgerService, decrypt } from '@nexova/core';
+import { EvolutionClient, InfobipClient } from '@nexova/integrations/whatsapp';
 
 import { getEffectiveCommercePlanLimits } from '../../utils/commerce-plan-limits.js';
 import { getWorkspacePlanContext } from '../../utils/commerce-plan.js';
@@ -26,6 +27,175 @@ const __dirname = path.dirname(__filename);
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, '..', '..', '..', 'uploads');
 const RECEIPTS_DIR = path.join(UPLOAD_DIR, 'receipts');
 const DEFAULT_LOW_STOCK_THRESHOLD = 10;
+
+type OrderMetadataRecord = Record<string, unknown>;
+type OrderTrashMetadata = {
+  isTrashed: boolean;
+  previousStatus: string | null;
+  trashedAt: string | null;
+  reason: string | null;
+};
+
+const ORDER_TRASH_STATUS = 'trashed';
+
+const asOrderMetadataRecord = (value: Prisma.JsonValue | null | undefined): OrderMetadataRecord => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return value as OrderMetadataRecord;
+};
+
+const parseOrderTrashMetadata = (metadata: Prisma.JsonValue | null | undefined): OrderTrashMetadata | null => {
+  const record = asOrderMetadataRecord(metadata);
+  const trash = record.trash;
+  if (!trash || typeof trash !== 'object' || Array.isArray(trash)) return null;
+  const trashRecord = trash as Record<string, unknown>;
+  if (trashRecord.isTrashed !== true) return null;
+
+  const previousStatus = typeof trashRecord.previousStatus === 'string' ? trashRecord.previousStatus : null;
+  const trashedAt = typeof trashRecord.trashedAt === 'string' ? trashRecord.trashedAt : null;
+  const reason = typeof trashRecord.reason === 'string' ? trashRecord.reason : null;
+
+  return {
+    isTrashed: true,
+    previousStatus,
+    trashedAt,
+    reason,
+  };
+};
+
+const orderIsInTrash = (status: string, metadata: Prisma.JsonValue | null | undefined): boolean =>
+  status === ORDER_TRASH_STATUS || parseOrderTrashMetadata(metadata)?.isTrashed === true;
+
+const resolveTrashReason = (
+  cancelReason: string | null | undefined,
+  metadata: Prisma.JsonValue | null | undefined
+): string | null => {
+  const trashReason = parseOrderTrashMetadata(metadata)?.reason;
+  if (trashReason && trashReason.trim().length > 0) return trashReason.trim();
+  if (typeof cancelReason === 'string' && cancelReason.trim().length > 0) return cancelReason.trim();
+  return null;
+};
+
+const buildNotTrashedWhere = (): Prisma.OrderWhereInput => ({
+  NOT: [
+    { status: ORDER_TRASH_STATUS },
+    { metadata: { path: ['trash', 'isTrashed'], equals: true } },
+  ],
+});
+
+const buildOnlyTrashedWhere = (): Prisma.OrderWhereInput => ({
+  OR: [
+    { status: ORDER_TRASH_STATUS },
+    { metadata: { path: ['trash', 'isTrashed'], equals: true } },
+  ],
+});
+
+type CustomerMetadataRecord = Record<string, unknown>;
+
+const asCustomerMetadataRecord = (value: Prisma.JsonValue | null | undefined): CustomerMetadataRecord => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return value as CustomerMetadataRecord;
+};
+
+const readMetadataString = (metadata: CustomerMetadataRecord, key: string): string | null => {
+  const raw = metadata[key];
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const withFiscalFallback = (input: {
+  cuit?: string | null;
+  businessName?: string | null;
+  fiscalAddress?: string | null;
+  vatCondition?: string | null;
+  metadata?: Prisma.JsonValue | null;
+}): {
+  dni: string | null;
+  cuit: string | null;
+  businessName: string | null;
+  fiscalAddress: string | null;
+  vatCondition: string | null;
+} => {
+  const metadata = asCustomerMetadataRecord(input.metadata);
+
+  return {
+    dni: readMetadataString(metadata, 'dni'),
+    cuit: input.cuit || readMetadataString(metadata, 'cuit'),
+    businessName:
+      input.businessName ||
+      readMetadataString(metadata, 'businessName') ||
+      readMetadataString(metadata, 'razonSocial'),
+    fiscalAddress:
+      input.fiscalAddress ||
+      readMetadataString(metadata, 'fiscalAddress') ||
+      readMetadataString(metadata, 'domicilioFiscal'),
+    vatCondition: input.vatCondition || readMetadataString(metadata, 'vatCondition'),
+  };
+};
+
+const normalizePhone = (phone: string): string => {
+  const trimmed = phone.trim();
+  const digits = trimmed.replace(/\D/g, '');
+  if (!digits) return trimmed;
+  return `+${digits}`;
+};
+
+const resolveWhatsAppApiKey = (number: {
+  apiKeyEnc?: string | null;
+  apiKeyIv?: string | null;
+  provider?: string | null;
+}): string => {
+  const provider = (number.provider || 'infobip').toLowerCase();
+  if (provider === 'infobip') {
+    const envKey = (process.env.INFOBIP_API_KEY || '').trim();
+    if (envKey) return envKey;
+    if (number.apiKeyEnc && number.apiKeyIv) {
+      return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
+    }
+    return '';
+  }
+  if (provider === 'evolution') {
+    const envKey = (process.env.EVOLUTION_API_KEY || '').trim();
+    if (envKey) return envKey;
+    if (number.apiKeyEnc && number.apiKeyIv) {
+      return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
+    }
+    return '';
+  }
+  if (number.apiKeyEnc && number.apiKeyIv) {
+    return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
+  }
+  return '';
+};
+
+const resolveInfobipBaseUrl = (apiUrl?: string | null): string => {
+  const cleaned = (apiUrl || '').trim().replace(/\/$/, '');
+  const envUrl = (process.env.INFOBIP_BASE_URL || '').trim().replace(/\/$/, '');
+  const defaultUrl = 'https://api.infobip.com';
+  if (cleaned && cleaned.toLowerCase() !== defaultUrl) return cleaned;
+  if (envUrl) return envUrl;
+  return cleaned || defaultUrl;
+};
+
+const resolveEvolutionBaseUrl = (apiUrl?: string | null): string => {
+  const cleaned = (apiUrl || '').trim().replace(/\/$/, '');
+  const envUrl = (process.env.EVOLUTION_BASE_URL || '').trim().replace(/\/$/, '');
+  return cleaned || envUrl;
+};
+
+const getEvolutionInstanceName = (providerConfig: unknown): string => {
+  if (!providerConfig || typeof providerConfig !== 'object') return '';
+  const cfg = providerConfig as Record<string, unknown>;
+  const value = cfg.instanceName ?? cfg.instance ?? cfg.name;
+  return typeof value === 'string' ? value.trim() : '';
+};
+
+const buildOrderCancelledCustomerMessage = (orderNumber: string, reason: string): string =>
+  [
+    `Tu pedido #${orderNumber} fue cancelado.`,
+    `Motivo: ${reason}.`,
+    'Si querés, podés escribirnos y te ayudamos a generar uno nuevo.',
+  ].join('\n');
 
 const orderQuerySchema = z.object({
   search: z.string().optional(),
@@ -167,6 +337,7 @@ const updateOrderSchema = z.object({
   shipping: z.number().int().min(0).optional(),
   discount: z.number().int().min(0).optional(),
   promotionId: z.string().uuid().optional().nullable(),
+  cancelReason: z.string().max(500).optional().nullable(),
 });
 
 export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
@@ -188,6 +359,47 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
     }
 
     return `${prefix}${String(sequence).padStart(4, '0')}`;
+  };
+
+  const notifyCustomerOrderCancelled = async (params: {
+    workspaceId: string;
+    customerPhone: string;
+    orderNumber: string;
+    reason: string;
+  }): Promise<void> => {
+    const whatsappNumber = await fastify.prisma.whatsAppNumber.findFirst({
+      where: { workspaceId: params.workspaceId, isActive: true },
+      select: { apiKeyEnc: true, apiKeyIv: true, apiUrl: true, phoneNumber: true, provider: true, providerConfig: true },
+    });
+
+    if (!whatsappNumber) {
+      throw new Error('WHATSAPP_NOT_CONFIGURED');
+    }
+
+    const apiKey = resolveWhatsAppApiKey(whatsappNumber);
+    if (!apiKey) {
+      throw new Error('WHATSAPP_API_KEY_MISSING');
+    }
+
+    const message = buildOrderCancelledCustomerMessage(params.orderNumber, params.reason);
+    const provider = (whatsappNumber.provider || 'infobip').toLowerCase();
+    if (provider === 'evolution') {
+      const baseUrl = resolveEvolutionBaseUrl(whatsappNumber.apiUrl);
+      const instanceName = getEvolutionInstanceName(whatsappNumber.providerConfig);
+      if (!baseUrl || !instanceName) {
+        throw new Error('EVOLUTION_NOT_CONFIGURED');
+      }
+      const client = new EvolutionClient({ apiKey, baseUrl, instanceName });
+      await client.sendText(normalizePhone(params.customerPhone), message);
+      return;
+    }
+
+    const client = new InfobipClient({
+      apiKey,
+      baseUrl: resolveInfobipBaseUrl(whatsappNumber.apiUrl),
+      senderNumber: whatsappNumber.phoneNumber,
+    });
+    await client.sendText(normalizePhone(params.customerPhone), message);
   };
 
   // Get orders list
@@ -219,39 +431,40 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
 
       // Build where clause
       const where: Prisma.OrderWhereInput = { workspaceId, deletedAt: null };
+      const andConditions: Prisma.OrderWhereInput[] = [];
+      const showOnlyTrashed = status === 'trashed';
+      const shouldExcludeTrashed = !showOnlyTrashed && !includeTrashed;
 
-      if (!status && !includeTrashed) {
-        where.status = { not: 'trashed' };
-      }
-      if (isPaymentFilter && !includeTrashed) {
-        where.status = { not: 'trashed' };
+      if (showOnlyTrashed) {
+        andConditions.push(buildOnlyTrashedWhere());
+      } else if (shouldExcludeTrashed) {
+        andConditions.push(buildNotTrashedWhere());
       }
 
-      if (status && !isPaymentFilter) {
-        if (status === 'trashed') {
-          where.status = 'trashed';
-        } else if (status === 'awaiting_acceptance') {
-          where.status = { in: ['awaiting_acceptance', 'draft'] };
+      if (status && !isPaymentFilter && status !== 'trashed') {
+        if (status === 'awaiting_acceptance') {
+          andConditions.push({ status: { in: ['awaiting_acceptance', 'draft', 'pending_invoicing'] } });
         } else if (status === 'accepted') {
-          where.status = {
-            in: [
-              'accepted',
-              'processing',
-              'shipped',
-              'delivered',
-              'confirmed',
-              'preparing',
-              'ready',
-              'paid',
-              'pending_invoicing',
-              'invoiced',
-              'invoice_cancelled',
-            ],
-          };
+          andConditions.push({
+            status: {
+              in: [
+                'accepted',
+                'processing',
+                'shipped',
+                'delivered',
+                'confirmed',
+                'preparing',
+                'ready',
+                'paid',
+                'invoiced',
+                'invoice_cancelled',
+              ],
+            },
+          });
         } else if (status === 'cancelled') {
-          where.status = { in: ['cancelled', 'returned'] };
+          andConditions.push({ status: { in: ['cancelled', 'returned'] } });
         } else {
-          where.status = status;
+          andConditions.push({ status });
         }
       }
 
@@ -266,18 +479,25 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       if (from || to) {
-        where.createdAt = {};
-        if (from) where.createdAt.gte = from;
-        if (to) where.createdAt.lte = to;
+        const createdAtFilter: Prisma.DateTimeFilter = {};
+        if (from) createdAtFilter.gte = from;
+        if (to) createdAtFilter.lte = to;
+        andConditions.push({ createdAt: createdAtFilter });
       }
 
       if (search) {
-        where.OR = [
-          { orderNumber: { contains: search, mode: 'insensitive' } },
-          { customer: { phone: { contains: search } } },
-          { customer: { firstName: { contains: search, mode: 'insensitive' } } },
-          { customer: { lastName: { contains: search, mode: 'insensitive' } } },
-        ];
+        andConditions.push({
+          OR: [
+            { orderNumber: { contains: search, mode: 'insensitive' } },
+            { customer: { phone: { contains: search } } },
+            { customer: { firstName: { contains: search, mode: 'insensitive' } } },
+            { customer: { lastName: { contains: search, mode: 'insensitive' } } },
+          ],
+        });
+      }
+
+      if (andConditions.length > 0) {
+        where.AND = andConditions;
       }
 
       // Get orders with customer and items
@@ -293,6 +513,11 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
                 phone: true,
                 firstName: true,
                 lastName: true,
+                cuit: true,
+                businessName: true,
+                fiscalAddress: true,
+                vatCondition: true,
+                metadata: true,
               },
             },
             items: {
@@ -325,6 +550,8 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
       const formattedOrders = orders.map((o) => {
         const paymentsSum = o.payments.reduce((sum, p) => sum + p.amount, 0);
         const paidAmount = Math.max(o.paidAmount ?? 0, paymentsSum);
+        const fiscal = withFiscalFallback(o.customer);
+        const trash = parseOrderTrashMetadata(o.metadata);
         return {
           id: o.id,
           orderNumber: o.orderNumber,
@@ -332,9 +559,16 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
           customer: {
             id: o.customer.id,
             phone: o.customer.phone,
+            firstName: o.customer.firstName,
+            lastName: o.customer.lastName,
             name: o.customer.firstName && o.customer.lastName
               ? `${o.customer.firstName} ${o.customer.lastName}`
               : o.customer.firstName || o.customer.lastName || o.customer.phone,
+            dni: fiscal.dni,
+            cuit: fiscal.cuit,
+            businessName: fiscal.businessName,
+            fiscalAddress: fiscal.fiscalAddress,
+            vatCondition: fiscal.vatCondition,
           },
           itemCount: o.items.reduce((sum, i) => sum + i.quantity, 0),
           subtotal: o.subtotal,
@@ -344,6 +578,10 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
           paidAmount,
           pendingAmount: o.total - paidAmount,
           notes: o.notes,
+          cancelReason: o.cancelReason,
+          isTrashed: orderIsInTrash(o.status, o.metadata),
+          trashReason: resolveTrashReason(o.cancelReason, o.metadata),
+          trash,
           items: o.items,
           hasPromotion: !!o.promotionId,
           promotion: o.promotion
@@ -479,7 +717,7 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
           where: {
             workspaceId,
             deletedAt: null,
-            status: { notIn: ['cancelled', 'returned'] },
+            status: { notIn: ['cancelled', 'returned', 'trashed'] },
           },
           _sum: { total: true, paidAmount: true },
           _avg: { total: true },
@@ -545,6 +783,7 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
               fiscalAddress: true,
               vatCondition: true,
               currentBalance: true,
+              metadata: true,
             },
           },
           items: {
@@ -586,13 +825,34 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
         .filter((p) => p.status === 'completed')
         .reduce((sum, p) => sum + p.amount, 0);
       const paidAmount = Math.max(order.paidAmount ?? 0, paymentsSum);
+      const customerFiscal = withFiscalFallback(order.customer);
+      const trash = parseOrderTrashMetadata(order.metadata);
+      const customerWithoutMetadata = {
+        id: order.customer.id,
+        phone: order.customer.phone,
+        email: order.customer.email,
+        firstName: order.customer.firstName,
+        lastName: order.customer.lastName,
+        currentBalance: order.customer.currentBalance,
+      };
 
       return reply.send({
         order: {
           ...order,
+          customer: {
+            ...customerWithoutMetadata,
+            dni: customerFiscal.dni,
+            cuit: customerFiscal.cuit,
+            businessName: customerFiscal.businessName,
+            fiscalAddress: customerFiscal.fiscalAddress,
+            vatCondition: customerFiscal.vatCondition,
+          },
           hasPromotion: !!order.promotionId,
           paidAmount,
           pendingAmount: order.total - paidAmount,
+          isTrashed: orderIsInTrash(order.status, order.metadata),
+          trashReason: resolveTrashReason(order.cancelReason, order.metadata),
+          trash,
         },
       });
     }
@@ -1319,7 +1579,24 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const total = subtotal + body.shipping - finalDiscount;
-      const status = body.status ?? 'draft';
+      const requestedStatus = body.status ?? 'draft';
+      const status = requestedStatus === ORDER_TRASH_STATUS ? 'cancelled' : requestedStatus;
+      const isCancelledOnCreate = status === 'cancelled';
+      const createdInTrashReason =
+        requestedStatus === ORDER_TRASH_STATUS ? 'Creado directamente en papelera' : null;
+      const metadataForCreate: Record<string, unknown> = {};
+      if (promotionMetadata) {
+        metadataForCreate.promotion = promotionMetadata;
+      }
+      if (requestedStatus === ORDER_TRASH_STATUS) {
+        metadataForCreate.trash = {
+          isTrashed: true,
+          previousStatus: null,
+          trashedAt: new Date().toISOString(),
+          reason: createdInTrashReason,
+          ...(request.user?.sub ? { trashedBy: request.user.sub } : {}),
+        };
+      }
       const safePaidAmount = Math.max(0, Math.min(body.paidAmount ?? 0, total));
       const maxAttempts = 3;
       let order;
@@ -1342,11 +1619,11 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
                 promotionId: appliedPromotion?.id ?? null,
                 paidAmount: safePaidAmount,
                 paidAt: safePaidAmount >= total && total > 0 ? new Date() : null,
+                cancelledAt: isCancelledOnCreate ? new Date() : null,
+                cancelReason: createdInTrashReason,
                 notes: body.notes,
                 shippingAddress: body.shippingAddress,
-                metadata: promotionMetadata
-                  ? ({ promotion: promotionMetadata } as Prisma.InputJsonValue)
-                  : ({} as Prisma.InputJsonValue),
+                metadata: metadataForCreate as Prisma.InputJsonValue,
                 items: {
                   create: orderItems,
                 },
@@ -1354,6 +1631,7 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
                   create: {
                     newStatus: status,
                     changedBy: 'user',
+                    reason: createdInTrashReason,
                   },
                 },
               },
@@ -1508,6 +1786,9 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
         order: {
           ...order,
           hasPromotion: !!order.promotionId,
+          isTrashed: orderIsInTrash(order.status, order.metadata),
+          trashReason: resolveTrashReason(order.cancelReason, order.metadata),
+          trash: parseOrderTrashMetadata(order.metadata),
         },
       });
     }
@@ -1544,7 +1825,7 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(404).send({ error: 'NOT_FOUND', message: 'Order not found' });
       }
 
-      const baseMetadata = (existing.metadata as Record<string, unknown>) || {};
+      const baseMetadata = asOrderMetadataRecord(existing.metadata);
       let mergedMetadata: Record<string, unknown> | null = null;
       let finalDiscount = body.discount ?? existing.discount;
       let promotionIdForOrder = body.promotionId !== undefined ? body.promotionId : existing.promotionId;
@@ -1646,44 +1927,83 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
       if (shippingChanged || discountChanged) {
         updateData.total = existing.subtotal + nextShipping - finalDiscount;
       }
-      const statusChanged = !!body.status && body.status !== existing.status;
+      const normalizedCancelReason =
+        typeof body.cancelReason === 'string' ? body.cancelReason.trim() : '';
+      const cancelReasonInput =
+        body.cancelReason !== undefined ? (normalizedCancelReason.length > 0 ? normalizedCancelReason : null) : undefined;
+      const isTrashAction = body.status === ORDER_TRASH_STATUS;
+      const statusTarget = body.status ? (isTrashAction ? 'cancelled' : body.status) : null;
+      const statusChanged = !!statusTarget && statusTarget !== existing.status;
       const hasContentEdits = body.notes !== undefined
         || body.internalNotes !== undefined
         || body.shippingAddress !== undefined
         || body.shipping !== undefined
         || body.discount !== undefined
-        || body.promotionId !== undefined;
+        || body.promotionId !== undefined
+        || body.cancelReason !== undefined;
 
-      // Handle status change
-      if (statusChanged && body.status) {
-        updateData.status = body.status;
+      if (body.cancelReason !== undefined && !isTrashAction) {
+        updateData.cancelReason = cancelReasonInput;
+      }
 
-        // Record status history
+      if (isTrashAction) {
+        const trashReason = cancelReasonInput;
+        if (!trashReason || trashReason.trim().length < 3) {
+          return reply.code(400).send({
+            error: 'MISSING_TRASH_REASON',
+            message: 'Debes indicar un motivo para cancelar y enviar el pedido a la papelera',
+          });
+        }
+
+        const metadataBase = mergedMetadata || baseMetadata;
+        mergedMetadata = {
+          ...metadataBase,
+          trash: {
+            isTrashed: true,
+            previousStatus: existing.status,
+            trashedAt: new Date().toISOString(),
+            reason: trashReason,
+            ...(request.user?.sub ? { trashedBy: request.user.sub } : {}),
+          },
+        };
+
+        updateData.status = 'cancelled';
+        updateData.cancelReason = trashReason;
+        if (!existing.cancelledAt) {
+          updateData.cancelledAt = new Date();
+        }
+
         await fastify.prisma.orderStatusHistory.create({
           data: {
             orderId: id,
             previousStatus: existing.status,
-            newStatus: body.status,
+            newStatus: 'cancelled',
             changedBy: 'user',
+            reason: `Enviado a papelera: ${trashReason}`,
+          },
+        });
+      } else if (statusChanged && statusTarget) {
+        updateData.status = statusTarget;
+
+        await fastify.prisma.orderStatusHistory.create({
+          data: {
+            orderId: id,
+            previousStatus: existing.status,
+            newStatus: statusTarget,
+            changedBy: 'user',
+            reason: cancelReasonInput ?? null,
           },
         });
 
-        if (body.status === 'trashed') {
-          const metadataBase = mergedMetadata || baseMetadata;
-          mergedMetadata = {
-            ...metadataBase,
-            trash: {
-              previousStatus: existing.status,
-              trashedAt: new Date().toISOString(),
-            },
-          };
+        if (statusTarget === 'paid') updateData.paidAt = new Date();
+        if (statusTarget === 'shipped') updateData.shippedAt = new Date();
+        if (statusTarget === 'delivered') updateData.deliveredAt = new Date();
+        if (statusTarget === 'cancelled') {
+          updateData.cancelledAt = new Date();
+          if (cancelReasonInput !== undefined) {
+            updateData.cancelReason = cancelReasonInput;
+          }
         }
-
-        // Update timestamps based on status
-        if (body.status === 'paid') updateData.paidAt = new Date();
-        if (body.status === 'shipped') updateData.shippedAt = new Date();
-        if (body.status === 'delivered') updateData.deliveredAt = new Date();
-        if (body.status === 'cancelled') updateData.cancelledAt = new Date();
       }
 
       if (mergedMetadata) {
@@ -1717,13 +2037,20 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
 
       await recalcCustomerFinancials(fastify.prisma, workspaceId, existing.customerId);
 
-      if (statusChanged && body.status === 'cancelled') {
+      const cancelReasonForNotifications = resolveTrashReason(order.cancelReason, order.metadata);
+      const orderWasCancelled = isTrashAction || (statusChanged && statusTarget === 'cancelled');
+      let customerNotificationSent = false;
+      let customerNotificationError: string | null = null;
+
+      if (orderWasCancelled) {
         try {
           await createNotificationIfEnabled(fastify.prisma, {
             workspaceId,
             type: 'order.cancelled',
             title: 'Pedido cancelado',
-            message: `Pedido ${order.orderNumber} cancelado`,
+            message: cancelReasonForNotifications
+              ? `Pedido ${order.orderNumber} cancelado. Motivo: ${cancelReasonForNotifications}`
+              : `Pedido ${order.orderNumber} cancelado`,
             entityType: 'Order',
             entityId: order.id,
             metadata: {
@@ -1731,10 +2058,29 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
               orderNumber: order.orderNumber,
               customerId: order.customerId,
               sessionId: null,
+              reason: cancelReasonForNotifications,
             },
           });
         } catch (error) {
           request.log.error({ error }, 'Failed to create order cancelled notification');
+        }
+
+        if (isTrashAction && order.customer?.phone && cancelReasonForNotifications) {
+          try {
+            await notifyCustomerOrderCancelled({
+              workspaceId,
+              customerPhone: order.customer.phone,
+              orderNumber: order.orderNumber,
+              reason: cancelReasonForNotifications,
+            });
+            customerNotificationSent = true;
+          } catch (error) {
+            customerNotificationError = error instanceof Error ? error.message : 'NOTIFICATION_SEND_FAILED';
+            request.log.warn(
+              { error, workspaceId, orderId: order.id, customerId: order.customerId },
+              'Failed to notify customer about order cancellation'
+            );
+          }
         }
       } else if (hasContentEdits) {
         try {
@@ -1757,11 +2103,22 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
+      const trash = parseOrderTrashMetadata(order.metadata);
       return reply.send({
         order: {
           ...order,
           hasPromotion: !!order.promotionId,
+          isTrashed: orderIsInTrash(order.status, order.metadata),
+          trashReason: resolveTrashReason(order.cancelReason, order.metadata),
+          trash,
         },
+        customerNotification: isTrashAction
+          ? {
+              attempted: true,
+              sent: customerNotificationSent,
+              error: customerNotificationError,
+            }
+          : null,
       });
     }
   );
@@ -1786,20 +2143,27 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(404).send({ error: 'NOT_FOUND', message: 'Order not found' });
       }
 
-      const metadata = (existing.metadata as Record<string, unknown>) || {};
-      const trashMetadata =
-        metadata.trash && typeof metadata.trash === 'object' ? (metadata.trash as Record<string, unknown>) : null;
-      const previousStatus =
-        typeof trashMetadata?.previousStatus === 'string' ? trashMetadata.previousStatus : 'awaiting_acceptance';
+      const isCurrentlyTrashed = orderIsInTrash(existing.status, existing.metadata);
+      if (!isCurrentlyTrashed) {
+        return reply.code(400).send({
+          error: 'ORDER_NOT_IN_TRASH',
+          message: 'El pedido no está en la papelera',
+        });
+      }
+
+      const metadata = asOrderMetadataRecord(existing.metadata);
+      const trashMetadata = parseOrderTrashMetadata(existing.metadata);
+      const nextMetadata: Record<string, unknown> = { ...metadata };
+      delete nextMetadata.trash;
+      const restoredReason = resolveTrashReason(existing.cancelReason, existing.metadata);
 
       const updated = await fastify.prisma.order.update({
         where: { id },
         data: {
-          status: previousStatus,
-          metadata: {
-            ...metadata,
-            trash: null,
-          },
+          status: 'cancelled',
+          cancelledAt: existing.cancelledAt ?? new Date(),
+          cancelReason: restoredReason,
+          metadata: nextMetadata as Prisma.InputJsonValue,
         },
       });
 
@@ -1807,15 +2171,24 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
         data: {
           orderId: id,
           previousStatus: existing.status,
-          newStatus: previousStatus,
+          newStatus: 'cancelled',
           changedBy: 'user',
-          reason: 'Restaurado desde papelera',
+          reason: trashMetadata?.reason
+            ? `Restaurado desde papelera (motivo original: ${trashMetadata.reason})`
+            : 'Restaurado desde papelera',
         },
       });
 
       await recalcCustomerFinancials(fastify.prisma, workspaceId, existing.customerId);
 
-      return reply.send({ order: updated });
+      return reply.send({
+        order: {
+          ...updated,
+          isTrashed: false,
+          trashReason: null,
+          trash: null,
+        },
+      });
     }
   );
 
@@ -1856,7 +2229,7 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // Empty trash (hard delete)
+  // Empty trash disabled: orders are no longer hard-deleted from trash.
   fastify.delete(
     '/trash',
     { preHandler: [fastify.requirePermission('orders:cancel')] },
@@ -1866,12 +2239,10 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(400).send({ error: 'MISSING_WORKSPACE', message: 'X-Workspace-Id header required' });
       }
 
-      await fastify.prisma.order.updateMany({
-        where: { workspaceId, deletedAt: null, status: 'trashed' },
-        data: { deletedAt: new Date() },
+      return reply.code(410).send({
+        error: 'TRASH_HARD_DELETE_DISABLED',
+        message: 'Vaciar papelera fue deshabilitado. Los pedidos en papelera se conservan como cancelados.',
       });
-
-      return reply.send({ success: true });
     }
   );
 
@@ -1923,6 +2294,9 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
           hasPromotion: !!order.promotionId,
           paidAmount,
           pendingAmount: order.total - paidAmount,
+          isTrashed: orderIsInTrash(order.status, order.metadata),
+          trashReason: resolveTrashReason(order.cancelReason, order.metadata),
+          trash: parseOrderTrashMetadata(order.metadata),
         },
       });
     }

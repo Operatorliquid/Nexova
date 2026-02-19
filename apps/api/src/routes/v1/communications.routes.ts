@@ -26,10 +26,17 @@ const promotionsQuerySchema = z.object({
   offset: z.coerce.number().int().min(0).default(0),
 });
 
+const promotionProductsQuerySchema = z.object({
+  search: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(500).default(200),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
 const createPromotionSchema = z.object({
   productId: z.string().uuid(),
   name: z.string().min(2).max(150),
   description: z.string().max(500).optional(),
+  imageUrl: z.string().max(2000).optional().nullable(),
   promoType: z.enum(promotionTypes),
   value: z.coerce.number().int().min(1),
   startsAt: z.coerce.date(),
@@ -41,6 +48,7 @@ const updatePromotionSchema = z.object({
   productId: z.string().uuid().optional(),
   name: z.string().min(2).max(150).optional(),
   description: z.string().max(500).optional().nullable(),
+  imageUrl: z.string().max(2000).optional().nullable(),
   promoType: z.enum(promotionTypes).optional(),
   value: z.coerce.number().int().min(1).optional(),
   startsAt: z.coerce.date().optional(),
@@ -85,6 +93,32 @@ function normalizePhone(value: string | null | undefined): string | null {
     digits = digits.slice(2);
   }
   return `+${digits}`;
+}
+
+function normalizeOptionalImageUrl(value: string | null | undefined): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function isSupportedImageUrl(value: string): boolean {
+  if (value.startsWith('/uploads/products/')) return true;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function readPromotionImageUrl(metadata: Prisma.JsonValue): string | null {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return null;
+  }
+  const value = (metadata as Record<string, unknown>).imageUrl;
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 type CommunicationsUsageSummary = {
@@ -181,6 +215,68 @@ export const communicationsRoutes: FastifyPluginAsync = async (fastify) => {
       usage,
     };
   };
+
+  fastify.get(
+    '/products',
+    { preHandler: [fastify.requirePermission('products:update')] },
+    async (request, reply) => {
+      const workspaceId = getWorkspaceId(request.headers as Record<string, unknown>);
+      if (!workspaceId) {
+        return reply.code(400).send({ error: 'MISSING_WORKSPACE', message: 'X-Workspace-Id header required' });
+      }
+
+      const planAccess = await ensureCommunicationsEnabled(workspaceId, request.user?.sub);
+      if (!planAccess) {
+        return reply.code(403).send({
+          error: 'FORBIDDEN_BY_PLAN',
+          message: 'Tu plan actual no incluye el módulo de comunicación',
+        });
+      }
+
+      const query = promotionProductsQuerySchema.parse(request.query);
+      const term = query.search?.trim();
+      const where: Prisma.ProductWhereInput = {
+        workspaceId,
+        deletedAt: null,
+        status: { in: ['active', 'draft'] },
+        ...(term
+          ? {
+              OR: [
+                { name: { contains: term, mode: 'insensitive' } },
+                { sku: { contains: term, mode: 'insensitive' } },
+              ],
+            }
+          : {}),
+      };
+
+      const [products, total] = await Promise.all([
+        fastify.prisma.product.findMany({
+          where,
+          orderBy: [{ name: 'asc' }],
+          skip: query.offset,
+          take: query.limit,
+          select: {
+            id: true,
+            name: true,
+            price: true,
+            status: true,
+            images: true,
+          },
+        }),
+        fastify.prisma.product.count({ where }),
+      ]);
+
+      return reply.send({
+        products,
+        pagination: {
+          total,
+          limit: query.limit,
+          offset: query.offset,
+          hasMore: query.offset + query.limit < total,
+        },
+      });
+    }
+  );
 
   fastify.get(
     '/promotions',
@@ -288,6 +384,7 @@ export const communicationsRoutes: FastifyPluginAsync = async (fastify) => {
             id: promotion.id,
             name: promotion.name,
             description: promotion.description,
+            imageUrl: readPromotionImageUrl(promotion.metadata),
             promoType: promotion.promoType,
             value: promotion.value,
             startsAt: promotion.startsAt,
@@ -338,6 +435,13 @@ export const communicationsRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const body = createPromotionSchema.parse(request.body);
+      const imageUrl = normalizeOptionalImageUrl(body.imageUrl);
+      if (imageUrl && !isSupportedImageUrl(imageUrl)) {
+        return reply.code(400).send({
+          error: 'INVALID_IMAGE_URL',
+          message: 'La imagen debe ser una URL http(s) o un archivo subido válido',
+        });
+      }
       if (body.endsAt <= body.startsAt) {
         return reply.code(400).send({
           error: 'INVALID_DATES',
@@ -359,6 +463,7 @@ export const communicationsRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(404).send({ error: 'PRODUCT_NOT_FOUND', message: 'Producto no encontrado' });
       }
 
+      const promotionMetadata: Prisma.InputJsonObject = imageUrl ? { imageUrl } : {};
       const promotion = await fastify.prisma.promotion.create({
         data: {
           workspaceId,
@@ -371,7 +476,7 @@ export const communicationsRoutes: FastifyPluginAsync = async (fastify) => {
           endsAt: body.endsAt,
           status: body.status,
           createdBy: request.user?.sub || null,
-          metadata: {} as Prisma.InputJsonValue,
+          metadata: promotionMetadata,
         },
       });
 
@@ -408,6 +513,7 @@ export const communicationsRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.code(201).send({
         promotion: {
           ...promotion,
+          imageUrl: readPromotionImageUrl(promotion.metadata),
           product,
           computedStatus: computePromotionStatus(promotion.status, promotion.startsAt, promotion.endsAt),
         },
@@ -436,6 +542,13 @@ export const communicationsRoutes: FastifyPluginAsync = async (fastify) => {
 
       const { id } = request.params as { id: string };
       const body = updatePromotionSchema.parse(request.body);
+      const nextImageUrl = body.imageUrl !== undefined ? normalizeOptionalImageUrl(body.imageUrl) : undefined;
+      if (typeof nextImageUrl === 'string' && !isSupportedImageUrl(nextImageUrl)) {
+        return reply.code(400).send({
+          error: 'INVALID_IMAGE_URL',
+          message: 'La imagen debe ser una URL http(s) o un archivo subido válido',
+        });
+      }
 
       const existing = await fastify.prisma.promotion.findFirst({
         where: { id, workspaceId, deletedAt: null },
@@ -470,12 +583,28 @@ export const communicationsRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
+      let nextMetadata: Prisma.InputJsonObject | undefined;
+      if (body.imageUrl !== undefined) {
+        const currentMetadata =
+          existing.metadata && typeof existing.metadata === 'object' && !Array.isArray(existing.metadata)
+            ? { ...(existing.metadata as Record<string, unknown>) }
+            : {};
+
+        if (nextImageUrl) {
+          currentMetadata.imageUrl = nextImageUrl;
+        } else {
+          delete currentMetadata.imageUrl;
+        }
+        nextMetadata = currentMetadata as Prisma.InputJsonObject;
+      }
+
       const updated = await fastify.prisma.promotion.update({
         where: { id },
         data: {
           ...(body.productId !== undefined ? { productId: body.productId } : {}),
           ...(body.name !== undefined ? { name: body.name.trim() } : {}),
           ...(body.description !== undefined ? { description: body.description?.trim() || null } : {}),
+          ...(nextMetadata !== undefined ? { metadata: nextMetadata } : {}),
           ...(body.promoType !== undefined ? { promoType: body.promoType } : {}),
           ...(body.value !== undefined ? { value: body.value } : {}),
           ...(body.startsAt !== undefined ? { startsAt: body.startsAt } : {}),
@@ -492,6 +621,7 @@ export const communicationsRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.send({
         promotion: {
           ...updated,
+          imageUrl: readPromotionImageUrl(updated.metadata),
           computedStatus: computePromotionStatus(updated.status, updated.startsAt, updated.endsAt),
         },
       });

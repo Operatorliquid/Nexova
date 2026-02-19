@@ -201,6 +201,7 @@ export interface ConversationContext {
   invoiceDataCollection?: {
     orderId: string;
     orderNumber?: string;
+    source?: 'checkout_prompt' | 'active_orders';
     step: 'cuit' | 'businessName' | 'fiscalAddress' | 'vatCondition' | 'confirm' | 'edit_select' | 'edit_field';
     data: {
       cuit?: string;

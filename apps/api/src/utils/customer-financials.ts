@@ -1,6 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 
-export const debtIgnoredStatuses = ['cancelled', 'draft', 'returned'] as const;
+export const debtIgnoredStatuses = ['cancelled', 'draft', 'returned', 'trashed'] as const;
 
 export type DebtStats = {
   debt: number;

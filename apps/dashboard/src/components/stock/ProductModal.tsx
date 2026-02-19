@@ -66,6 +66,19 @@ interface ProductFormData {
   secondaryUnitValue: string;
 }
 
+interface ProductFormState {
+  name: string;
+  price: string;
+  quantity: string;
+  description: string;
+  imageUrl: string;
+  categoryIds: string[];
+  unit: string;
+  unitValue: string;
+  secondaryUnit: string;
+  secondaryUnitValue: string;
+}
+
 interface Product {
   id: string;
   name: string;
@@ -106,6 +119,15 @@ const readString = (record: Record<string, unknown> | null, key: keyof UploadRes
   return typeof value === 'string' && value.trim().length > 0 ? value : null;
 };
 
+const sanitizeDecimalInput = (value: string): string => {
+  const normalized = value.replace(',', '.').replace(/[^\d.]/g, '');
+  const parts = normalized.split('.');
+  if (parts.length <= 1) return parts[0];
+  return `${parts[0]}.${parts.slice(1).join('')}`;
+};
+
+const sanitizeIntegerInput = (value: string): string => value.replace(/\D/g, '');
+
 export function ProductModal({
   isOpen,
   onClose,
@@ -115,10 +137,10 @@ export function ProductModal({
   onCreateCategory,
   workspaceId,
 }: ProductModalProps): JSX.Element {
-  const [formData, setFormData] = useState<ProductFormData>({
+  const [formData, setFormData] = useState<ProductFormState>({
     name: '',
-    price: 0,
-    quantity: 0,
+    price: '',
+    quantity: '',
     description: '',
     imageUrl: '',
     categoryIds: [],
@@ -162,8 +184,8 @@ export function ProductModal({
     if (product) {
       setFormData({
         name: product.name,
-        price: product.price / 100,
-        quantity: product.stock,
+        price: (product.price / 100).toString(),
+        quantity: product.stock.toString(),
         description: product.description || '',
         imageUrl: product.images?.[0] || '',
         categoryIds: product.categories?.map((c) => c.id) || [],
@@ -177,8 +199,8 @@ export function ProductModal({
     } else {
       setFormData({
         name: '',
-        price: 0,
-        quantity: 0,
+        price: '',
+        quantity: '',
         description: '',
         imageUrl: '',
         categoryIds: [],
@@ -198,8 +220,21 @@ export function ProductModal({
       setError('El nombre es requerido');
       return;
     }
-    if (formData.price < 0) {
+    const normalizedPriceInput = formData.price.trim().replace(',', '.');
+    const parsedPrice = normalizedPriceInput.length > 0 ? Number(normalizedPriceInput) : Number.NaN;
+    if (!Number.isFinite(parsedPrice)) {
+      setError('El precio es requerido');
+      return;
+    }
+    if (parsedPrice < 0) {
       setError('El precio debe ser mayor o igual a 0');
+      return;
+    }
+    const normalizedQuantityInput = formData.quantity.trim();
+    const parsedQuantity =
+      normalizedQuantityInput.length > 0 ? Number.parseInt(normalizedQuantityInput, 10) : 0;
+    if (!Number.isFinite(parsedQuantity) || parsedQuantity < 0) {
+      setError('El stock debe ser mayor o igual a 0');
       return;
     }
     if (formData.secondaryUnit && formData.secondaryUnit !== 'dozen' && !formData.secondaryUnitValue) {
@@ -238,7 +273,20 @@ export function ProductModal({
         finalImageUrl = uploadedUrl;
       }
 
-      await onSave({ ...formData, imageUrl: finalImageUrl });
+      const payload: ProductFormData = {
+        name: formData.name,
+        price: parsedPrice,
+        quantity: parsedQuantity,
+        description: formData.description,
+        imageUrl: finalImageUrl,
+        categoryIds: formData.categoryIds,
+        unit: formData.unit,
+        unitValue: formData.unitValue,
+        secondaryUnit: formData.secondaryUnit,
+        secondaryUnitValue: formData.secondaryUnitValue,
+      };
+
+      await onSave(payload);
       setPendingFile(null);
       onClose();
     } catch (err) {
@@ -521,7 +569,12 @@ export function ProductModal({
                 min="0"
                 step="0.01"
                 value={formData.price}
-                onChange={(e) => setFormData((prev) => ({ ...prev, price: parseFloat(e.target.value) || 0 }))}
+                onChange={(e) =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    price: sanitizeDecimalInput(e.target.value),
+                  }))
+                }
                 placeholder="0.00"
                 required
               />
@@ -533,7 +586,12 @@ export function ProductModal({
                 type="number"
                 min="0"
                 value={formData.quantity}
-                onChange={(e) => setFormData((prev) => ({ ...prev, quantity: parseInt(e.target.value) || 0 }))}
+                onChange={(e) =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    quantity: sanitizeIntegerInput(e.target.value),
+                  }))
+                }
                 placeholder="0"
               />
             </div>

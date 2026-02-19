@@ -181,10 +181,11 @@ export async function uploadsRoutes(app: FastifyInstance): Promise<void> {
         const permissions = (request as FastifyRequest & { permissions?: string[] }).permissions;
         const canCreateProduct = hasPermission(permissions, 'products:create');
         const canUpdateProduct = hasPermission(permissions, 'products:update');
-        if (!canCreateProduct && !canUpdateProduct) {
+        const canManageCustomers = hasPermission(permissions, 'customers:update');
+        if (!canCreateProduct && !canUpdateProduct && !canManageCustomers) {
           return reply.status(403).send({
             error: 'FORBIDDEN',
-            message: "Se requiere el permiso 'products:create' o 'products:update'",
+            message: "Se requiere el permiso 'products:create', 'products:update' o 'customers:update'",
           });
         }
       }

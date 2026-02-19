@@ -198,6 +198,84 @@ const VAT_CONDITION_LOOKUP = VAT_CONDITIONS.reduce<Record<string, string>>((acc,
   return acc;
 }, {});
 
+const VAT_CONDITION_VALUES = new Set(VAT_CONDITIONS.map((item) => item.value));
+
+type EditableField =
+  | 'dni'
+  | 'email'
+  | 'cuit'
+  | 'businessName'
+  | 'fiscalAddress'
+  | 'vatCondition';
+
+const CUSTOMER_FIELD_LIMITS = {
+  dni: 10,
+  cuit: 11,
+  email: 120,
+  businessName: 120,
+  fiscalAddress: 180,
+} as const;
+
+const CUSTOMER_TEXT_REGEX = /[^0-9A-Za-zÀ-ÿ\s.,'"\-_/()#&º°]/g;
+
+const sanitizeEditableFieldValue = (field: EditableField, value: string): string => {
+  switch (field) {
+    case 'dni':
+      return value.replace(/\D/g, '').slice(0, CUSTOMER_FIELD_LIMITS.dni);
+    case 'cuit':
+      return value.replace(/\D/g, '').slice(0, CUSTOMER_FIELD_LIMITS.cuit);
+    case 'email':
+      return value.replace(/\s+/g, '').slice(0, CUSTOMER_FIELD_LIMITS.email);
+    case 'businessName':
+      return value
+        .replace(CUSTOMER_TEXT_REGEX, '')
+        .replace(/\s+/g, ' ')
+        .slice(0, CUSTOMER_FIELD_LIMITS.businessName);
+    case 'fiscalAddress':
+      return value
+        .replace(CUSTOMER_TEXT_REGEX, '')
+        .replace(/\s+/g, ' ')
+        .slice(0, CUSTOMER_FIELD_LIMITS.fiscalAddress);
+    case 'vatCondition':
+      return value;
+    default:
+      return value;
+  }
+};
+
+const validateEditableFieldValue = (field: EditableField, value: string): string | null => {
+  if (!value) return null;
+
+  switch (field) {
+    case 'dni':
+      return /^\d{7,10}$/.test(value)
+        ? null
+        : 'El DNI debe tener entre 7 y 10 dígitos.';
+    case 'cuit':
+      return /^\d{11}$/.test(value)
+        ? null
+        : 'El CUIT debe tener exactamente 11 dígitos.';
+    case 'email':
+      return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+        ? null
+        : 'Ingresá un email válido.';
+    case 'businessName':
+      return value.length >= 2
+        ? null
+        : 'La razón social debe tener al menos 2 caracteres.';
+    case 'fiscalAddress':
+      return value.length >= 5
+        ? null
+        : 'El domicilio fiscal debe tener al menos 5 caracteres.';
+    case 'vatCondition':
+      return VAT_CONDITION_VALUES.has(value)
+        ? null
+        : 'Seleccioná una condición de IVA válida.';
+    default:
+      return null;
+  }
+};
+
 const normalizeVatConditionId = (value?: string | null): string => {
   if (!value) return '';
   const trimmed = value.trim();
@@ -229,7 +307,7 @@ export default function CustomersPage(): JSX.Element {
   const [newCustomerBusinessName, setNewCustomerBusinessName] = useState('');
   const [newCustomerFiscalAddress, setNewCustomerFiscalAddress] = useState('');
   const [newCustomerVatCondition, setNewCustomerVatCondition] = useState('');
-  const [editingField, setEditingField] = useState<string | null>(null);
+  const [editingField, setEditingField] = useState<EditableField | null>(null);
   const [editingValue, setEditingValue] = useState('');
   const [isSavingField, setIsSavingField] = useState(false);
 
@@ -305,11 +383,11 @@ export default function CustomersPage(): JSX.Element {
     }
   }, [workspace?.id]);
 
-  const startEditField = (field: string, value?: string | null): void => {
+  const startEditField = (field: EditableField, value?: string | null): void => {
     if (!selectedCustomer) return;
     const normalizedValue = field === 'vatCondition'
       ? normalizeVatConditionId(value)
-      : value || '';
+      : sanitizeEditableFieldValue(field, value || '');
     setEditingField(field);
     setEditingValue(normalizedValue);
   };
@@ -321,29 +399,36 @@ export default function CustomersPage(): JSX.Element {
 
   const saveField = async (): Promise<void> => {
     if (!workspace?.id || !selectedCustomer || !editingField) return;
+
+    const normalizedValue = sanitizeEditableFieldValue(editingField, editingValue).trim();
+    const validationError = validateEditableFieldValue(editingField, normalizedValue);
+    if (validationError) {
+      toast.error(validationError);
+      return;
+    }
+
     setIsSavingField(true);
 
     const payload: Record<string, unknown> = {};
-    const trimmed = editingValue.trim();
 
     switch (editingField) {
       case 'dni':
-        payload.dni = trimmed;
+        payload.dni = normalizedValue;
         break;
       case 'email':
-        payload.email = trimmed;
+        payload.email = normalizedValue;
         break;
       case 'cuit':
-        payload.cuit = trimmed;
+        payload.cuit = normalizedValue;
         break;
       case 'businessName':
-        payload.businessName = trimmed;
+        payload.businessName = normalizedValue;
         break;
       case 'fiscalAddress':
-        payload.fiscalAddress = trimmed;
+        payload.fiscalAddress = normalizedValue;
         break;
       case 'vatCondition':
-        payload.vatCondition = trimmed;
+        payload.vatCondition = normalizedValue;
         break;
       default:
         break;
@@ -612,7 +697,13 @@ export default function CustomersPage(): JSX.Element {
   // Get order status badges
   const resolveAcceptanceStatus = (order: CustomerOrder): 'awaiting_acceptance' | 'accepted' | 'cancelled' => {
     if (order.status === 'cancelled' || order.status === 'returned') return 'cancelled';
-    if (order.status === 'awaiting_acceptance' || order.status === 'draft') return 'awaiting_acceptance';
+    if (
+      order.status === 'awaiting_acceptance' ||
+      order.status === 'draft' ||
+      order.status === 'pending_invoicing'
+    ) {
+      return 'awaiting_acceptance';
+    }
     return 'accepted';
   };
 
@@ -699,6 +790,30 @@ export default function CustomersPage(): JSX.Element {
       return;
     }
 
+    const normalizedDni = sanitizeEditableFieldValue('dni', newCustomerDni).trim();
+    const normalizedEmail = sanitizeEditableFieldValue('email', newCustomerEmail).trim();
+    const normalizedCuit = sanitizeEditableFieldValue('cuit', newCustomerCuit).trim();
+    const normalizedBusinessName = sanitizeEditableFieldValue('businessName', newCustomerBusinessName).trim();
+    const normalizedFiscalAddress = sanitizeEditableFieldValue('fiscalAddress', newCustomerFiscalAddress).trim();
+    const normalizedVatCondition = newCustomerVatCondition.trim();
+
+    const validationChecks: Array<{ field: EditableField; value: string }> = [
+      { field: 'dni', value: normalizedDni },
+      { field: 'email', value: normalizedEmail },
+      { field: 'cuit', value: normalizedCuit },
+      { field: 'businessName', value: normalizedBusinessName },
+      { field: 'fiscalAddress', value: normalizedFiscalAddress },
+      { field: 'vatCondition', value: normalizedVatCondition },
+    ];
+
+    for (const item of validationChecks) {
+      const error = validateEditableFieldValue(item.field, item.value);
+      if (error) {
+        toast.error(error);
+        return;
+      }
+    }
+
     setIsCreating(true);
     try {
       const response = await fetchWithCredentials(`${API_URL}/api/v1/customers`, {
@@ -710,12 +825,12 @@ export default function CustomersPage(): JSX.Element {
         body: JSON.stringify({
           name: newCustomerName.trim(),
           phone: newCustomerPhone.trim(),
-          dni: newCustomerDni.trim(),
-          email: newCustomerEmail.trim(),
-          cuit: newCustomerCuit.trim(),
-          businessName: newCustomerBusinessName.trim(),
-          fiscalAddress: newCustomerFiscalAddress.trim(),
-          vatCondition: newCustomerVatCondition.trim(),
+          dni: normalizedDni,
+          email: normalizedEmail,
+          cuit: normalizedCuit,
+          businessName: normalizedBusinessName,
+          fiscalAddress: normalizedFiscalAddress,
+          vatCondition: normalizedVatCondition,
         }),
         credentials: 'include',
       });
@@ -982,13 +1097,15 @@ export default function CustomersPage(): JSX.Element {
                 <Input
                   placeholder="12345678"
                   value={newCustomerDni}
-                  onChange={(e) => setNewCustomerDni(e.target.value)}
+                  onChange={(e) => setNewCustomerDni(sanitizeEditableFieldValue('dni', e.target.value))}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       void createCustomer();
                     }
                   }}
                   className="h-11"
+                  inputMode="numeric"
+                  maxLength={CUSTOMER_FIELD_LIMITS.dni}
                 />
               </div>
 
@@ -1002,13 +1119,14 @@ export default function CustomersPage(): JSX.Element {
                   type="email"
                   placeholder="email@ejemplo.com"
                   value={newCustomerEmail}
-                  onChange={(e) => setNewCustomerEmail(e.target.value)}
+                  onChange={(e) => setNewCustomerEmail(sanitizeEditableFieldValue('email', e.target.value))}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       void createCustomer();
                     }
                   }}
                   className="h-11"
+                  maxLength={CUSTOMER_FIELD_LIMITS.email}
                 />
               </div>
             </div>
@@ -1025,13 +1143,15 @@ export default function CustomersPage(): JSX.Element {
                   <Input
                     placeholder="20123456789"
                     value={newCustomerCuit}
-                    onChange={(e) => setNewCustomerCuit(e.target.value)}
+                    onChange={(e) => setNewCustomerCuit(sanitizeEditableFieldValue('cuit', e.target.value))}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
                         void createCustomer();
                       }
                     }}
                     className="h-11"
+                    inputMode="numeric"
+                    maxLength={CUSTOMER_FIELD_LIMITS.cuit}
                   />
                 </div>
                 <div className="space-y-2">
@@ -1039,13 +1159,14 @@ export default function CustomersPage(): JSX.Element {
                   <Input
                     placeholder="Nombre legal"
                     value={newCustomerBusinessName}
-                    onChange={(e) => setNewCustomerBusinessName(e.target.value)}
+                    onChange={(e) => setNewCustomerBusinessName(sanitizeEditableFieldValue('businessName', e.target.value))}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
                         void createCustomer();
                       }
                     }}
                     className="h-11"
+                    maxLength={CUSTOMER_FIELD_LIMITS.businessName}
                   />
                 </div>
               </div>
@@ -1055,28 +1176,30 @@ export default function CustomersPage(): JSX.Element {
                   <Input
                     placeholder="Calle, número, localidad"
                     value={newCustomerFiscalAddress}
-                    onChange={(e) => setNewCustomerFiscalAddress(e.target.value)}
+                    onChange={(e) => setNewCustomerFiscalAddress(sanitizeEditableFieldValue('fiscalAddress', e.target.value))}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
                         void createCustomer();
                       }
                     }}
                     className="h-11"
+                    maxLength={CUSTOMER_FIELD_LIMITS.fiscalAddress}
                   />
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs text-muted-foreground">Condición IVA</label>
-                  <Input
-                    placeholder="Consumidor final, RI, Monotributo..."
-                    value={newCustomerVatCondition}
-                    onChange={(e) => setNewCustomerVatCondition(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        void createCustomer();
-                      }
-                    }}
-                    className="h-11"
-                  />
+                  <Select value={newCustomerVatCondition} onValueChange={setNewCustomerVatCondition}>
+                    <SelectTrigger className="h-11">
+                      <SelectValue placeholder="Seleccioná condición" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {VAT_CONDITIONS.map((condition) => (
+                        <SelectItem key={condition.value} value={condition.value}>
+                          {condition.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
             </div>
@@ -1253,9 +1376,11 @@ export default function CustomersPage(): JSX.Element {
                         {editingField === 'dni' ? (
                           <Input
                             value={editingValue}
-                            onChange={(e) => setEditingValue(e.target.value)}
+                            onChange={(e) => setEditingValue(sanitizeEditableFieldValue('dni', e.target.value))}
                             className="h-8 text-xs px-3"
                             placeholder="Ingresá el DNI"
+                            inputMode="numeric"
+                            maxLength={CUSTOMER_FIELD_LIMITS.dni}
                           />
                         ) : (
                           <p className="font-medium text-foreground text-sm">{selectedCustomer.dni || 'No registrado'}</p>
@@ -1298,9 +1423,10 @@ export default function CustomersPage(): JSX.Element {
                         {editingField === 'email' ? (
                           <Input
                             value={editingValue}
-                            onChange={(e) => setEditingValue(e.target.value)}
+                            onChange={(e) => setEditingValue(sanitizeEditableFieldValue('email', e.target.value))}
                             className="h-8 text-xs px-3"
                             placeholder="Ingresá el email"
+                            maxLength={CUSTOMER_FIELD_LIMITS.email}
                           />
                         ) : (
                           <p className="font-medium text-foreground text-sm truncate">{selectedCustomer.email || 'No registrado'}</p>
@@ -1363,9 +1489,11 @@ export default function CustomersPage(): JSX.Element {
                           {editingField === 'cuit' ? (
                             <Input
                               value={editingValue}
-                              onChange={(e) => setEditingValue(e.target.value)}
+                              onChange={(e) => setEditingValue(sanitizeEditableFieldValue('cuit', e.target.value))}
                               className="h-8 text-xs px-3"
                               placeholder="Ingresá el CUIT"
+                              inputMode="numeric"
+                              maxLength={CUSTOMER_FIELD_LIMITS.cuit}
                             />
                           ) : (
                             <p className="font-medium text-foreground text-sm">{selectedCustomer.cuit || 'No registrado'}</p>
@@ -1408,9 +1536,10 @@ export default function CustomersPage(): JSX.Element {
                           {editingField === 'businessName' ? (
                             <Input
                               value={editingValue}
-                              onChange={(e) => setEditingValue(e.target.value)}
+                              onChange={(e) => setEditingValue(sanitizeEditableFieldValue('businessName', e.target.value))}
                               className="h-8 text-xs px-3"
                               placeholder="Ingresá la razón social"
+                              maxLength={CUSTOMER_FIELD_LIMITS.businessName}
                             />
                           ) : (
                             <p className="font-medium text-foreground text-sm truncate">{selectedCustomer.businessName || 'No registrada'}</p>
@@ -1453,9 +1582,10 @@ export default function CustomersPage(): JSX.Element {
                           {editingField === 'fiscalAddress' ? (
                             <Input
                               value={editingValue}
-                              onChange={(e) => setEditingValue(e.target.value)}
+                              onChange={(e) => setEditingValue(sanitizeEditableFieldValue('fiscalAddress', e.target.value))}
                               className="h-8 text-xs px-3"
                               placeholder="Ingresá el domicilio fiscal"
+                              maxLength={CUSTOMER_FIELD_LIMITS.fiscalAddress}
                             />
                           ) : (
                             <p className="font-medium text-foreground text-sm">{selectedCustomer.fiscalAddress || 'No registrado'}</p>

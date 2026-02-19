@@ -325,11 +325,14 @@ export default function StockPage(): JSX.Element {
   const [trashActionProductId, setTrashActionProductId] = useState<string | null>(null);
 
   // API helpers
-  const getHeaders = useCallback((): Record<string, string> => {
-    return {
+  const getHeaders = useCallback((options?: { json?: boolean }): Record<string, string> => {
+    const headers: Record<string, string> = {
       'X-Workspace-Id': workspace?.id || '',
-      'Content-Type': 'application/json',
     };
+    if (options?.json) {
+      headers['Content-Type'] = 'application/json';
+    }
+    return headers;
   }, [workspace?.id]);
 
   const readApiError = useCallback(
@@ -505,7 +508,7 @@ export default function StockPage(): JSX.Element {
   const handleCreateProduct = async (data: ProductFormData): Promise<void> => {
     const response = await fetchWithCredentials(`${API_URL}/api/v1/products`, {
       method: 'POST',
-      headers: getHeaders(),
+      headers: getHeaders({ json: true }),
       body: JSON.stringify({
         sku: `SKU-${Date.now().toString(36).toUpperCase()}`,
         name: data.name,
@@ -538,7 +541,7 @@ export default function StockPage(): JSX.Element {
 
     const response = await fetchWithCredentials(`${API_URL}/api/v1/products/${editingProduct.id}`, {
       method: 'PATCH',
-      headers: getHeaders(),
+      headers: getHeaders({ json: true }),
       body: JSON.stringify({
         name: data.name,
         description: data.description || null,
@@ -561,7 +564,7 @@ export default function StockPage(): JSX.Element {
       const stockDiff = data.quantity - editingProduct.stock;
       await fetchWithCredentials(`${API_URL}/api/v1/products/${editingProduct.id}/stock`, {
         method: 'PATCH',
-        headers: getHeaders(),
+        headers: getHeaders({ json: true }),
         body: JSON.stringify({
           quantity: stockDiff,
           reason: 'Ajuste desde edicion de producto',
@@ -590,7 +593,7 @@ export default function StockPage(): JSX.Element {
         // Bulk delete
         const response = await fetchWithCredentials(`${API_URL}/api/v1/products/bulk`, {
           method: 'DELETE',
-          headers: getHeaders(),
+          headers: getHeaders({ json: true }),
           body: JSON.stringify({ productIds: Array.from(selectedProductIds) }),
         });
 
@@ -672,7 +675,7 @@ export default function StockPage(): JSX.Element {
   const handleCreateCategory = async (name: string, color?: string): Promise<Category | null> => {
     const response = await fetchWithCredentials(`${API_URL}/api/v1/categories`, {
       method: 'POST',
-      headers: getHeaders(),
+      headers: getHeaders({ json: true }),
       body: JSON.stringify({ name, color }),
     });
 
@@ -710,7 +713,7 @@ export default function StockPage(): JSX.Element {
   const handleUpdateCategory = async (categoryId: string, color: string): Promise<void> => {
     const response = await fetchWithCredentials(`${API_URL}/api/v1/categories/${categoryId}`, {
       method: 'PATCH',
-      headers: getHeaders(),
+      headers: getHeaders({ json: true }),
       body: JSON.stringify({ color }),
     });
 

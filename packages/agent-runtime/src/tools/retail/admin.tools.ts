@@ -1036,40 +1036,58 @@ export class AdminUpdateOrderStatusTool extends BaseTool<typeof AdminUpdateOrder
       return { success: false, error: 'Pedido no encontrado' };
     }
 
-    if (order.status === newStatus) {
+    const orderMetadata =
+      order.metadata && typeof order.metadata === 'object' && !Array.isArray(order.metadata)
+        ? (order.metadata as Record<string, unknown>)
+        : {};
+    const trashMetadata =
+      orderMetadata.trash && typeof orderMetadata.trash === 'object' && !Array.isArray(orderMetadata.trash)
+        ? (orderMetadata.trash as Record<string, unknown>)
+        : null;
+    const isAlreadyTrashed = order.status === 'trashed' || trashMetadata?.isTrashed === true;
+    const targetStatus = newStatus === 'trashed' ? 'cancelled' : newStatus;
+
+    if ((newStatus === 'trashed' && isAlreadyTrashed) || (newStatus !== 'trashed' && order.status === targetStatus)) {
       return {
         success: true,
         data: {
           orderId: order.id,
           orderNumber: order.orderNumber,
           status: order.status,
-          message: `El pedido ${order.orderNumber} ya está en estado "${order.status}".`,
+          message:
+            newStatus === 'trashed'
+              ? `El pedido ${order.orderNumber} ya está en papelera.`
+              : `El pedido ${order.orderNumber} ya está en estado "${order.status}".`,
           unchanged: true,
         },
       };
     }
 
     const updateData: Prisma.OrderUpdateManyMutationInput = {
-      status: newStatus,
+      status: targetStatus,
     };
 
-    if (newStatus === 'paid') updateData.paidAt = new Date();
-    if (newStatus === 'shipped') updateData.shippedAt = new Date();
-    if (newStatus === 'delivered') updateData.deliveredAt = new Date();
-    if (newStatus === 'cancelled') {
+    if (targetStatus === 'paid') updateData.paidAt = new Date();
+    if (targetStatus === 'shipped') updateData.shippedAt = new Date();
+    if (targetStatus === 'delivered') updateData.deliveredAt = new Date();
+    if (targetStatus === 'cancelled') {
       updateData.cancelledAt = new Date();
       if (input.reason) updateData.cancelReason = input.reason;
     }
 
     if (newStatus === 'trashed') {
-      const metadata = (order.metadata as Record<string, unknown>) || {};
+      const metadata = { ...orderMetadata };
+      const reason = input.reason?.trim() || 'Cancelado y enviado a papelera';
       updateData.metadata = {
         ...metadata,
         trash: {
+          isTrashed: true,
           previousStatus: order.status,
           trashedAt: new Date().toISOString(),
+          reason,
         },
       } as Prisma.InputJsonValue;
+      updateData.cancelReason = reason;
     }
 
     await this.prisma.$transaction(async (tx) => {
@@ -1082,7 +1100,7 @@ export class AdminUpdateOrderStatusTool extends BaseTool<typeof AdminUpdateOrder
         data: {
           orderId: order.id,
           previousStatus: order.status,
-          newStatus,
+          newStatus: targetStatus,
           reason: input.reason || null,
           changedBy: 'owner_agent',
         },
@@ -1095,8 +1113,11 @@ export class AdminUpdateOrderStatusTool extends BaseTool<typeof AdminUpdateOrder
         orderId: order.id,
         orderNumber: order.orderNumber,
         previousStatus: order.status,
-        newStatus,
-        message: `Pedido ${order.orderNumber}: "${order.status}" -> "${newStatus}".`,
+        newStatus: targetStatus,
+        message:
+          newStatus === 'trashed'
+            ? `Pedido ${order.orderNumber} cancelado y enviado a papelera.`
+            : `Pedido ${order.orderNumber}: "${order.status}" -> "${targetStatus}".`,
       },
     };
   }

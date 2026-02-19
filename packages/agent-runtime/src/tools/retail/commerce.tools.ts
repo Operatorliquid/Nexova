@@ -522,7 +522,6 @@ export class SendCatalogPdfTool extends BaseTool<typeof SendCatalogPdfInput> {
       const caption = `📋 ${catalog.filename}`;
       const provider = (whatsappNumber.provider || 'infobip').toLowerCase();
       let result: { messageId: string; status: string; to: string };
-      let sentAsLinkFallback = false;
       if (provider === 'evolution') {
         const baseUrl = this.resolveEvolutionBaseUrl(whatsappNumber.apiUrl);
         const instanceName = this.getEvolutionInstanceName(whatsappNumber.providerConfig);
@@ -530,15 +529,14 @@ export class SendCatalogPdfTool extends BaseTool<typeof SendCatalogPdfInput> {
           return { success: false, error: 'Evolution no está configurado (baseUrl / instanceName).' };
         }
         const client = new EvolutionClient({ apiKey, baseUrl, instanceName });
-        try {
-          result = await client.sendDocument(to, mediaUrl, caption);
-        } catch (error) {
-          if (!(error instanceof EvolutionError)) throw error;
-          const fallbackText =
-            'No pude adjuntar el PDF directamente. Te dejo el enlace del catálogo:\n' + mediaUrl;
-          result = await client.sendText(to, fallbackText);
-          sentAsLinkFallback = true;
-        }
+        result = await this.sendEvolutionPdfWithInlineFallback({
+          client,
+          to,
+          mediaUrl,
+          caption,
+          filename: catalog.filename || 'catalogo.pdf',
+          buffer: catalog.buffer,
+        });
       } else {
         const client = new InfobipClient({
           apiKey,
@@ -558,13 +556,9 @@ export class SendCatalogPdfTool extends BaseTool<typeof SendCatalogPdfInput> {
             payload: {
               to,
               content: {
-                ...(sentAsLinkFallback
-                  ? { text: `No pude adjuntar el PDF directamente. Te dejo el enlace del catálogo:\n${mediaUrl}` }
-                  : {
-                      mediaType: 'document',
-                      mediaUrl,
-                      text: caption,
-                    }),
+                mediaType: 'document',
+                mediaUrl,
+                text: caption,
               },
               status: result.status,
             },
@@ -582,9 +576,7 @@ export class SendCatalogPdfTool extends BaseTool<typeof SendCatalogPdfInput> {
           productCount: catalog.productCount,
           pageCount: catalog.pageCount,
           filename: catalog.filename,
-          message: sentAsLinkFallback
-            ? `Catálogo enviado por enlace${category ? ` de "${category}"` : ''}.`
-            : `Catálogo enviado${category ? ` de "${category}"` : ''}.`,
+          message: `Catálogo enviado${category ? ` de "${category}"` : ''}.`,
         },
       };
     } catch (error) {
@@ -601,6 +593,47 @@ export class SendCatalogPdfTool extends BaseTool<typeof SendCatalogPdfInput> {
     const digits = trimmed.replace(/\D/g, '');
     if (!digits) return trimmed;
     return `+${digits}`;
+  }
+
+  private async sendEvolutionPdfWithInlineFallback(params: {
+    client: EvolutionClient;
+    to: string;
+    mediaUrl: string;
+    caption: string;
+    filename: string;
+    buffer: Buffer;
+  }): Promise<{ messageId: string; status: string; to: string }> {
+    const inlineBase64 = this.buildPdfBase64(params.buffer);
+    try {
+      return await params.client.sendDocument(params.to, inlineBase64, params.caption, {
+        mimetype: 'application/pdf',
+        fileName: params.filename,
+      });
+    } catch (inlineError) {
+      if (!(inlineError instanceof EvolutionError)) throw inlineError;
+      try {
+        return await params.client.sendDocument(params.to, params.mediaUrl, params.caption, {
+          mimetype: 'application/pdf',
+          fileName: params.filename,
+        });
+      } catch (urlError) {
+        if (!(urlError instanceof EvolutionError)) throw urlError;
+        throw new Error(
+          `No se pudo enviar el catálogo en PDF por Evolution (inline: ${this.formatEvolutionError(inlineError)} | url: ${this.formatEvolutionError(urlError)})`
+        );
+      }
+    }
+  }
+
+  private buildPdfBase64(buffer: Buffer): string {
+    return buffer.toString('base64');
+  }
+
+  private formatEvolutionError(error: EvolutionError): string {
+    const response = (error.responseBody || '').trim();
+    if (response.length === 0) return `${error.statusCode}`;
+    const compact = response.replace(/\s+/g, ' ');
+    return `${error.statusCode} ${compact.slice(0, 240)}`;
   }
 
   private resolveWhatsAppApiKey(number: {

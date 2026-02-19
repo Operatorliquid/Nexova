@@ -69,6 +69,7 @@ interface Order {
     name?: string;
     firstName?: string;
     lastName?: string;
+    dni?: string | null;
     cuit?: string | null;
     vatCondition?: string | null;
     businessName?: string | null;
@@ -136,12 +137,39 @@ interface BillingSummary {
 }
 
 function asOrder(value: unknown): Order | null {
-  return asRecord(value) as Order | null;
+  const record = asRecord(value);
+  if (!record) return null;
+
+  const customerRecord = readRecord(record, 'customer');
+  const customerId = readString(customerRecord, 'id');
+  const customerPhone = readString(customerRecord, 'phone');
+  if (!customerId || !customerPhone) return null;
+
+  const baseOrder = record as unknown as Order;
+
+  return {
+    ...baseOrder,
+    customer: {
+      ...(baseOrder.customer || { id: customerId, phone: customerPhone }),
+      id: customerId,
+      phone: customerPhone,
+      name: readString(customerRecord, 'name'),
+      firstName: readString(customerRecord, 'firstName'),
+      lastName: readString(customerRecord, 'lastName'),
+      dni: readString(customerRecord, 'dni') ?? null,
+      cuit: readString(customerRecord, 'cuit') ?? null,
+      vatCondition: readString(customerRecord, 'vatCondition') ?? null,
+      businessName: readString(customerRecord, 'businessName') ?? null,
+      fiscalAddress: readString(customerRecord, 'fiscalAddress') ?? null,
+    },
+  };
 }
 
 function asOrderArray(value: unknown): Order[] {
   if (!Array.isArray(value)) return [];
-  return value.filter((item) => asRecord(item) !== null) as Order[];
+  return value
+    .map((item) => asOrder(item))
+    .filter((item): item is Order => item !== null);
 }
 
 function asArcaStatus(value: unknown): ArcaStatus | null {
@@ -1046,6 +1074,12 @@ export default function InvoicesPage(): JSX.Element {
                       <Badge className="bg-primary/10 text-primary">{invoiceType.label}</Badge>
                     </div>
                     <div className="grid grid-cols-1 gap-3">
+                      <div className="rounded-2xl border border-border bg-secondary/40 p-3 text-sm">
+                        <p className="text-xs text-muted-foreground">DNI</p>
+                        <p className="font-semibold text-foreground">
+                          {customer?.dni || 'No registrado'}
+                        </p>
+                      </div>
                       <div className="rounded-2xl border border-border bg-secondary/40 p-3 text-sm">
                         <p className="text-xs text-muted-foreground">CUIT</p>
                         <p className="font-semibold text-foreground">

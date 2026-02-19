@@ -91,7 +91,13 @@ function toDigits(value: string): string {
 }
 
 function inferMimeTypeFromUrl(url: string, fallback: string): string {
-  const lower = (url || '').toLowerCase();
+  const normalized = (url || '').trim();
+  const lower = normalized.toLowerCase();
+  if (lower.startsWith('data:')) {
+    const match = normalized.match(/^data:([^;,]+)[;,]/i);
+    if (match?.[1]) return match[1];
+    return fallback;
+  }
   if (lower.endsWith('.pdf')) return 'application/pdf';
   if (lower.endsWith('.png')) return 'image/png';
   if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
@@ -100,12 +106,16 @@ function inferMimeTypeFromUrl(url: string, fallback: string): string {
 }
 
 function inferFileNameFromUrl(url: string, fallback: string): string {
+  const normalized = (url || '').trim();
+  if (normalized.toLowerCase().startsWith('data:')) {
+    return fallback;
+  }
   try {
-    const parsed = new URL(url);
+    const parsed = new URL(normalized);
     const last = parsed.pathname.split('/').filter(Boolean).pop();
     return last || fallback;
   } catch {
-    const last = (url || '').split('/').filter(Boolean).pop();
+    const last = normalized.split('/').filter(Boolean).pop();
     return last || fallback;
   }
 }
@@ -373,13 +383,18 @@ export class EvolutionClient extends EvolutionAdminClient {
     }
   }
 
-  async sendDocument(to: string, mediaUrl: string, caption?: string): Promise<EvolutionSendResponse> {
+  async sendDocument(
+    to: string,
+    mediaUrl: string,
+    caption?: string,
+    opts?: { mimetype?: string; fileName?: string }
+  ): Promise<EvolutionSendResponse> {
     return this.sendMedia(to, {
       mediaType: 'document',
       mediaUrl,
       caption,
-      mimetype: inferMimeTypeFromUrl(mediaUrl, 'application/pdf'),
-      fileName: inferFileNameFromUrl(mediaUrl, 'document.pdf'),
+      mimetype: (opts?.mimetype || '').trim() || inferMimeTypeFromUrl(mediaUrl, 'application/pdf'),
+      fileName: (opts?.fileName || '').trim() || inferFileNameFromUrl(mediaUrl, 'document.pdf'),
     });
   }
 

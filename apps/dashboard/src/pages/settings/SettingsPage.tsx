@@ -33,6 +33,7 @@ const API_URL = typeof apiUrlRaw === 'string' ? apiUrlRaw : '';
 const DEFAULT_LOW_STOCK_THRESHOLD = 10;
 const MAX_LOW_STOCK_THRESHOLD = 1_000_000;
 const DEFAULT_WORKING_DAYS = ['lun', 'mar', 'mie', 'jue', 'vie'];
+const WHATSAPP_CONTACT_MAX_LENGTH = 16;
 
 // Use the shared API wrapper so Settings keeps working when the access token cookie expires
 // (it will refresh and retry automatically).
@@ -95,6 +96,20 @@ async function readJsonRecord(response: Response): Promise<JsonRecord> {
   } catch {
     return {};
   }
+}
+
+function sanitizeWhatsappContactInput(value: string): string {
+  const cleaned = value.replace(/[^\d+]/g, '');
+  const hasLeadingPlus = cleaned.startsWith('+');
+  const digitsOnly = cleaned.replace(/\D/g, '').slice(0, 15);
+  if (!digitsOnly) return hasLeadingPlus ? '+' : '';
+  return `${hasLeadingPlus ? '+' : ''}${digitsOnly}`;
+}
+
+function isValidWhatsappContact(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return true;
+  return /^\+?\d{8,15}$/.test(trimmed);
 }
 
 // Navigation items - "Mi negocio" only shows for commerce business type
@@ -442,7 +457,7 @@ function BusinessSettings(): JSX.Element {
             ...prev,
             companyLogo: readString(settings, 'companyLogo') ?? null,
             businessName: readString(settings, 'businessName') ?? '',
-            whatsappContact: readString(settings, 'whatsappContact') ?? '',
+            whatsappContact: sanitizeWhatsappContactInput(readString(settings, 'whatsappContact') ?? ''),
             ownerAgentEnabled: readBoolean(settings, 'ownerAgentEnabled', false),
             ownerAgentNumber: readString(settings, 'ownerAgentNumber') ?? '',
             ownerAgentPinRequired: ownerAgentPinHash !== undefined,
@@ -529,8 +544,14 @@ function BusinessSettings(): JSX.Element {
     setError('');
 
     try {
+      const normalizedWhatsappContact = sanitizeWhatsappContactInput(profile.whatsappContact);
+      if (!isValidWhatsappContact(normalizedWhatsappContact)) {
+        throw new Error('Ingresá un WhatsApp de contacto válido (8 a 15 dígitos, opcional + al inicio).');
+      }
+
       const payload: Record<string, unknown> = {
         ...profile,
+        whatsappContact: normalizedWhatsappContact,
         vatConditionId: profile.vatConditionId || null,
       };
 
@@ -714,8 +735,17 @@ function BusinessSettings(): JSX.Element {
               label="WhatsApp de contacto"
               placeholder="+54 11 1234-5678"
               value={profile.whatsappContact}
-              onChange={(e) => setProfile((p) => ({ ...p, whatsappContact: e.target.value }))}
-              hint="El agente podra compartir este numero"
+              onChange={(e) =>
+                setProfile((p) => ({
+                  ...p,
+                  whatsappContact: sanitizeWhatsappContactInput(e.target.value),
+                }))
+              }
+              inputMode="tel"
+              maxLength={WHATSAPP_CONTACT_MAX_LENGTH}
+              pattern="^\\+?\\d{8,15}$"
+              title="Ingresá un teléfono válido (8 a 15 dígitos, opcional + al inicio)."
+              hint="Formato: +5491112345678 (8 a 15 dígitos)"
             />
             <Input
               label="Alias"

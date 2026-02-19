@@ -620,7 +620,7 @@ export class GetCustomerDebtTool extends BaseTool<typeof GetCustomerDebtInput> {
       where: withVisibleOrders({
         customerId: context.customerId,
         workspaceId: context.workspaceId,
-        status: { notIn: ['cancelled', 'draft'] },
+        status: { notIn: ['cancelled', 'draft', 'returned', 'trashed'] },
         payments: {
           some: { status: 'pending' },
         },
@@ -697,7 +697,7 @@ export class GetOrderHistoryTool extends BaseTool<typeof GetOrderHistoryInput> {
       where: withVisibleOrders({
         customerId: context.customerId,
         workspaceId: context.workspaceId,
-        status: { notIn: ['cancelled', 'draft'] },
+        status: { notIn: ['cancelled', 'draft', 'returned', 'trashed'] },
       }),
       include: {
         items: {

@@ -164,7 +164,7 @@ export class RepeatLastOrderTool extends BaseTool<typeof RepeatLastOrderInput> {
     const where: Prisma.OrderWhereInput = {
       customerId: context.customerId,
       workspaceId: context.workspaceId,
-      status: { notIn: ['cancelled', 'draft'] },
+      status: { notIn: ['cancelled', 'draft', 'returned', 'trashed'] },
     };
 
     if (orderId) {

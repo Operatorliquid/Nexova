@@ -1,4 +1,15 @@
-import { Megaphone, Percent, BadgeDollarSign, Send, Image as ImageIcon, Clock, AlertTriangle } from 'lucide-react';
+import {
+  Megaphone,
+  Percent,
+  BadgeDollarSign,
+  Send,
+  Image as ImageIcon,
+  Clock,
+  AlertTriangle,
+  Search,
+  Upload,
+  X,
+} from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
@@ -22,11 +33,13 @@ import {
 } from '../../components/ui';
 import { useAuth } from '../../contexts/AuthContext';
 import { getWorkspaceCommerceCapabilities } from '../../lib/commerce-plan';
-import { apiFetch } from '../../lib/api';
+import { API_URL, apiFetch } from '../../lib/api';
 import { useToastStore } from '../../stores/toast.store';
 
 type JsonRecord = Record<string, unknown>;
 const REQUEST_TIMEOUT_MS = 15_000;
+const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024;
+const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 
 function asRecord(value: unknown): JsonRecord | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -106,6 +119,39 @@ function toErrorMessage(error: unknown): string {
   return String(error);
 }
 
+function validateImageFile(file: File): string | null {
+  if (!ALLOWED_IMAGE_TYPES.has(file.type)) {
+    return 'Formato de imagen no valido. Usa JPG, PNG, WebP o GIF.';
+  }
+  if (file.size > MAX_IMAGE_SIZE_BYTES) {
+    return 'La imagen supera el maximo de 5MB.';
+  }
+  return null;
+}
+
+function toPublicUploadUrl(url: string): string {
+  if (/^https?:\/\//i.test(url)) return url;
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const base = (API_URL || origin).replace(/\/$/, '');
+  if (!base) return url;
+  return `${base}${url.startsWith('/') ? '' : '/'}${url}`;
+}
+
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result);
+        return;
+      }
+      reject(new Error('No se pudo leer la imagen'));
+    };
+    reader.onerror = () => reject(new Error('No se pudo leer la imagen'));
+    reader.readAsDataURL(file);
+  });
+}
+
 interface ProductOption {
   id: string;
   name: string;
@@ -115,6 +161,7 @@ interface ProductOption {
 interface PromotionView {
   id: string;
   name: string;
+  imageUrl: string | null;
   promoType: string;
   value: number;
   status: string;
@@ -223,13 +270,33 @@ function statusClass(status: string): string {
   return 'bg-secondary text-muted-foreground';
 }
 
+function ImageThumbnail({ src, alt }: { src: string; alt: string }): JSX.Element {
+  const [failed, setFailed] = useState(false);
+  if (failed) {
+    return (
+      <div className="w-12 h-12 rounded-lg border border-border bg-secondary/40 flex items-center justify-center shrink-0">
+        <ImageIcon className="w-4 h-4 text-muted-foreground" />
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={toPublicUploadUrl(src)}
+      alt={alt}
+      loading="lazy"
+      onError={() => setFailed(true)}
+      className="w-12 h-12 rounded-lg object-cover border border-border bg-secondary/20 shrink-0"
+    />
+  );
+}
+
 export default function CommunicationsPage(): JSX.Element {
   const { workspace } = useAuth();
   const capabilities = getWorkspaceCommerceCapabilities(workspace);
   const toastSuccess = useToastStore((state) => state.success);
   const toastError = useToastStore((state) => state.error);
-  const toastWarning = useToastStore((state) => state.warning);
-  const lastLoadIssueRef = useRef<'none' | 'partial' | 'full'>('none');
+  const lastLoadIssueRef = useRef<'none' | 'full'>('none');
   const autoLoadedWorkspaceIdRef = useRef<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<'promotions' | 'broadcasts'>('promotions');
@@ -246,14 +313,20 @@ export default function CommunicationsPage(): JSX.Element {
 
   const [promoName, setPromoName] = useState('');
   const [promoProductId, setPromoProductId] = useState('');
+  const [promoProductSearch, setPromoProductSearch] = useState('');
   const [promoType, setPromoType] = useState<'percentage' | 'fixed_price'>('percentage');
   const [promoValue, setPromoValue] = useState('');
   const [promoStartsAt, setPromoStartsAt] = useState(toLocalDatetimeValue(new Date().toISOString()));
   const [promoEndsAt, setPromoEndsAt] = useState(toLocalDatetimeValue(new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString()));
+  const [promoImageFile, setPromoImageFile] = useState<File | null>(null);
+  const [promoImagePreview, setPromoImagePreview] = useState('');
+  const [promoImageInputKey, setPromoImageInputKey] = useState(0);
 
   const [campaignName, setCampaignName] = useState('');
   const [campaignMessage, setCampaignMessage] = useState('');
-  const [campaignImageUrl, setCampaignImageUrl] = useState('');
+  const [campaignImageFile, setCampaignImageFile] = useState<File | null>(null);
+  const [campaignImagePreview, setCampaignImagePreview] = useState('');
+  const [campaignImageInputKey, setCampaignImageInputKey] = useState(0);
   const [campaignPromotionId, setCampaignPromotionId] = useState('none');
 
   const communicationsUsage = metrics.usage.communicationsActions;
@@ -270,18 +343,99 @@ export default function CommunicationsPage(): JSX.Element {
     [promotions]
   );
 
-  const notifyLoadIssue = useCallback(
-    (issue: 'partial' | 'full') => {
-      if (lastLoadIssueRef.current === issue) return;
+  const filteredProducts = useMemo(() => {
+    const term = promoProductSearch.trim().toLowerCase();
+    if (!term) return products;
+    return products.filter((product) => product.name.toLowerCase().includes(term));
+  }, [products, promoProductSearch]);
 
-      if (issue === 'full') {
-        toastError('No se pudo cargar comunicacion');
-      } else {
-        toastWarning('Se cargaron datos parciales de comunicacion');
-      }
-      lastLoadIssueRef.current = issue;
+  const selectedPromoProduct = useMemo(
+    () => products.find((product) => product.id === promoProductId) || null,
+    [products, promoProductId]
+  );
+
+  const notifyLoadIssue = useCallback(
+    () => {
+      if (lastLoadIssueRef.current === 'full') return;
+      toastError('No se pudo cargar comunicacion');
+      lastLoadIssueRef.current = 'full';
     },
-    [toastError, toastWarning]
+    [toastError]
+  );
+
+  const uploadImage = useCallback(
+    async (file: File): Promise<string> => {
+      if (!workspace?.id) {
+        throw new Error('Workspace no encontrado');
+      }
+
+      const fileError = validateImageFile(file);
+      if (fileError) throw new Error(fileError);
+
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const response = await apiFetch(
+        '/api/v1/uploads/product-image',
+        {
+          method: 'POST',
+          body: formData,
+        },
+        workspace.id
+      );
+
+      const body = await readJsonRecord(response);
+      if (!response.ok) {
+        throw new Error(
+          readString(body, 'message') || readString(body, 'error') || 'No se pudo subir la imagen'
+        );
+      }
+
+      const uploadedUrl = readString(body, 'url');
+      if (!uploadedUrl) {
+        throw new Error('No se recibio la URL de la imagen subida');
+      }
+      return uploadedUrl;
+    },
+    [workspace?.id]
+  );
+
+  const handlePromoImageSelected = useCallback(
+    async (file: File | null): Promise<void> => {
+      if (!file) return;
+      const fileError = validateImageFile(file);
+      if (fileError) {
+        toastError(fileError);
+        return;
+      }
+      try {
+        const preview = await fileToDataUrl(file);
+        setPromoImageFile(file);
+        setPromoImagePreview(preview);
+      } catch (error) {
+        toastError(error instanceof Error ? error.message : 'No se pudo leer la imagen');
+      }
+    },
+    [toastError]
+  );
+
+  const handleCampaignImageSelected = useCallback(
+    async (file: File | null): Promise<void> => {
+      if (!file) return;
+      const fileError = validateImageFile(file);
+      if (fileError) {
+        toastError(fileError);
+        return;
+      }
+      try {
+        const preview = await fileToDataUrl(file);
+        setCampaignImageFile(file);
+        setCampaignImagePreview(preview);
+      } catch (error) {
+        toastError(error instanceof Error ? error.message : 'No se pudo leer la imagen');
+      }
+    },
+    [toastError]
   );
 
   const loadAll = useCallback(async (): Promise<void> => {
@@ -298,7 +452,11 @@ export default function CommunicationsPage(): JSX.Element {
       );
 
       const [productsResult, promotionsResult, campaignsResult] = await Promise.allSettled([
-        withTimeout(apiFetch('/api/v1/products?limit=200', {}, workspace.id), REQUEST_TIMEOUT_MS, 'products'),
+        withTimeout(
+          apiFetch('/api/v1/communications/products?limit=500', {}, workspace.id),
+          REQUEST_TIMEOUT_MS,
+          'products'
+        ),
         withTimeout(
           apiFetch('/api/v1/communications/promotions?limit=100', {}, workspace.id),
           REQUEST_TIMEOUT_MS,
@@ -342,6 +500,7 @@ export default function CommunicationsPage(): JSX.Element {
             return {
               id: readString(item, 'id') || '',
               name: readString(item, 'name') || 'Promo',
+              imageUrl: readString(item, 'imageUrl'),
               promoType: readString(item, 'promoType') || 'percentage',
               value: readNumber(item, 'value'),
               status: readString(item, 'status') || 'draft',
@@ -446,14 +605,16 @@ export default function CommunicationsPage(): JSX.Element {
       }
 
       if (failures.length > 0) {
-        notifyLoadIssue(loadedCommunicationsOk === 0 ? 'full' : 'partial');
+        if (loadedCommunicationsOk === 0) {
+          notifyLoadIssue();
+        }
         console.error('Failed to load communications data:', failures);
       } else {
         lastLoadIssueRef.current = 'none';
       }
     } catch (error) {
       console.error('Failed to load communications data:', error);
-      notifyLoadIssue('full');
+      notifyLoadIssue();
     } finally {
       setIsLoading(false);
     }
@@ -498,6 +659,11 @@ export default function CommunicationsPage(): JSX.Element {
 
     setIsCreatingPromo(true);
     try {
+      let uploadedPromoImageUrl: string | null = null;
+      if (promoImageFile) {
+        uploadedPromoImageUrl = await uploadImage(promoImageFile);
+      }
+
       const response = await apiFetch(
         '/api/v1/communications/promotions',
         {
@@ -509,6 +675,7 @@ export default function CommunicationsPage(): JSX.Element {
             value,
             startsAt: new Date(promoStartsAt).toISOString(),
             endsAt: new Date(promoEndsAt).toISOString(),
+            imageUrl: uploadedPromoImageUrl,
             status: 'active',
           }),
         },
@@ -522,10 +689,14 @@ export default function CommunicationsPage(): JSX.Element {
       setIsPromoDialogOpen(false);
       setPromoName('');
       setPromoProductId('');
+      setPromoProductSearch('');
       setPromoType('percentage');
       setPromoValue('');
       setPromoStartsAt(toLocalDatetimeValue(new Date().toISOString()));
       setPromoEndsAt(toLocalDatetimeValue(new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString()));
+      setPromoImageFile(null);
+      setPromoImagePreview('');
+      setPromoImageInputKey((prev) => prev + 1);
       toastSuccess('Promocion creada');
       await loadAll();
     } catch (error) {
@@ -550,6 +721,11 @@ export default function CommunicationsPage(): JSX.Element {
 
     setIsCreatingCampaign(true);
     try {
+      let uploadedCampaignImageUrl: string | null = null;
+      if (campaignImageFile) {
+        uploadedCampaignImageUrl = toPublicUploadUrl(await uploadImage(campaignImageFile));
+      }
+
       const response = await apiFetch(
         '/api/v1/communications/campaigns',
         {
@@ -557,7 +733,7 @@ export default function CommunicationsPage(): JSX.Element {
           body: JSON.stringify({
             name: campaignName.trim(),
             message: campaignMessage.trim(),
-            imageUrl: campaignImageUrl.trim() || null,
+            imageUrl: uploadedCampaignImageUrl,
             promotionId: campaignPromotionId === 'none' ? null : campaignPromotionId,
             sendToAll: true,
           }),
@@ -572,7 +748,9 @@ export default function CommunicationsPage(): JSX.Element {
       setIsCampaignDialogOpen(false);
       setCampaignName('');
       setCampaignMessage('');
-      setCampaignImageUrl('');
+      setCampaignImageFile(null);
+      setCampaignImagePreview('');
+      setCampaignImageInputKey((prev) => prev + 1);
       setCampaignPromotionId('none');
       toastSuccess('Difusion enviada a cola');
       await loadAll();
@@ -743,12 +921,23 @@ export default function CommunicationsPage(): JSX.Element {
                     {promotions.map((promotion) => (
                       <tr key={promotion.id} className="border-b border-border last:border-0">
                         <td className="px-5 py-4">
-                          <p className="font-medium text-foreground">{promotion.name}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {promotion.promoType === 'percentage'
-                              ? `${promotion.value}%`
-                              : `Precio fijo ${formatCurrency(promotion.value)}`}
-                          </p>
+                          <div className="flex items-start gap-3">
+                            {promotion.imageUrl ? (
+                              <ImageThumbnail src={promotion.imageUrl} alt={`Promo ${promotion.name}`} />
+                            ) : (
+                              <div className="w-12 h-12 rounded-lg border border-border bg-secondary/30 flex items-center justify-center shrink-0">
+                                <ImageIcon className="w-4 h-4 text-muted-foreground" />
+                              </div>
+                            )}
+                            <div className="min-w-0">
+                              <p className="font-medium text-foreground truncate">{promotion.name}</p>
+                              <p className="text-xs text-muted-foreground mt-0.5">
+                                {promotion.promoType === 'percentage'
+                                  ? `${promotion.value}%`
+                                  : `Precio fijo ${formatCurrency(promotion.value)}`}
+                              </p>
+                            </div>
+                          </div>
                         </td>
                         <td className="px-5 py-4">
                           <p className="text-sm text-foreground">{promotion.productName}</p>
@@ -788,10 +977,19 @@ export default function CommunicationsPage(): JSX.Element {
                     : 0;
                   return (
                     <div key={campaign.id} className="p-5 space-y-3">
-                      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                        <div>
-                          <p className="font-medium text-foreground">{campaign.name}</p>
-                          <p className="text-sm text-muted-foreground line-clamp-2">{campaign.message}</p>
+                      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                        <div className="flex items-start gap-3 min-w-0">
+                          {campaign.imageUrl ? (
+                            <ImageThumbnail src={campaign.imageUrl} alt={`Difusion ${campaign.name}`} />
+                          ) : (
+                            <div className="w-12 h-12 rounded-lg border border-border bg-secondary/30 flex items-center justify-center shrink-0">
+                              <ImageIcon className="w-4 h-4 text-muted-foreground" />
+                            </div>
+                          )}
+                          <div className="min-w-0">
+                            <p className="font-medium text-foreground truncate">{campaign.name}</p>
+                            <p className="text-sm text-muted-foreground line-clamp-2">{campaign.message}</p>
+                          </div>
                         </div>
                         <div className="flex items-center gap-2">
                           <span className={`px-2 py-1 rounded-full text-xs ${statusClass(campaign.status)}`}>
@@ -800,12 +998,6 @@ export default function CommunicationsPage(): JSX.Element {
                           <span className="text-xs text-muted-foreground">{formatDate(campaign.createdAt)}</span>
                         </div>
                       </div>
-                      {campaign.imageUrl && (
-                        <div className="text-xs text-muted-foreground flex items-center gap-2">
-                          <ImageIcon className="w-3.5 h-3.5" />
-                          Incluye imagen
-                        </div>
-                      )}
                       {campaign.promotionName && (
                         <div className="text-xs text-primary">Promo vinculada: {campaign.promotionName}</div>
                       )}
@@ -837,18 +1029,46 @@ export default function CommunicationsPage(): JSX.Element {
           </DialogHeader>
           <div className="space-y-3">
             <Input placeholder="Nombre promocion" value={promoName} onChange={(e) => setPromoName(e.target.value)} />
-            <Select value={promoProductId} onValueChange={setPromoProductId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Producto" />
-              </SelectTrigger>
-              <SelectContent>
-                {products.map((product) => (
-                  <SelectItem key={product.id} value={product.id}>
-                    {product.name} ({formatCurrency(product.price)})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="space-y-2">
+              <label className="text-xs text-muted-foreground">Producto</label>
+              <div className="relative">
+                <Search className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
+                <Input
+                  className="pl-9"
+                  placeholder="Buscar producto"
+                  value={promoProductSearch}
+                  onChange={(e) => setPromoProductSearch(e.target.value)}
+                />
+              </div>
+              <div className="max-h-44 overflow-y-auto rounded-xl border border-border divide-y divide-border bg-background/40">
+                {filteredProducts.length === 0 ? (
+                  <div className="px-3 py-4 text-xs text-muted-foreground">
+                    No encontramos productos para seleccionar.
+                  </div>
+                ) : (
+                  filteredProducts.map((product) => (
+                    <button
+                      key={product.id}
+                      type="button"
+                      className={`w-full text-left px-3 py-2.5 transition ${
+                        promoProductId === product.id
+                          ? 'bg-primary/15 text-foreground'
+                          : 'hover:bg-secondary/70 text-foreground'
+                      }`}
+                      onClick={() => setPromoProductId(product.id)}
+                    >
+                      <p className="text-sm">{product.name}</p>
+                      <p className="text-xs text-muted-foreground">{formatCurrency(product.price)}</p>
+                    </button>
+                  ))
+                )}
+              </div>
+              {selectedPromoProduct && (
+                <p className="text-xs text-muted-foreground">
+                  Seleccionado: <span className="text-foreground">{selectedPromoProduct.name}</span>
+                </p>
+              )}
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <Select value={promoType} onValueChange={(value) => setPromoType(value as 'percentage' | 'fixed_price')}>
                 <SelectTrigger>
@@ -874,6 +1094,57 @@ export default function CommunicationsPage(): JSX.Element {
                 <label className="text-xs text-muted-foreground mb-1 block">Fin</label>
                 <Input type="datetime-local" value={promoEndsAt} onChange={(e) => setPromoEndsAt(e.target.value)} />
               </div>
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs text-muted-foreground">Imagen de promo (opcional)</label>
+                {promoImageFile && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setPromoImageFile(null);
+                      setPromoImagePreview('');
+                      setPromoImageInputKey((prev) => prev + 1);
+                    }}
+                  >
+                    <X className="w-3.5 h-3.5" />
+                    Quitar
+                  </Button>
+                )}
+              </div>
+              <label className="flex flex-col items-center justify-center w-full h-28 rounded-xl border-2 border-dashed border-border hover:border-primary/50 bg-secondary/30 hover:bg-secondary/50 transition-all cursor-pointer">
+                {promoImageFile ? (
+                  <>
+                    <ImageIcon className="w-6 h-6 text-primary mb-1.5" />
+                    <span className="text-sm text-foreground font-medium">{promoImageFile.name}</span>
+                    <span className="text-xs text-muted-foreground mt-0.5">Click para cambiar imagen</span>
+                  </>
+                ) : (
+                  <>
+                    <Upload className="w-6 h-6 text-muted-foreground mb-1.5" />
+                    <span className="text-sm text-muted-foreground">Subir imagen para la promo</span>
+                    <span className="text-xs text-muted-foreground/60 mt-0.5">JPG, PNG, WebP, GIF (max. 5MB)</span>
+                  </>
+                )}
+                <input
+                  key={promoImageInputKey}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  onChange={(e) => {
+                    void handlePromoImageSelected(e.target.files?.[0] || null);
+                  }}
+                  className="hidden"
+                />
+              </label>
+              {promoImagePreview && (
+                <img
+                  src={promoImagePreview}
+                  alt="Vista previa promo"
+                  className="w-full h-32 object-contain rounded-xl border border-border bg-secondary/20"
+                />
+              )}
             </div>
             <Button
               className="w-full"
@@ -902,11 +1173,57 @@ export default function CommunicationsPage(): JSX.Element {
               onChange={(e) => setCampaignMessage(e.target.value)}
               rows={5}
             />
-            <Input
-              placeholder="URL imagen (opcional)"
-              value={campaignImageUrl}
-              onChange={(e) => setCampaignImageUrl(e.target.value)}
-            />
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs text-muted-foreground">Imagen de difusion (opcional)</label>
+                {campaignImageFile && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setCampaignImageFile(null);
+                      setCampaignImagePreview('');
+                      setCampaignImageInputKey((prev) => prev + 1);
+                    }}
+                  >
+                    <X className="w-3.5 h-3.5" />
+                    Quitar
+                  </Button>
+                )}
+              </div>
+              <label className="flex flex-col items-center justify-center w-full h-28 rounded-xl border-2 border-dashed border-border hover:border-primary/50 bg-secondary/30 hover:bg-secondary/50 transition-all cursor-pointer">
+                {campaignImageFile ? (
+                  <>
+                    <ImageIcon className="w-6 h-6 text-primary mb-1.5" />
+                    <span className="text-sm text-foreground font-medium">{campaignImageFile.name}</span>
+                    <span className="text-xs text-muted-foreground mt-0.5">Click para cambiar imagen</span>
+                  </>
+                ) : (
+                  <>
+                    <Upload className="w-6 h-6 text-muted-foreground mb-1.5" />
+                    <span className="text-sm text-muted-foreground">Subir imagen para la difusion</span>
+                    <span className="text-xs text-muted-foreground/60 mt-0.5">JPG, PNG, WebP, GIF (max. 5MB)</span>
+                  </>
+                )}
+                <input
+                  key={campaignImageInputKey}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  onChange={(e) => {
+                    void handleCampaignImageSelected(e.target.files?.[0] || null);
+                  }}
+                  className="hidden"
+                />
+              </label>
+              {campaignImagePreview && (
+                <img
+                  src={campaignImagePreview}
+                  alt="Vista previa difusion"
+                  className="w-full h-32 object-contain rounded-xl border border-border bg-secondary/20"
+                />
+              )}
+            </div>
             <Select value={campaignPromotionId} onValueChange={setCampaignPromotionId}>
               <SelectTrigger>
                 <SelectValue placeholder="Vincular promocion (opcional)" />

@@ -81,6 +81,15 @@ interface Order {
   id: string;
   orderNumber: string;
   status: string;
+  cancelReason?: string | null;
+  isTrashed?: boolean;
+  trashReason?: string | null;
+  trash?: {
+    isTrashed: boolean;
+    previousStatus: string | null;
+    trashedAt: string | null;
+    reason: string | null;
+  } | null;
   customer: {
     id: string;
     phone: string;
@@ -209,7 +218,13 @@ const RECEIPT_METHOD_LABELS: Record<string, string> = {
 
 const resolveAcceptanceStatus = (order: Order): keyof typeof ACCEPTANCE_STATUS_CONFIG => {
   if (order.status === 'cancelled' || order.status === 'returned') return 'cancelled';
-  if (order.status === 'awaiting_acceptance' || order.status === 'draft') return 'awaiting_acceptance';
+  if (
+    order.status === 'awaiting_acceptance' ||
+    order.status === 'draft' ||
+    order.status === 'pending_invoicing'
+  ) {
+    return 'awaiting_acceptance';
+  }
   return 'accepted';
 };
 
@@ -279,13 +294,12 @@ export default function OrdersPage(): JSX.Element {
   const [isTrashLoading, setIsTrashLoading] = useState(false);
   const [trashedOrders, setTrashedOrders] = useState<Order[]>([]);
   const [trashCandidate, setTrashCandidate] = useState<Order | null>(null);
+  const [trashReasonDraft, setTrashReasonDraft] = useState('');
   const [isTrashing, setIsTrashing] = useState(false);
   const [restoreCandidate, setRestoreCandidate] = useState<Order | null>(null);
   const [receiptPreviews, setReceiptPreviews] = useState<Record<string, string>>({});
   const receiptPreviewsRef = useRef<Record<string, string>>({});
   const [isRestoring, setIsRestoring] = useState(false);
-  const [isEmptyTrashConfirm, setIsEmptyTrashConfirm] = useState(false);
-  const [isEmptyingTrash, setIsEmptyingTrash] = useState(false);
   const [customers, setCustomers] = useState<CustomerOption[]>([]);
   const [products, setProducts] = useState<ProductOption[]>([]);
   const [productSearch, setProductSearch] = useState('');
@@ -1240,31 +1254,51 @@ export default function OrdersPage(): JSX.Element {
 
   const handleMoveToTrash = async (): Promise<void> => {
     if (!workspace?.id || !trashCandidate) return;
+    const reason = trashReasonDraft.trim();
+    if (reason.length < 3) {
+      toast.error('Indicá un motivo de al menos 3 caracteres');
+      return;
+    }
     setIsTrashing(true);
     try {
       const res = await apiFetch(
         `/api/v1/orders/${trashCandidate.id}`,
         {
           method: 'PATCH',
-          body: JSON.stringify({ status: 'trashed' }),
+          body: JSON.stringify({ status: 'trashed', cancelReason: reason }),
         },
         workspace.id
       );
 
       if (!res.ok) {
-        throw new Error('No se pudo enviar a la papelera');
+        const errorBody = await readJsonRecord(res);
+        throw new Error(readErrorMessage(errorBody, 'No se pudo enviar a la papelera'));
       }
+      const payload = await readJsonRecord(res);
+      const customerNotification = readRecord(payload, 'customerNotification');
 
       setOrders((prev) => prev.filter((o) => o.id !== trashCandidate.id));
       if (selectedOrder?.id === trashCandidate.id) {
         setSelectedOrder(null);
       }
       setTrashCandidate(null);
+      setTrashReasonDraft('');
       await fetchOrdersAndStats();
-      toast.success('Pedido enviado a la papelera');
+      toast.success('Pedido cancelado y enviado a la papelera');
+      if (
+        customerNotification?.attempted === true &&
+        customerNotification?.sent !== true
+      ) {
+        const reasonText = readString(customerNotification, 'error');
+        toast.warning(
+          reasonText
+            ? `Pedido cancelado, pero no se pudo avisar al cliente (${reasonText})`
+            : 'Pedido cancelado, pero no se pudo avisar al cliente'
+        );
+      }
     } catch (error) {
       console.error('Failed to trash order:', error);
-      toast.error('No se pudo enviar a la papelera');
+      toast.error(error instanceof Error ? error.message : 'No se pudo enviar a la papelera');
     } finally {
       setIsTrashing(false);
     }
@@ -1287,38 +1321,12 @@ export default function OrdersPage(): JSX.Element {
       setTrashedOrders((prev) => prev.filter((o) => o.id !== restoreCandidate.id));
       setRestoreCandidate(null);
       await fetchOrdersAndStats();
-      toast.success('Pedido restaurado');
+      toast.success('Pedido restaurado (sigue en estado cancelado)');
     } catch (error) {
       console.error('Failed to restore order:', error);
       toast.error('No se pudo restaurar el pedido');
     } finally {
       setIsRestoring(false);
-    }
-  };
-
-  const handleEmptyTrash = async (): Promise<void> => {
-    if (!workspace?.id) return;
-    setIsEmptyingTrash(true);
-    try {
-      const res = await apiFetch(
-        '/api/v1/orders/trash',
-        { method: 'DELETE' },
-        workspace.id
-      );
-
-      if (!res.ok) {
-        throw new Error('No se pudo vaciar la papelera');
-      }
-
-      setTrashedOrders([]);
-      setIsEmptyTrashConfirm(false);
-      await fetchOrdersAndStats();
-      toast.success('Papelera vaciada');
-    } catch (error) {
-      console.error('Failed to empty trash:', error);
-      toast.error('No se pudo vaciar la papelera');
-    } finally {
-      setIsEmptyingTrash(false);
     }
   };
 
@@ -1539,9 +1547,10 @@ export default function OrdersPage(): JSX.Element {
                           onClick={(e) => {
                             e.stopPropagation();
                             setTrashCandidate(order);
+                            setTrashReasonDraft('');
                           }}
                           className="absolute right-0 translate-x-2 opacity-0 group-hover:opacity-100 p-1.5 hover:bg-red-500/20 rounded-lg text-red-400 hover:text-red-300 transition-all"
-                          title="Enviar a papelera"
+                          title="Cancelar y enviar a papelera"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -1783,10 +1792,13 @@ export default function OrdersPage(): JSX.Element {
                       <Button
                         variant="secondary"
                         className="w-full text-red-400 hover:text-red-300 hover:bg-red-500/10"
-                        onClick={() => setTrashCandidate(selectedOrder)}
+                        onClick={() => {
+                          setTrashCandidate(selectedOrder);
+                          setTrashReasonDraft('');
+                        }}
                       >
                         <Trash2 className="w-4 h-4 mr-2" />
-                        Enviar a papelera
+                        Cancelar y enviar a la papelera
                       </Button>
                     </div>
                   </div>
@@ -2395,19 +2407,22 @@ export default function OrdersPage(): JSX.Element {
 
       {/* Trash confirm modal */}
       <Dialog open={!!trashCandidate} onOpenChange={(open) => {
-        if (!open) setTrashCandidate(null);
+        if (!open) {
+          setTrashCandidate(null);
+          setTrashReasonDraft('');
+        }
       }}>
         <DialogContent className="max-w-md">
           <div className="flex flex-col items-center text-center pt-2">
             <div className="w-16 h-16 rounded-2xl bg-red-500/10 flex items-center justify-center mb-4">
               <Trash2 className="w-8 h-8 text-red-400" />
             </div>
-            <h3 className="text-lg font-semibold text-foreground mb-2">Enviar a papelera</h3>
+            <h3 className="text-lg font-semibold text-foreground mb-2">Cancelar y enviar a papelera</h3>
             <p className="text-sm text-muted-foreground mb-4">
-              El pedido se moverá a la papelera y podrás restaurarlo más tarde.
+              El pedido quedará cancelado y guardado en papelera. Debés indicar el motivo.
             </p>
             {trashCandidate && (
-              <div className="w-full p-4 rounded-xl bg-secondary/50 border border-border mb-6">
+              <div className="w-full p-4 rounded-xl bg-secondary/50 border border-border mb-4">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-full bg-background/50 flex items-center justify-center">
                     <span className="text-sm font-medium text-muted-foreground">
@@ -2424,8 +2439,26 @@ export default function OrdersPage(): JSX.Element {
                 </div>
               </div>
             )}
+            <div className="w-full mb-6 text-left">
+              <label className="text-sm font-medium text-foreground">Motivo de cancelación</label>
+              <Input
+                value={trashReasonDraft}
+                onChange={(e) => setTrashReasonDraft(e.target.value)}
+                placeholder="Ej: Cliente pidió cancelar el pedido"
+                maxLength={500}
+                className="mt-2"
+              />
+              <p className="mt-1 text-xs text-muted-foreground">Se enviará este motivo al cliente por WhatsApp.</p>
+            </div>
             <div className="flex gap-3 w-full">
-              <Button variant="secondary" className="flex-1" onClick={() => setTrashCandidate(null)}>
+              <Button
+                variant="secondary"
+                className="flex-1"
+                onClick={() => {
+                  setTrashCandidate(null);
+                  setTrashReasonDraft('');
+                }}
+              >
                 Cancelar
               </Button>
               <Button
@@ -2434,7 +2467,7 @@ export default function OrdersPage(): JSX.Element {
                 disabled={isTrashing}
               >
                 <Trash2 className="w-4 h-4 mr-2" />
-                {isTrashing ? 'Enviando...' : 'Enviar a papelera'}
+                {isTrashing ? 'Cancelando...' : 'Cancelar y enviar'}
               </Button>
             </div>
           </div>
@@ -2455,17 +2488,6 @@ export default function OrdersPage(): JSX.Element {
                   {trashedOrders.length} pedido{trashedOrders.length !== 1 ? 's' : ''} en papelera
                 </p>
               </div>
-              {trashedOrders.length > 0 && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setIsEmptyTrashConfirm(true)}
-                  className="text-red-400 hover:text-red-300 hover:bg-red-500/10"
-                >
-                  <AlertTriangle className="w-4 h-4 mr-2" />
-                  Vaciar todo
-                </Button>
-              )}
             </div>
           </DialogHeader>
           <div className="flex-1 overflow-y-auto pt-4">
@@ -2503,6 +2525,9 @@ export default function OrdersPage(): JSX.Element {
                         <span className="text-xs text-muted-foreground">{timeAgo(order.createdAt)}</span>
                       </div>
                       <p className="text-sm text-muted-foreground truncate">{getCustomerName(order.customer)} · {order.customer.phone}</p>
+                      <p className="text-xs text-muted-foreground mt-1 truncate">
+                        Motivo: {order.trashReason || order.cancelReason || 'Sin motivo informado'}
+                      </p>
                     </div>
                     <div className="text-right mr-2">
                       <p className="font-semibold text-foreground">{formatCurrency(order.total)}</p>
@@ -2536,7 +2561,7 @@ export default function OrdersPage(): JSX.Element {
             </div>
             <h3 className="text-lg font-semibold text-foreground mb-2">Restaurar pedido</h3>
             <p className="text-sm text-muted-foreground mb-4">
-              El pedido volverá a aparecer en tu lista de pedidos activos.
+              El pedido saldrá de la papelera y seguirá en estado cancelado.
             </p>
             {restoreCandidate && (
               <div className="w-full p-4 rounded-xl bg-secondary/50 border border-border mb-6">
@@ -2567,37 +2592,6 @@ export default function OrdersPage(): JSX.Element {
               >
                 <RotateCcw className="w-4 h-4 mr-2" />
                 {isRestoring ? 'Restaurando...' : 'Restaurar'}
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Empty trash confirm modal */}
-      <Dialog open={isEmptyTrashConfirm} onOpenChange={setIsEmptyTrashConfirm}>
-        <DialogContent className="max-w-md">
-          <div className="flex flex-col items-center text-center pt-2">
-            <div className="w-16 h-16 rounded-2xl bg-red-500/10 flex items-center justify-center mb-4">
-              <AlertTriangle className="w-8 h-8 text-red-400" />
-            </div>
-            <h3 className="text-lg font-semibold text-foreground mb-2">Vaciar papelera</h3>
-            <p className="text-sm text-muted-foreground mb-2">
-              Esta acción eliminará permanentemente <span className="font-semibold text-foreground">{trashedOrders.length} pedido{trashedOrders.length !== 1 ? 's' : ''}</span>.
-            </p>
-            <p className="text-sm text-red-400 mb-6">
-              Esta acción no se puede deshacer.
-            </p>
-            <div className="flex gap-3 w-full">
-              <Button variant="secondary" className="flex-1" onClick={() => setIsEmptyTrashConfirm(false)}>
-                Cancelar
-              </Button>
-              <Button
-                className="flex-1 bg-red-600 text-white hover:bg-red-500"
-                onClick={() => { void handleEmptyTrash(); }}
-                disabled={isEmptyingTrash}
-              >
-                <Trash2 className="w-4 h-4 mr-2" />
-                {isEmptyingTrash ? 'Eliminando...' : 'Eliminar todo'}
               </Button>
             </div>
           </div>
