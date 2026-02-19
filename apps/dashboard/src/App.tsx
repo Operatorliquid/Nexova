@@ -193,7 +193,14 @@ function AppRoutes(): JSX.Element {
         >
           <Route path="/" element={<DashboardHome />} />
           <Route path="/inbox" element={<InboxPage />} />
-          <Route path="/communications" element={<CommunicationsPage />} />
+          <Route
+            path="/communications"
+            element={
+              capabilities.showCommunicationsModule
+                ? <CommunicationsPage />
+                : <Navigate to="/" replace />
+            }
+          />
           <Route path="/orders" element={<OrdersPage />} />
           <Route
             path="/facturacion"

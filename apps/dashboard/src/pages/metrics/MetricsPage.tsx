@@ -253,7 +253,7 @@ export default function MetricsPage(): JSX.Element {
           throw new Error('No se pudo generar el resumen');
         }
         const data = (await response.json()) as unknown as { insights?: GeneratedInsights };
-        setInsights(data.insights);
+        setInsights(data.insights ?? null);
       } catch (error) {
         setInsights(null);
         setInsightsError(error instanceof Error ? error.message : 'No se pudo generar el resumen');

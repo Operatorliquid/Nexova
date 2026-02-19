@@ -27,6 +27,7 @@ interface AdminMonthlyUsage {
     aiCustomerSummaries: number;
     debtReminders: number;
     audioTranscriptions: number;
+    communicationsActions: number;
   };
   topAudioWorkspaces: Array<{
     workspaceId: string;
@@ -135,6 +136,7 @@ export default function AdminDashboard(): JSX.Element {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isPaywallPreviewOpen, setIsPaywallPreviewOpen] = useState(false);
   const [isOrdersLimitPreviewOpen, setIsOrdersLimitPreviewOpen] = useState(false);
+  const [isCommunicationsLimitPreviewOpen, setIsCommunicationsLimitPreviewOpen] = useState(false);
 
   const loadDashboard = useCallback(async (silent = false) => {
     if (silent) setIsRefreshing(true);
@@ -196,6 +198,10 @@ export default function AdminDashboard(): JSX.Element {
     toastError('Alcanzaste el límite mensual de resúmenes IA de clientes (80).');
   };
 
+  const triggerCommunicationsLimitToast = (): void => {
+    toastError('Alcanzaste el límite mensual de comunicación (150 en Standard / 300 en Pro).');
+  };
+
   return (
     <AnimatedPage className="space-y-6">
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
@@ -223,7 +229,7 @@ export default function AdminDashboard(): JSX.Element {
             {monthlyUsage?.period?.month ? `Periodo ${monthlyUsage.period.month}` : 'Periodo actual'}
           </p>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-3">
           <div className="rounded-xl border border-border/70 bg-secondary/30 p-3">
             <p className="text-xs text-muted-foreground">Pedidos creados</p>
             <p className="text-lg font-semibold text-foreground">{monthlyUsage?.totals.ordersCreated ?? 0}</p>
@@ -244,6 +250,10 @@ export default function AdminDashboard(): JSX.Element {
             <p className="text-xs text-muted-foreground">Audios transcritos</p>
             <p className="text-lg font-semibold text-foreground">{monthlyUsage?.totals.audioTranscriptions ?? 0}</p>
           </div>
+          <div className="rounded-xl border border-border/70 bg-secondary/30 p-3">
+            <p className="text-xs text-muted-foreground">Acciones comunicación</p>
+            <p className="text-lg font-semibold text-foreground">{monthlyUsage?.totals.communicationsActions ?? 0}</p>
+          </div>
         </div>
       </div>
 
@@ -261,6 +271,9 @@ export default function AdminDashboard(): JSX.Element {
           <Button type="button" variant="secondary" size="sm" onClick={() => setIsOrdersLimitPreviewOpen(true)}>
             Ver cartel de limite de pedidos
           </Button>
+          <Button type="button" variant="secondary" size="sm" onClick={() => setIsCommunicationsLimitPreviewOpen(true)}>
+            Ver cartel de límite de comunicación
+          </Button>
           <Button type="button" variant="outline" size="sm" onClick={triggerDebtReminderLimitToast}>
             Sin recordatorios de deuda
           </Button>
@@ -272,6 +285,9 @@ export default function AdminDashboard(): JSX.Element {
           </Button>
           <Button type="button" variant="outline" size="sm" onClick={triggerCustomerSummaryLimitToast}>
             Sin resúmenes IA
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={triggerCommunicationsLimitToast}>
+            Sin cupo de comunicación
           </Button>
         </div>
       </div>
@@ -439,6 +455,61 @@ export default function AdminDashboard(): JSX.Element {
               onClick={() => {
                 toastInfo('Vista previa cerrada');
                 setIsOrdersLimitPreviewOpen(false);
+              }}
+            >
+              Cerrar vista previa
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isCommunicationsLimitPreviewOpen} onOpenChange={setIsCommunicationsLimitPreviewOpen}>
+        <DialogContent className="max-w-4xl p-0 bg-background border-border overflow-hidden">
+          <DialogHeader className="px-6 pt-6 pb-0">
+            <DialogTitle>Vista previa: aviso de cupo de comunicación</DialogTitle>
+            <DialogDescription>
+              Este es el cartel preventivo que se muestra cuando el negocio está por quedarse sin cupo mensual.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="min-h-[38vh] p-6 bg-background space-y-3">
+            <div className="glass-card rounded-2xl border border-amber-500/35 bg-amber-500/10 p-4">
+              <div className="flex items-start gap-3">
+                <div className="w-9 h-9 rounded-xl bg-amber-500/20 flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-5 h-5 text-amber-400" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-foreground">
+                    Te quedan 18 acciones de comunicación este mes (132/150 usadas).
+                  </p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Cada promoción nueva o difusión nueva consume 1 acción. Te recomendamos subir de plan para no frenarte.
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="glass-card rounded-2xl border border-red-500/35 bg-red-500/10 p-4">
+              <div className="flex items-start gap-3">
+                <div className="w-9 h-9 rounded-xl bg-red-500/20 flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-5 h-5 text-red-300" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-foreground">
+                    Alcanzaste el límite mensual de comunicación (150).
+                  </p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Ya no podrás crear promociones ni difusiones hasta el próximo mes o hasta mejorar tu plan.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="px-6 pb-6">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                toastInfo('Vista previa cerrada');
+                setIsCommunicationsLimitPreviewOpen(false);
               }}
             >
               Cerrar vista previa

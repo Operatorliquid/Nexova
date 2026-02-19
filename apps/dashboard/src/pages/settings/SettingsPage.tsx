@@ -1396,8 +1396,9 @@ function ApplicationsSettings(): JSX.Element {
           if (status?.pointOfSale !== undefined) {
             setArcaForm((prev) => ({ ...prev, pointOfSale: String(status.pointOfSale) }));
           }
-          if (status?.environment) {
-            setArcaForm((prev) => ({ ...prev, environment: status.environment }));
+          const environment = status?.environment;
+          if (environment) {
+            setArcaForm((prev) => ({ ...prev, environment }));
           }
         }
       } catch (err) {

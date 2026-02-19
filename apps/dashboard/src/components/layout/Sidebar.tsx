@@ -21,6 +21,7 @@ function SidebarContent({ onClose }: { onClose?: () => void }): JSX.Element {
 
   // Get modules for this business type
   const availableModules = getModulesForBusinessType(businessType).filter((module) => {
+    if (module.id === 'communications' && !capabilities.showCommunicationsModule) return false;
     if (module.id === 'invoices' && !capabilities.showInvoicesModule) return false;
     if (module.id === 'debts' && !capabilities.showDebtsModule) return false;
     return true;

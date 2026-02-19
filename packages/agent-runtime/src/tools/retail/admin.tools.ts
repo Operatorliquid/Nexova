@@ -2713,6 +2713,26 @@ export class AdminCreatePromotionTool extends BaseTool<typeof AdminCreatePromoti
     const guard = assertOwnerContext(context);
     if (guard) return guard;
 
+    const plan = await resolveWorkspacePlan(this.prisma, context.workspaceId);
+    const capabilities = getCommercePlanCapabilities(plan);
+    if (!capabilities.showCommunicationsModule) {
+      return { success: false, error: 'Tu plan actual no incluye el módulo de comunicación.' };
+    }
+    const planLimits = await getEffectivePlanLimits(this.prisma, plan);
+    const monthlyLimit = planLimits.communicationsActionsPerMonth;
+    if (monthlyLimit !== null) {
+      const used = await getMonthlyUsage(this.prisma, {
+        workspaceId: context.workspaceId,
+        metric: COMMERCE_USAGE_METRICS.communicationsActions,
+      });
+      if (used >= BigInt(monthlyLimit)) {
+        return {
+          success: false,
+          error: `Alcanzaste el límite mensual de comunicación (${monthlyLimit}).`,
+        };
+      }
+    }
+
     const product = await this.prisma.product.findFirst({
       where: {
         id: input.productId,
@@ -2762,6 +2782,13 @@ export class AdminCreatePromotionTool extends BaseTool<typeof AdminCreatePromoti
         endsAt: true,
         status: true,
       },
+    });
+
+    await recordMonthlyUsage(this.prisma, {
+      workspaceId: context.workspaceId,
+      metric: COMMERCE_USAGE_METRICS.communicationsActions,
+      quantity: 1,
+      metadata: { source: 'owner.admin_create_promotion' },
     });
 
     return {
@@ -2937,6 +2964,26 @@ export class AdminCreateBroadcastCampaignTool extends BaseTool<typeof AdminCreat
     const guard = assertOwnerContext(context);
     if (guard) return guard;
 
+    const plan = await resolveWorkspacePlan(this.prisma, context.workspaceId);
+    const capabilities = getCommercePlanCapabilities(plan);
+    if (!capabilities.showCommunicationsModule) {
+      return { success: false, error: 'Tu plan actual no incluye el módulo de comunicación.' };
+    }
+    const planLimits = await getEffectivePlanLimits(this.prisma, plan);
+    const monthlyLimit = planLimits.communicationsActionsPerMonth;
+    if (monthlyLimit !== null) {
+      const used = await getMonthlyUsage(this.prisma, {
+        workspaceId: context.workspaceId,
+        metric: COMMERCE_USAGE_METRICS.communicationsActions,
+      });
+      if (used >= BigInt(monthlyLimit)) {
+        return {
+          success: false,
+          error: `Alcanzaste el límite mensual de comunicación (${monthlyLimit}).`,
+        };
+      }
+    }
+
     const whatsappNumber = await this.prisma.whatsAppNumber.findFirst({
       where: { workspaceId: context.workspaceId, isActive: true },
       select: { provider: true },
@@ -3051,6 +3098,13 @@ export class AdminCreateBroadcastCampaignTool extends BaseTool<typeof AdminCreat
       }
 
       return createdCampaign;
+    });
+
+    await recordMonthlyUsage(this.prisma, {
+      workspaceId: context.workspaceId,
+      metric: COMMERCE_USAGE_METRICS.communicationsActions,
+      quantity: 1,
+      metadata: { source: 'owner.admin_create_broadcast_campaign' },
     });
 
     return {

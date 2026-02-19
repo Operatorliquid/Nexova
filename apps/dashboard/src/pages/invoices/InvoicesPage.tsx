@@ -559,41 +559,41 @@ export default function InvoicesPage(): JSX.Element {
   };
 
   const handleCreateInvoice = async (): Promise<{ approved: boolean }> => {
-    if (!workspace?.id || !selectedOrder) return;
+    if (!workspace?.id || !selectedOrder) return { approved: false };
     if (selectedOrder.status !== 'pending_invoicing') {
       setInvoiceError('Este pedido no está pendiente de facturación.');
-      return;
+      return { approved: false };
     }
     if (!arcaStatus?.connected) {
       setInvoiceError('ARCA no está conectado.');
-      return;
+      return { approved: false };
     }
     if (!commerceVatConditionId) {
       setInvoiceError('Configurá la condición frente al IVA del comercio antes de emitir facturas.');
-      return;
+      return { approved: false };
     }
     if (!customer) {
       setInvoiceError('No se encontraron los datos del cliente.');
-      return;
+      return { approved: false };
     }
     const cuitDigits = customer.cuit ? customer.cuit.replace(/\D/g, '') : '';
     if (!cuitDigits || cuitDigits.length !== 11) {
       setInvoiceError('El cliente no tiene un CUIT válido.');
-      return;
+      return { approved: false };
     }
     if (!customer.businessName || !customer.fiscalAddress || !customer.vatCondition) {
       setInvoiceError('Faltan datos fiscales del cliente.');
-      return;
+      return { approved: false };
     }
     const vatIdValue = normalizeVatConditionId(customer.vatCondition || null);
     if (!vatIdValue) {
       setInvoiceError('La condición IVA del cliente no es válida.');
-      return;
+      return { approved: false };
     }
     const vatId = Number(vatIdValue);
     if (Number.isNaN(vatId)) {
       setInvoiceError('La condición IVA del cliente no es válida.');
-      return;
+      return { approved: false };
     }
 
     setIsCreating(true);

@@ -78,6 +78,7 @@ type PlanLimitsForm = {
     aiCustomerSummariesPerMonth: string;
     debtRemindersPerMonth: string;
     audioTranscriptionsPerMonth: string;
+    communicationsActionsPerMonth: string;
   };
   standard: {
     ordersPerMonth: string;
@@ -85,6 +86,7 @@ type PlanLimitsForm = {
     aiCustomerSummariesPerMonth: string;
     debtRemindersPerMonth: string;
     audioTranscriptionsPerMonth: string;
+    communicationsActionsPerMonth: string;
   };
   pro: {
     ordersPerMonth: string;
@@ -92,6 +94,7 @@ type PlanLimitsForm = {
     aiCustomerSummariesPerMonth: string;
     debtRemindersPerMonth: string;
     audioTranscriptionsPerMonth: string;
+    communicationsActionsPerMonth: string;
   };
 };
 
@@ -102,6 +105,10 @@ const DEFAULT_PLAN_LIMITS_FORM: PlanLimitsForm = {
     aiCustomerSummariesPerMonth: '',
     debtRemindersPerMonth: '',
     audioTranscriptionsPerMonth: '',
+    communicationsActionsPerMonth:
+      DEFAULT_COMMERCE_PLAN_LIMITS.basic.communicationsActionsPerMonth
+        ? String(DEFAULT_COMMERCE_PLAN_LIMITS.basic.communicationsActionsPerMonth)
+        : '',
   },
   standard: {
     ordersPerMonth: String(DEFAULT_COMMERCE_PLAN_LIMITS.standard.ordersPerMonth ?? 550),
@@ -109,6 +116,10 @@ const DEFAULT_PLAN_LIMITS_FORM: PlanLimitsForm = {
     aiCustomerSummariesPerMonth: '',
     debtRemindersPerMonth: '',
     audioTranscriptionsPerMonth: '',
+    communicationsActionsPerMonth:
+      DEFAULT_COMMERCE_PLAN_LIMITS.standard.communicationsActionsPerMonth
+        ? String(DEFAULT_COMMERCE_PLAN_LIMITS.standard.communicationsActionsPerMonth)
+        : '',
   },
   pro: {
     ordersPerMonth: String(DEFAULT_COMMERCE_PLAN_LIMITS.pro.ordersPerMonth ?? 1700),
@@ -116,6 +127,10 @@ const DEFAULT_PLAN_LIMITS_FORM: PlanLimitsForm = {
     aiCustomerSummariesPerMonth: '',
     debtRemindersPerMonth: '',
     audioTranscriptionsPerMonth: '',
+    communicationsActionsPerMonth:
+      DEFAULT_COMMERCE_PLAN_LIMITS.pro.communicationsActionsPerMonth
+        ? String(DEFAULT_COMMERCE_PLAN_LIMITS.pro.communicationsActionsPerMonth)
+        : '',
   },
 };
 
@@ -211,6 +226,7 @@ export default function AdminSettingsPage(): JSX.Element {
           aiCustomerSummariesPerMonth: pickNumberOrEmpty(basicCfg.aiCustomerSummariesPerMonth),
           debtRemindersPerMonth: pickNumberOrEmpty(basicCfg.debtRemindersPerMonth),
           audioTranscriptionsPerMonth: pickNumberOrEmpty(basicCfg.audioTranscriptionsPerMonth),
+          communicationsActionsPerMonth: pickNumberOrEmpty(basicCfg.communicationsActionsPerMonth),
         },
         standard: {
           ordersPerMonth: pickNumberOrDefault(standardCfg.ordersPerMonth, DEFAULT_COMMERCE_PLAN_LIMITS.standard.ordersPerMonth ?? 550),
@@ -218,6 +234,7 @@ export default function AdminSettingsPage(): JSX.Element {
           aiCustomerSummariesPerMonth: pickNumberOrEmpty(standardCfg.aiCustomerSummariesPerMonth),
           debtRemindersPerMonth: pickNumberOrEmpty(standardCfg.debtRemindersPerMonth),
           audioTranscriptionsPerMonth: pickNumberOrEmpty(standardCfg.audioTranscriptionsPerMonth),
+          communicationsActionsPerMonth: pickNumberOrEmpty(standardCfg.communicationsActionsPerMonth),
         },
         pro: {
           ordersPerMonth: pickNumberOrDefault(proCfg.ordersPerMonth, DEFAULT_COMMERCE_PLAN_LIMITS.pro.ordersPerMonth ?? 1700),
@@ -225,6 +242,7 @@ export default function AdminSettingsPage(): JSX.Element {
           aiCustomerSummariesPerMonth: pickNumberOrEmpty(proCfg.aiCustomerSummariesPerMonth),
           debtRemindersPerMonth: pickNumberOrEmpty(proCfg.debtRemindersPerMonth),
           audioTranscriptionsPerMonth: pickNumberOrEmpty(proCfg.audioTranscriptionsPerMonth),
+          communicationsActionsPerMonth: pickNumberOrEmpty(proCfg.communicationsActionsPerMonth),
         },
       });
     } catch (error) {
@@ -327,6 +345,7 @@ export default function AdminSettingsPage(): JSX.Element {
           aiCustomerSummariesPerMonth: toNullablePositiveInt(planLimits.basic.aiCustomerSummariesPerMonth),
           debtRemindersPerMonth: toNullablePositiveInt(planLimits.basic.debtRemindersPerMonth),
           audioTranscriptionsPerMonth: toNullablePositiveInt(planLimits.basic.audioTranscriptionsPerMonth),
+          communicationsActionsPerMonth: toNullablePositiveInt(planLimits.basic.communicationsActionsPerMonth),
         },
         standard: {
           ordersPerMonth: toPositiveInt(planLimits.standard.ordersPerMonth, DEFAULT_COMMERCE_PLAN_LIMITS.standard.ordersPerMonth ?? 550),
@@ -334,6 +353,7 @@ export default function AdminSettingsPage(): JSX.Element {
           aiCustomerSummariesPerMonth: toNullablePositiveInt(planLimits.standard.aiCustomerSummariesPerMonth),
           debtRemindersPerMonth: toNullablePositiveInt(planLimits.standard.debtRemindersPerMonth),
           audioTranscriptionsPerMonth: toNullablePositiveInt(planLimits.standard.audioTranscriptionsPerMonth),
+          communicationsActionsPerMonth: toNullablePositiveInt(planLimits.standard.communicationsActionsPerMonth),
         },
         pro: {
           ordersPerMonth: toPositiveInt(planLimits.pro.ordersPerMonth, DEFAULT_COMMERCE_PLAN_LIMITS.pro.ordersPerMonth ?? 1700),
@@ -341,6 +361,7 @@ export default function AdminSettingsPage(): JSX.Element {
           aiCustomerSummariesPerMonth: toNullablePositiveInt(planLimits.pro.aiCustomerSummariesPerMonth),
           debtRemindersPerMonth: toNullablePositiveInt(planLimits.pro.debtRemindersPerMonth),
           audioTranscriptionsPerMonth: toNullablePositiveInt(planLimits.pro.audioTranscriptionsPerMonth),
+          communicationsActionsPerMonth: toNullablePositiveInt(planLimits.pro.communicationsActionsPerMonth),
         },
       };
 
@@ -357,6 +378,7 @@ export default function AdminSettingsPage(): JSX.Element {
           aiCustomerSummariesPerMonth: payload.basic.aiCustomerSummariesPerMonth ? String(payload.basic.aiCustomerSummariesPerMonth) : '',
           debtRemindersPerMonth: payload.basic.debtRemindersPerMonth ? String(payload.basic.debtRemindersPerMonth) : '',
           audioTranscriptionsPerMonth: payload.basic.audioTranscriptionsPerMonth ? String(payload.basic.audioTranscriptionsPerMonth) : '',
+          communicationsActionsPerMonth: payload.basic.communicationsActionsPerMonth ? String(payload.basic.communicationsActionsPerMonth) : '',
         },
         standard: {
           ordersPerMonth: String(payload.standard.ordersPerMonth),
@@ -364,6 +386,7 @@ export default function AdminSettingsPage(): JSX.Element {
           aiCustomerSummariesPerMonth: payload.standard.aiCustomerSummariesPerMonth ? String(payload.standard.aiCustomerSummariesPerMonth) : '',
           debtRemindersPerMonth: payload.standard.debtRemindersPerMonth ? String(payload.standard.debtRemindersPerMonth) : '',
           audioTranscriptionsPerMonth: payload.standard.audioTranscriptionsPerMonth ? String(payload.standard.audioTranscriptionsPerMonth) : '',
+          communicationsActionsPerMonth: payload.standard.communicationsActionsPerMonth ? String(payload.standard.communicationsActionsPerMonth) : '',
         },
         pro: {
           ordersPerMonth: String(payload.pro.ordersPerMonth),
@@ -371,6 +394,7 @@ export default function AdminSettingsPage(): JSX.Element {
           aiCustomerSummariesPerMonth: payload.pro.aiCustomerSummariesPerMonth ? String(payload.pro.aiCustomerSummariesPerMonth) : '',
           debtRemindersPerMonth: payload.pro.debtRemindersPerMonth ? String(payload.pro.debtRemindersPerMonth) : '',
           audioTranscriptionsPerMonth: payload.pro.audioTranscriptionsPerMonth ? String(payload.pro.audioTranscriptionsPerMonth) : '',
+          communicationsActionsPerMonth: payload.pro.communicationsActionsPerMonth ? String(payload.pro.communicationsActionsPerMonth) : '',
         },
       });
 
@@ -676,6 +700,21 @@ export default function AdminSettingsPage(): JSX.Element {
                       setPlanLimits((prev) => ({
                         ...prev,
                         [plan]: { ...prev[plan], audioTranscriptionsPerMonth: e.target.value },
+                      }))
+                    }
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Comunicación (promo + difusión) / mes</Label>
+                  <Input
+                    type="number"
+                    placeholder="Ilimitado"
+                    value={planLimits[plan].communicationsActionsPerMonth}
+                    onChange={(e) =>
+                      setPlanLimits((prev) => ({
+                        ...prev,
+                        [plan]: { ...prev[plan], communicationsActionsPerMonth: e.target.value },
                       }))
                     }
                   />

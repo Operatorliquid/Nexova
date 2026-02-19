@@ -26,6 +26,12 @@ export interface CommercePlanLimitConfig {
    * null = unlimited.
    */
   audioTranscriptionsPerMonth: number | null;
+  /**
+   * Max communication actions per month (UTC).
+   * Counts both promotion creations and broadcast campaign creations.
+   * null = unlimited.
+   */
+  communicationsActionsPerMonth: number | null;
 }
 
 export type CommercePlanLimitsConfig = Partial<Record<CommercePlan, Partial<CommercePlanLimitConfig>>>;
@@ -37,6 +43,7 @@ export const DEFAULT_COMMERCE_PLAN_LIMITS: Record<CommercePlan, CommercePlanLimi
     aiCustomerSummariesPerMonth: null,
     debtRemindersPerMonth: null,
     audioTranscriptionsPerMonth: null,
+    communicationsActionsPerMonth: null,
   },
   standard: {
     ordersPerMonth: 550,
@@ -44,6 +51,7 @@ export const DEFAULT_COMMERCE_PLAN_LIMITS: Record<CommercePlan, CommercePlanLimi
     aiCustomerSummariesPerMonth: null,
     debtRemindersPerMonth: null,
     audioTranscriptionsPerMonth: null,
+    communicationsActionsPerMonth: 150,
   },
   pro: {
     ordersPerMonth: 1700,
@@ -51,6 +59,7 @@ export const DEFAULT_COMMERCE_PLAN_LIMITS: Record<CommercePlan, CommercePlanLimi
     aiCustomerSummariesPerMonth: null,
     debtRemindersPerMonth: null,
     audioTranscriptionsPerMonth: null,
+    communicationsActionsPerMonth: 300,
   },
 };
 
@@ -59,4 +68,5 @@ export const COMMERCE_USAGE_METRICS = {
   aiCustomerSummary: 'ai.customer_summary',
   debtRemindersSent: 'debt.reminders.sent',
   audioTranscriptions: 'audio.transcriptions',
+  communicationsActions: 'communications.actions',
 } as const;

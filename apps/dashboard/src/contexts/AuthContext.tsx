@@ -106,6 +106,24 @@ async function safeJsonRecord(response: Response): Promise<JsonRecord | null> {
   }
 }
 
+async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 15000): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error('La API no responde (timeout). Verifica que el backend esté activo.');
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
 function parseUser(value: unknown): User | null {
   if (!isRecord(value)) {
     return null;
@@ -242,7 +260,7 @@ export function AuthProvider({ children }: { children: ReactNode }): ReactNode {
       }
 
       const fetchMe = async (): Promise<{ response: Response; payload: JsonRecord | null }> => {
-        const response = await fetch(`${API_URL}/api/v1/auth/me`, {
+        const response = await fetchWithTimeout(`${API_URL}/api/v1/auth/me`, {
           credentials: 'include',
           headers,
         });
@@ -256,7 +274,7 @@ export function AuthProvider({ children }: { children: ReactNode }): ReactNode {
       let { response, payload } = await fetchMe();
 
       if (response.status === 401) {
-        const refreshResponse = await fetch(`${API_URL}/api/v1/auth/refresh`, {
+        const refreshResponse = await fetchWithTimeout(`${API_URL}/api/v1/auth/refresh`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -335,7 +353,7 @@ export function AuthProvider({ children }: { children: ReactNode }): ReactNode {
   }, [checkAuth, clearAuthState]);
 
   async function login(email: string, password: string, rememberMe: boolean = true): Promise<void> {
-    const response = await fetch(`${API_URL}/api/v1/auth/login`, {
+    const response = await fetchWithTimeout(`${API_URL}/api/v1/auth/login`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -360,7 +378,7 @@ export function AuthProvider({ children }: { children: ReactNode }): ReactNode {
   }
 
   async function register(registerData: RegisterData): Promise<void> {
-    const response = await fetch(`${API_URL}/api/v1/auth/register`, {
+    const response = await fetchWithTimeout(`${API_URL}/api/v1/auth/register`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -385,7 +403,7 @@ export function AuthProvider({ children }: { children: ReactNode }): ReactNode {
 
   async function logout(): Promise<void> {
     try {
-      await fetch(`${API_URL}/api/v1/auth/logout`, {
+      await fetchWithTimeout(`${API_URL}/api/v1/auth/logout`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

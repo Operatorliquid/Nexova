@@ -275,7 +275,7 @@ function parseQuickActionResult(
     results: readArray(payload, 'results')
       .map(item => parseToolExecutionResult(item))
       .filter((item): item is ToolExecutionResult => item !== null),
-    confirmationRequired: parseConfirmationRequest(payload?.confirmationRequired),
+    confirmationRequired: parseConfirmationRequest(payload?.confirmationRequired) ?? undefined,
     error: readString(payload, 'error'),
     summary: readString(payload, 'summary'),
     explanation: readString(payload, 'explanation'),

@@ -118,6 +118,7 @@ const updateSystemSettingsSchema = z.object({
           aiCustomerSummariesPerMonth: z.coerce.number().int().min(1).nullable().optional(),
           debtRemindersPerMonth: z.coerce.number().int().min(1).nullable().optional(),
           audioTranscriptionsPerMonth: z.coerce.number().int().min(1).nullable().optional(),
+          communicationsActionsPerMonth: z.coerce.number().int().min(1).nullable().optional(),
         })
         .partial()
         .optional(),
@@ -128,6 +129,7 @@ const updateSystemSettingsSchema = z.object({
           aiCustomerSummariesPerMonth: z.coerce.number().int().min(1).nullable().optional(),
           debtRemindersPerMonth: z.coerce.number().int().min(1).nullable().optional(),
           audioTranscriptionsPerMonth: z.coerce.number().int().min(1).nullable().optional(),
+          communicationsActionsPerMonth: z.coerce.number().int().min(1).nullable().optional(),
         })
         .partial()
         .optional(),
@@ -138,6 +140,7 @@ const updateSystemSettingsSchema = z.object({
           aiCustomerSummariesPerMonth: z.coerce.number().int().min(1).nullable().optional(),
           debtRemindersPerMonth: z.coerce.number().int().min(1).nullable().optional(),
           audioTranscriptionsPerMonth: z.coerce.number().int().min(1).nullable().optional(),
+          communicationsActionsPerMonth: z.coerce.number().int().min(1).nullable().optional(),
         })
         .partial()
         .optional(),
@@ -1009,6 +1012,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       COMMERCE_USAGE_METRICS.aiCustomerSummary,
       COMMERCE_USAGE_METRICS.debtRemindersSent,
       COMMERCE_USAGE_METRICS.audioTranscriptions,
+      COMMERCE_USAGE_METRICS.communicationsActions,
     ];
 
     const grouped = await fastify.prisma.usageRecord.groupBy({
@@ -1072,6 +1076,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
         aiCustomerSummaries: metricTotals.get(COMMERCE_USAGE_METRICS.aiCustomerSummary) || 0,
         debtReminders: metricTotals.get(COMMERCE_USAGE_METRICS.debtRemindersSent) || 0,
         audioTranscriptions: metricTotals.get(COMMERCE_USAGE_METRICS.audioTranscriptions) || 0,
+        communicationsActions: metricTotals.get(COMMERCE_USAGE_METRICS.communicationsActions) || 0,
       },
       topAudioWorkspaces: topAudio.map((row) => ({
         workspaceId: row.workspaceId,

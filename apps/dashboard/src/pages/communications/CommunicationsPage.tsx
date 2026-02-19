@@ -1,4 +1,4 @@
-import { Megaphone, Percent, BadgeDollarSign, Send, Image as ImageIcon, Clock } from 'lucide-react';
+import { Megaphone, Percent, BadgeDollarSign, Send, Image as ImageIcon, Clock, AlertTriangle } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
@@ -21,10 +21,12 @@ import {
   Textarea,
 } from '../../components/ui';
 import { useAuth } from '../../contexts/AuthContext';
+import { getWorkspaceCommerceCapabilities } from '../../lib/commerce-plan';
 import { apiFetch } from '../../lib/api';
 import { useToast } from '../../stores/toast.store';
 
 type JsonRecord = Record<string, unknown>;
+const REQUEST_TIMEOUT_MS = 15_000;
 
 function asRecord(value: unknown): JsonRecord | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -53,6 +55,21 @@ function readNumber(record: JsonRecord | null, key: string): number {
   return 0;
 }
 
+function readBoolean(record: JsonRecord | null, key: string): boolean {
+  return record?.[key] === true;
+}
+
+function readNullableNumber(record: JsonRecord | null, key: string): number | null {
+  const value = record?.[key];
+  if (value === null) return null;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
 function readObject(record: JsonRecord | null, key: string): JsonRecord | null {
   return asRecord(record?.[key]);
 }
@@ -64,6 +81,29 @@ async function readJsonRecord(response: Response): Promise<JsonRecord> {
   } catch {
     return {};
   }
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timeoutId = window.setTimeout(() => {
+      reject(new Error(`${label}: timeout de ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    promise
+      .then((value) => {
+        window.clearTimeout(timeoutId);
+        resolve(value);
+      })
+      .catch((error: unknown) => {
+        window.clearTimeout(timeoutId);
+        reject(error);
+      });
+  });
+}
+
+function toErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error);
 }
 
 interface ProductOption {
@@ -112,6 +152,16 @@ interface MetricsView {
   campaignsTotal: number;
   campaignsSent: number;
   campaignsFailed: number;
+  usage: {
+    communicationsActions: {
+      limit: number | null;
+      used: number;
+      remaining: number | null;
+      percentUsed: number;
+      isNearLimit: boolean;
+      isExhausted: boolean;
+    };
+  };
 }
 
 const DEFAULT_METRICS: MetricsView = {
@@ -125,6 +175,16 @@ const DEFAULT_METRICS: MetricsView = {
   campaignsTotal: 0,
   campaignsSent: 0,
   campaignsFailed: 0,
+  usage: {
+    communicationsActions: {
+      limit: null,
+      used: 0,
+      remaining: null,
+      percentUsed: 0,
+      isNearLimit: false,
+      isExhausted: false,
+    },
+  },
 };
 
 function formatCurrency(amount: number): string {
@@ -165,6 +225,7 @@ function statusClass(status: string): string {
 
 export default function CommunicationsPage(): JSX.Element {
   const { workspace } = useAuth();
+  const capabilities = getWorkspaceCommerceCapabilities(workspace);
   const toast = useToast();
 
   const [activeTab, setActiveTab] = useState<'promotions' | 'broadcasts'>('promotions');
@@ -191,6 +252,12 @@ export default function CommunicationsPage(): JSX.Element {
   const [campaignImageUrl, setCampaignImageUrl] = useState('');
   const [campaignPromotionId, setCampaignPromotionId] = useState('none');
 
+  const communicationsUsage = metrics.usage.communicationsActions;
+  const hasCommunicationsLimit = communicationsUsage.limit !== null;
+  const isCommunicationsLimitReached = communicationsUsage.isExhausted;
+  const showCommunicationsLimitWarning =
+    hasCommunicationsLimit && (communicationsUsage.isNearLimit || communicationsUsage.isExhausted);
+
   const promotionOptions = useMemo(
     () =>
       promotions
@@ -200,89 +267,161 @@ export default function CommunicationsPage(): JSX.Element {
   );
 
   const loadAll = useCallback(async (): Promise<void> => {
-    if (!workspace?.id) return;
+    if (!workspace?.id) {
+      setIsLoading(false);
+      return;
+    }
     setIsLoading(true);
     try {
-      const [productsRes, promotionsRes, campaignsRes, metricsRes] = await Promise.all([
-        apiFetch('/api/v1/products?limit=200', {}, workspace.id),
-        apiFetch('/api/v1/communications/promotions?limit=100', {}, workspace.id),
-        apiFetch('/api/v1/communications/campaigns?limit=100', {}, workspace.id),
-        apiFetch('/api/v1/communications/metrics', {}, workspace.id),
+      const [productsResult, promotionsResult, campaignsResult, metricsResult] = await Promise.allSettled([
+        withTimeout(apiFetch('/api/v1/products?limit=200', {}, workspace.id), REQUEST_TIMEOUT_MS, 'products'),
+        withTimeout(
+          apiFetch('/api/v1/communications/promotions?limit=100', {}, workspace.id),
+          REQUEST_TIMEOUT_MS,
+          'promotions'
+        ),
+        withTimeout(
+          apiFetch('/api/v1/communications/campaigns?limit=100', {}, workspace.id),
+          REQUEST_TIMEOUT_MS,
+          'campaigns'
+        ),
+        withTimeout(apiFetch('/api/v1/communications/metrics', {}, workspace.id), REQUEST_TIMEOUT_MS, 'metrics'),
       ]);
 
-      if (productsRes.ok) {
-        const data = await readJsonRecord(productsRes);
-        const parsed = asRecordList(data.products).map((item) => ({
-          id: readString(item, 'id') || '',
-          name: readString(item, 'name') || 'Producto',
-          price: readNumber(item, 'price'),
-        }));
-        setProducts(parsed.filter((item) => item.id));
-      }
+      const failures: string[] = [];
+      let loadedOk = 0;
 
-      if (promotionsRes.ok) {
-        const data = await readJsonRecord(promotionsRes);
-        const parsed = asRecordList(data.promotions).map((item) => {
-          const product = readObject(item, 'product');
-          const metricsItem = readObject(item, 'metrics');
-          return {
+      if (productsResult.status === 'fulfilled') {
+        const productsRes = productsResult.value;
+        if (productsRes.ok) {
+          const data = await readJsonRecord(productsRes);
+          const parsed = asRecordList(data.products).map((item) => ({
             id: readString(item, 'id') || '',
-            name: readString(item, 'name') || 'Promo',
-            promoType: readString(item, 'promoType') || 'percentage',
-            value: readNumber(item, 'value'),
-            status: readString(item, 'status') || 'draft',
-            computedStatus: readString(item, 'computedStatus') || readString(item, 'status') || 'draft',
-            startsAt: readString(item, 'startsAt') || new Date().toISOString(),
-            endsAt: readString(item, 'endsAt') || new Date().toISOString(),
-            productName: readString(product, 'name') || 'Producto',
-            productPrice: readNumber(product, 'price'),
-            orderCount: readNumber(metricsItem, 'orderCount'),
-            revenue: readNumber(metricsItem, 'revenue'),
-            discountTotal: readNumber(metricsItem, 'discountTotal'),
-          };
-        });
-        setPromotions(parsed.filter((item) => item.id));
+            name: readString(item, 'name') || 'Producto',
+            price: readNumber(item, 'price'),
+          }));
+          setProducts(parsed.filter((item) => item.id));
+          loadedOk += 1;
+        } else {
+          const data = await readJsonRecord(productsRes);
+          failures.push(`products (${productsRes.status}): ${readString(data, 'message') || 'request failed'}`);
+        }
+      } else {
+        failures.push(`products: ${toErrorMessage(productsResult.reason)}`);
       }
 
-      if (campaignsRes.ok) {
-        const data = await readJsonRecord(campaignsRes);
-        const parsed = asRecordList(data.campaigns).map((item) => {
-          const promotion = readObject(item, 'promotion');
-          return {
-            id: readString(item, 'id') || '',
-            name: readString(item, 'name') || 'Difusion',
-            message: readString(item, 'message') || '',
-            imageUrl: readString(item, 'imageUrl'),
-            status: readString(item, 'status') || 'draft',
-            totalRecipients: readNumber(item, 'totalRecipients'),
-            sentCount: readNumber(item, 'sentCount'),
-            failedCount: readNumber(item, 'failedCount'),
-            createdAt: readString(item, 'createdAt') || new Date().toISOString(),
-            promotionName: readString(promotion, 'name'),
-          };
-        });
-        setCampaigns(parsed.filter((item) => item.id));
+      if (promotionsResult.status === 'fulfilled') {
+        const promotionsRes = promotionsResult.value;
+        if (promotionsRes.ok) {
+          const data = await readJsonRecord(promotionsRes);
+          const parsed = asRecordList(data.promotions).map((item) => {
+            const product = readObject(item, 'product');
+            const metricsItem = readObject(item, 'metrics');
+            return {
+              id: readString(item, 'id') || '',
+              name: readString(item, 'name') || 'Promo',
+              promoType: readString(item, 'promoType') || 'percentage',
+              value: readNumber(item, 'value'),
+              status: readString(item, 'status') || 'draft',
+              computedStatus: readString(item, 'computedStatus') || readString(item, 'status') || 'draft',
+              startsAt: readString(item, 'startsAt') || new Date().toISOString(),
+              endsAt: readString(item, 'endsAt') || new Date().toISOString(),
+              productName: readString(product, 'name') || 'Producto',
+              productPrice: readNumber(product, 'price'),
+              orderCount: readNumber(metricsItem, 'orderCount'),
+              revenue: readNumber(metricsItem, 'revenue'),
+              discountTotal: readNumber(metricsItem, 'discountTotal'),
+            };
+          });
+          setPromotions(parsed.filter((item) => item.id));
+          loadedOk += 1;
+        } else {
+          const data = await readJsonRecord(promotionsRes);
+          failures.push(`promotions (${promotionsRes.status}): ${readString(data, 'message') || 'request failed'}`);
+        }
+      } else {
+        failures.push(`promotions: ${toErrorMessage(promotionsResult.reason)}`);
       }
 
-      if (metricsRes.ok) {
-        const data = await readJsonRecord(metricsRes);
-        const promotionsData = readObject(data, 'promotions');
-        const ordersData = readObject(data, 'orders');
-        const withPromo = readObject(ordersData, 'withPromotion');
-        const withoutPromo = readObject(ordersData, 'withoutPromotion');
-        const campaignsData = readObject(data, 'campaigns');
-        setMetrics({
-          promotionsTotal: readNumber(promotionsData, 'total'),
-          promotionsActive: readNumber(promotionsData, 'active'),
-          requestedPromotions: readNumber(promotionsData, 'requested'),
-          ordersWithPromotion: readNumber(withPromo, 'count'),
-          ordersWithoutPromotion: readNumber(withoutPromo, 'count'),
-          revenueWithPromotion: readNumber(withPromo, 'revenue'),
-          revenueWithoutPromotion: readNumber(withoutPromo, 'revenue'),
-          campaignsTotal: readNumber(campaignsData, 'total'),
-          campaignsSent: readNumber(campaignsData, 'sent'),
-          campaignsFailed: readNumber(campaignsData, 'failed'),
-        });
+      if (campaignsResult.status === 'fulfilled') {
+        const campaignsRes = campaignsResult.value;
+        if (campaignsRes.ok) {
+          const data = await readJsonRecord(campaignsRes);
+          const parsed = asRecordList(data.campaigns).map((item) => {
+            const promotion = readObject(item, 'promotion');
+            return {
+              id: readString(item, 'id') || '',
+              name: readString(item, 'name') || 'Difusion',
+              message: readString(item, 'message') || '',
+              imageUrl: readString(item, 'imageUrl'),
+              status: readString(item, 'status') || 'draft',
+              totalRecipients: readNumber(item, 'totalRecipients'),
+              sentCount: readNumber(item, 'sentCount'),
+              failedCount: readNumber(item, 'failedCount'),
+              createdAt: readString(item, 'createdAt') || new Date().toISOString(),
+              promotionName: readString(promotion, 'name'),
+            };
+          });
+          setCampaigns(parsed.filter((item) => item.id));
+          loadedOk += 1;
+        } else {
+          const data = await readJsonRecord(campaignsRes);
+          failures.push(`campaigns (${campaignsRes.status}): ${readString(data, 'message') || 'request failed'}`);
+        }
+      } else {
+        failures.push(`campaigns: ${toErrorMessage(campaignsResult.reason)}`);
+      }
+
+      if (metricsResult.status === 'fulfilled') {
+        const metricsRes = metricsResult.value;
+        if (metricsRes.ok) {
+          const data = await readJsonRecord(metricsRes);
+          const promotionsData = readObject(data, 'promotions');
+          const ordersData = readObject(data, 'orders');
+          const withPromo = readObject(ordersData, 'withPromotion');
+          const withoutPromo = readObject(ordersData, 'withoutPromotion');
+          const campaignsData = readObject(data, 'campaigns');
+          const usageData = readObject(data, 'usage');
+          const communicationsActionsData = readObject(usageData, 'communicationsActions');
+          const usageLimit = readNullableNumber(communicationsActionsData, 'limit');
+          setMetrics({
+            promotionsTotal: readNumber(promotionsData, 'total'),
+            promotionsActive: readNumber(promotionsData, 'active'),
+            requestedPromotions: readNumber(promotionsData, 'requested'),
+            ordersWithPromotion: readNumber(withPromo, 'count'),
+            ordersWithoutPromotion: readNumber(withoutPromo, 'count'),
+            revenueWithPromotion: readNumber(withPromo, 'revenue'),
+            revenueWithoutPromotion: readNumber(withoutPromo, 'revenue'),
+            campaignsTotal: readNumber(campaignsData, 'total'),
+            campaignsSent: readNumber(campaignsData, 'sent'),
+            campaignsFailed: readNumber(campaignsData, 'failed'),
+            usage: {
+              communicationsActions: {
+                limit: usageLimit,
+                used: readNumber(communicationsActionsData, 'used'),
+                remaining: readNullableNumber(communicationsActionsData, 'remaining'),
+                percentUsed: readNumber(communicationsActionsData, 'percentUsed'),
+                isNearLimit: readBoolean(communicationsActionsData, 'isNearLimit'),
+                isExhausted: readBoolean(communicationsActionsData, 'isExhausted'),
+              },
+            },
+          });
+          loadedOk += 1;
+        } else {
+          const data = await readJsonRecord(metricsRes);
+          failures.push(`metrics (${metricsRes.status}): ${readString(data, 'message') || 'request failed'}`);
+        }
+      } else {
+        failures.push(`metrics: ${toErrorMessage(metricsResult.reason)}`);
+      }
+
+      if (failures.length > 0) {
+        if (loadedOk === 0) {
+          toast.error('No se pudo cargar comunicacion');
+        } else {
+          toast.warning('Se cargaron datos parciales de comunicacion');
+        }
+        console.error('Failed to load communications data:', failures);
       }
     } catch (error) {
       console.error('Failed to load communications data:', error);
@@ -293,11 +432,21 @@ export default function CommunicationsPage(): JSX.Element {
   }, [toast, workspace?.id]);
 
   useEffect(() => {
+    if (!capabilities.showCommunicationsModule) {
+      setIsLoading(false);
+      return;
+    }
     void loadAll();
-  }, [loadAll]);
+  }, [capabilities.showCommunicationsModule, loadAll]);
 
   const handleCreatePromotion = async (): Promise<void> => {
     if (!workspace?.id) return;
+    if (isCommunicationsLimitReached) {
+      toast.error(
+        `Alcanzaste el límite mensual de comunicación (${communicationsUsage.limit ?? 0}).`
+      );
+      return;
+    }
     if (!promoName.trim() || !promoProductId || !promoValue || !promoStartsAt || !promoEndsAt) {
       toast.error('Completa todos los campos de la promocion');
       return;
@@ -350,6 +499,12 @@ export default function CommunicationsPage(): JSX.Element {
 
   const handleCreateCampaign = async (): Promise<void> => {
     if (!workspace?.id) return;
+    if (isCommunicationsLimitReached) {
+      toast.error(
+        `Alcanzaste el límite mensual de comunicación (${communicationsUsage.limit ?? 0}).`
+      );
+      return;
+    }
     if (!campaignName.trim() || !campaignMessage.trim()) {
       toast.error('Completa nombre y mensaje de la difusion');
       return;
@@ -390,6 +545,30 @@ export default function CommunicationsPage(): JSX.Element {
     }
   };
 
+  if (!capabilities.showCommunicationsModule) {
+    return (
+      <div className="h-full overflow-y-auto scrollbar-hide p-4 md:p-6">
+        <AnimatedPage className="max-w-4xl mx-auto space-y-4 md:space-y-6">
+          <div className="glass-card rounded-2xl border border-amber-500/35 bg-amber-500/10 p-4">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-xl bg-amber-500/20 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5 text-amber-400" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-foreground">
+                  Tu plan actual no incluye el módulo de comunicación.
+                </p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Este módulo está disponible para planes Standard y Pro.
+                </p>
+              </div>
+            </div>
+          </div>
+        </AnimatedPage>
+      </div>
+    );
+  }
+
   return (
     <div className="h-full overflow-y-auto scrollbar-hide p-4 md:p-6">
       <AnimatedPage className="max-w-7xl mx-auto space-y-4 md:space-y-6">
@@ -401,16 +580,54 @@ export default function CommunicationsPage(): JSX.Element {
             </p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
-            <Button variant="secondary" onClick={() => setIsPromoDialogOpen(true)}>
+            <Button
+              variant="secondary"
+              onClick={() => setIsPromoDialogOpen(true)}
+              disabled={isCommunicationsLimitReached}
+            >
               <Percent className="w-4 h-4 mr-2" />
               Nueva promocion
             </Button>
-            <Button onClick={() => setIsCampaignDialogOpen(true)}>
+            <Button onClick={() => setIsCampaignDialogOpen(true)} disabled={isCommunicationsLimitReached}>
               <Send className="w-4 h-4 mr-2" />
               Nueva difusion
             </Button>
           </div>
         </div>
+
+        {showCommunicationsLimitWarning && hasCommunicationsLimit && (
+          <div
+            className={`glass-card rounded-2xl p-4 border ${
+              isCommunicationsLimitReached
+                ? 'border-red-500/35 bg-red-500/10'
+                : 'border-amber-500/35 bg-amber-500/10'
+            }`}
+          >
+            <div className="flex items-start gap-3">
+              <div
+                className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                  isCommunicationsLimitReached ? 'bg-red-500/20' : 'bg-amber-500/20'
+                }`}
+              >
+                <AlertTriangle
+                  className={`w-5 h-5 ${isCommunicationsLimitReached ? 'text-red-300' : 'text-amber-400'}`}
+                />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-foreground">
+                  {isCommunicationsLimitReached
+                    ? `Alcanzaste el límite mensual de comunicación (${communicationsUsage.limit}).`
+                    : `Te estás por quedar sin cupo mensual de comunicación (${communicationsUsage.used}/${communicationsUsage.limit}).`}
+                </p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  {isCommunicationsLimitReached
+                    ? 'Ya no podrás crear promociones ni difusiones hasta el próximo mes o al mejorar tu plan.'
+                    : `Te quedan ${communicationsUsage.remaining ?? 0} acciones este mes. Cada promoción o difusión nueva consume 1 acción.`}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         <AnimatedStagger className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
           <StatCard
@@ -620,7 +837,11 @@ export default function CommunicationsPage(): JSX.Element {
                 <Input type="datetime-local" value={promoEndsAt} onChange={(e) => setPromoEndsAt(e.target.value)} />
               </div>
             </div>
-            <Button className="w-full" disabled={isCreatingPromo} onClick={() => void handleCreatePromotion()}>
+            <Button
+              className="w-full"
+              disabled={isCreatingPromo || isCommunicationsLimitReached}
+              onClick={() => void handleCreatePromotion()}
+            >
               {isCreatingPromo ? 'Creando...' : 'Crear promocion'}
             </Button>
           </div>
@@ -665,7 +886,11 @@ export default function CommunicationsPage(): JSX.Element {
               <Clock className="w-3.5 h-3.5" />
               El envio se procesa en cola y puede tardar algunos minutos.
             </div>
-            <Button className="w-full" disabled={isCreatingCampaign} onClick={() => void handleCreateCampaign()}>
+            <Button
+              className="w-full"
+              disabled={isCreatingCampaign || isCommunicationsLimitReached}
+              onClick={() => void handleCreateCampaign()}
+            >
               {isCreatingCampaign ? 'Encolando...' : 'Enviar difusion'}
             </Button>
           </div>
@@ -674,4 +899,3 @@ export default function CommunicationsPage(): JSX.Element {
     </div>
   );
 }
-

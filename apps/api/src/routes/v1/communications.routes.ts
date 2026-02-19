@@ -8,6 +8,11 @@ import { type Prisma } from '@prisma/client';
 import { type FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 
+import { COMMERCE_USAGE_METRICS, type CommercePlan } from '@nexova/shared';
+
+import { getEffectiveCommercePlanLimits } from '../../utils/commerce-plan-limits.js';
+import { getWorkspacePlanContext } from '../../utils/commerce-plan.js';
+import { getMonthlyUsage, recordMonthlyUsage } from '../../utils/monthly-usage.js';
 import { computePromotionStatus } from '../../utils/promotions.js';
 
 const promotionStatuses = ['draft', 'active', 'paused', 'archived', 'expired'] as const;
@@ -82,7 +87,101 @@ function normalizePhone(value: string | null | undefined): string | null {
   return `+${digits}`;
 }
 
+type CommunicationsUsageSummary = {
+  plan: CommercePlan;
+  limit: number | null;
+  used: number;
+  remaining: number | null;
+  percentUsed: number;
+  isNearLimit: boolean;
+  isExhausted: boolean;
+};
+
 export const communicationsRoutes: FastifyPluginAsync = async (fastify) => {
+  const resolvePlanForRequest = async (
+    workspaceId: string,
+    userId?: string | null
+  ): Promise<{ plan: CommercePlan; showCommunicationsModule: boolean }> => {
+    const membership =
+      userId
+        ? await fastify.prisma.membership.findFirst({
+            where: {
+              workspaceId,
+              userId,
+              status: { in: ['ACTIVE', 'active'] },
+            },
+            include: { role: { select: { name: true } } },
+          })
+        : null;
+
+    const planContext = await getWorkspacePlanContext(
+      fastify.prisma,
+      workspaceId,
+      membership?.role?.name
+    );
+
+    return {
+      plan: planContext.plan,
+      showCommunicationsModule: planContext.capabilities.showCommunicationsModule,
+    };
+  };
+
+  const getCommunicationsUsageSummary = async (
+    workspaceId: string,
+    plan: CommercePlan
+  ): Promise<CommunicationsUsageSummary> => {
+    const limits = await getEffectiveCommercePlanLimits(fastify.prisma, plan);
+    const limit = limits.communicationsActionsPerMonth;
+    const usedRaw = await getMonthlyUsage(fastify.prisma, {
+      workspaceId,
+      metric: COMMERCE_USAGE_METRICS.communicationsActions,
+    });
+    const used = Number(usedRaw);
+
+    if (limit === null) {
+      return {
+        plan,
+        limit: null,
+        used,
+        remaining: null,
+        percentUsed: 0,
+        isNearLimit: false,
+        isExhausted: false,
+      };
+    }
+
+    const remaining = Math.max(0, limit - used);
+    const percentUsed = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 100;
+    const warningThreshold = Math.max(1, Math.ceil(limit * 0.8));
+    const isExhausted = used >= limit;
+    const isNearLimit = !isExhausted && used >= warningThreshold;
+
+    return {
+      plan,
+      limit,
+      used,
+      remaining,
+      percentUsed,
+      isNearLimit,
+      isExhausted,
+    };
+  };
+
+  const ensureCommunicationsEnabled = async (
+    workspaceId: string,
+    userId?: string | null
+  ): Promise<{ plan: CommercePlan; usage: CommunicationsUsageSummary } | null> => {
+    const planContext = await resolvePlanForRequest(workspaceId, userId);
+    if (!planContext.showCommunicationsModule) {
+      return null;
+    }
+    const usage = await getCommunicationsUsageSummary(workspaceId, planContext.plan);
+    return {
+      plan: planContext.plan,
+      usage,
+    };
+  };
+
   fastify.get(
     '/promotions',
     { preHandler: [fastify.requirePermission('products:read')] },
@@ -90,6 +189,13 @@ export const communicationsRoutes: FastifyPluginAsync = async (fastify) => {
       const workspaceId = getWorkspaceId(request.headers as Record<string, unknown>);
       if (!workspaceId) {
         return reply.code(400).send({ error: 'MISSING_WORKSPACE', message: 'X-Workspace-Id header required' });
+      }
+      const planAccess = await ensureCommunicationsEnabled(workspaceId, request.user?.sub);
+      if (!planAccess) {
+        return reply.code(403).send({
+          error: 'FORBIDDEN_BY_PLAN',
+          message: 'Tu plan actual no incluye el módulo de comunicación',
+        });
       }
 
       const query = promotionsQuerySchema.parse(request.query);
@@ -217,6 +323,19 @@ export const communicationsRoutes: FastifyPluginAsync = async (fastify) => {
       if (!workspaceId) {
         return reply.code(400).send({ error: 'MISSING_WORKSPACE', message: 'X-Workspace-Id header required' });
       }
+      const planAccess = await ensureCommunicationsEnabled(workspaceId, request.user?.sub);
+      if (!planAccess) {
+        return reply.code(403).send({
+          error: 'FORBIDDEN_BY_PLAN',
+          message: 'Tu plan actual no incluye el módulo de comunicación',
+        });
+      }
+      if (planAccess.usage.isExhausted && planAccess.usage.limit !== null) {
+        return reply.code(429).send({
+          error: 'PLAN_QUOTA_EXCEEDED',
+          message: `Alcanzaste el límite mensual de comunicación (${planAccess.usage.limit}).`,
+        });
+      }
 
       const body = createPromotionSchema.parse(request.body);
       if (body.endsAt <= body.startsAt) {
@@ -256,11 +375,44 @@ export const communicationsRoutes: FastifyPluginAsync = async (fastify) => {
         },
       });
 
+      await recordMonthlyUsage(fastify.prisma, {
+        workspaceId,
+        metric: COMMERCE_USAGE_METRICS.communicationsActions,
+        quantity: 1,
+        metadata: { source: 'communications.promotions.create' },
+      });
+
+      const usageAfterCreate = planAccess.usage.limit === null
+        ? {
+            ...planAccess.usage,
+            used: planAccess.usage.used + 1,
+          }
+        : (() => {
+            const limit = planAccess.usage.limit;
+            const used = planAccess.usage.used + 1;
+            const remaining = Math.max(0, limit - used);
+            const percentUsed = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 100;
+            const warningThreshold = Math.max(1, Math.ceil(limit * 0.8));
+            const isExhausted = used >= limit;
+            const isNearLimit = !isExhausted && used >= warningThreshold;
+            return {
+              ...planAccess.usage,
+              used,
+              remaining,
+              percentUsed,
+              isNearLimit,
+              isExhausted,
+            };
+          })();
+
       return reply.code(201).send({
         promotion: {
           ...promotion,
           product,
           computedStatus: computePromotionStatus(promotion.status, promotion.startsAt, promotion.endsAt),
+        },
+        usage: {
+          communicationsActions: usageAfterCreate,
         },
       });
     }
@@ -273,6 +425,13 @@ export const communicationsRoutes: FastifyPluginAsync = async (fastify) => {
       const workspaceId = getWorkspaceId(request.headers as Record<string, unknown>);
       if (!workspaceId) {
         return reply.code(400).send({ error: 'MISSING_WORKSPACE', message: 'X-Workspace-Id header required' });
+      }
+      const planAccess = await ensureCommunicationsEnabled(workspaceId, request.user?.sub);
+      if (!planAccess) {
+        return reply.code(403).send({
+          error: 'FORBIDDEN_BY_PLAN',
+          message: 'Tu plan actual no incluye el módulo de comunicación',
+        });
       }
 
       const { id } = request.params as { id: string };
@@ -347,6 +506,13 @@ export const communicationsRoutes: FastifyPluginAsync = async (fastify) => {
       if (!workspaceId) {
         return reply.code(400).send({ error: 'MISSING_WORKSPACE', message: 'X-Workspace-Id header required' });
       }
+      const planAccess = await ensureCommunicationsEnabled(workspaceId, request.user?.sub);
+      if (!planAccess) {
+        return reply.code(403).send({
+          error: 'FORBIDDEN_BY_PLAN',
+          message: 'Tu plan actual no incluye el módulo de comunicación',
+        });
+      }
 
       const query = campaignsQuerySchema.parse(request.query);
       const where: Prisma.BroadcastCampaignWhereInput = {
@@ -403,6 +569,13 @@ export const communicationsRoutes: FastifyPluginAsync = async (fastify) => {
       const workspaceId = getWorkspaceId(request.headers as Record<string, unknown>);
       if (!workspaceId) {
         return reply.code(400).send({ error: 'MISSING_WORKSPACE', message: 'X-Workspace-Id header required' });
+      }
+      const planAccess = await ensureCommunicationsEnabled(workspaceId, request.user?.sub);
+      if (!planAccess) {
+        return reply.code(403).send({
+          error: 'FORBIDDEN_BY_PLAN',
+          message: 'Tu plan actual no incluye el módulo de comunicación',
+        });
       }
 
       const { id } = request.params as { id: string };
@@ -462,6 +635,19 @@ export const communicationsRoutes: FastifyPluginAsync = async (fastify) => {
       const workspaceId = getWorkspaceId(request.headers as Record<string, unknown>);
       if (!workspaceId) {
         return reply.code(400).send({ error: 'MISSING_WORKSPACE', message: 'X-Workspace-Id header required' });
+      }
+      const planAccess = await ensureCommunicationsEnabled(workspaceId, request.user?.sub);
+      if (!planAccess) {
+        return reply.code(403).send({
+          error: 'FORBIDDEN_BY_PLAN',
+          message: 'Tu plan actual no incluye el módulo de comunicación',
+        });
+      }
+      if (planAccess.usage.isExhausted && planAccess.usage.limit !== null) {
+        return reply.code(429).send({
+          error: 'PLAN_QUOTA_EXCEEDED',
+          message: `Alcanzaste el límite mensual de comunicación (${planAccess.usage.limit}).`,
+        });
       }
 
       const body = createCampaignSchema.parse(request.body);
@@ -593,7 +779,42 @@ export const communicationsRoutes: FastifyPluginAsync = async (fastify) => {
         return createdCampaign;
       });
 
-      return reply.code(201).send({ campaign });
+      await recordMonthlyUsage(fastify.prisma, {
+        workspaceId,
+        metric: COMMERCE_USAGE_METRICS.communicationsActions,
+        quantity: 1,
+        metadata: { source: 'communications.campaigns.create' },
+      });
+
+      const usageAfterCreate = planAccess.usage.limit === null
+        ? {
+            ...planAccess.usage,
+            used: planAccess.usage.used + 1,
+          }
+        : (() => {
+            const limit = planAccess.usage.limit;
+            const used = planAccess.usage.used + 1;
+            const remaining = Math.max(0, limit - used);
+            const percentUsed = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 100;
+            const warningThreshold = Math.max(1, Math.ceil(limit * 0.8));
+            const isExhausted = used >= limit;
+            const isNearLimit = !isExhausted && used >= warningThreshold;
+            return {
+              ...planAccess.usage,
+              used,
+              remaining,
+              percentUsed,
+              isNearLimit,
+              isExhausted,
+            };
+          })();
+
+      return reply.code(201).send({
+        campaign,
+        usage: {
+          communicationsActions: usageAfterCreate,
+        },
+      });
     }
   );
 
@@ -604,6 +825,13 @@ export const communicationsRoutes: FastifyPluginAsync = async (fastify) => {
       const workspaceId = getWorkspaceId(request.headers as Record<string, unknown>);
       if (!workspaceId) {
         return reply.code(400).send({ error: 'MISSING_WORKSPACE', message: 'X-Workspace-Id header required' });
+      }
+      const planAccess = await ensureCommunicationsEnabled(workspaceId, request.user?.sub);
+      if (!planAccess) {
+        return reply.code(403).send({
+          error: 'FORBIDDEN_BY_PLAN',
+          message: 'Tu plan actual no incluye el módulo de comunicación',
+        });
       }
 
       const orderFilterBase: Prisma.OrderWhereInput = {
@@ -711,6 +939,9 @@ export const communicationsRoutes: FastifyPluginAsync = async (fastify) => {
           sent: sentTotal,
           failed: failedTotal,
           deliveryRate: attemptedTotal > 0 ? sentTotal / attemptedTotal : 0,
+        },
+        usage: {
+          communicationsActions: planAccess.usage,
         },
       });
     }

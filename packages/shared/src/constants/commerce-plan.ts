@@ -6,6 +6,7 @@
 export type CommercePlan = 'basic' | 'standard' | 'pro';
 
 export interface CommercePlanCapabilities {
+  showCommunicationsModule: boolean;
   showInvoicesModule: boolean;
   showDebtsModule: boolean;
   showQuickActions: boolean;
@@ -43,6 +44,7 @@ const ROLE_ALIASES: Record<string, CommercePlan> = {
 
 const PLAN_CAPABILITIES: Record<CommercePlan, CommercePlanCapabilities> = {
   basic: {
+    showCommunicationsModule: false,
     showInvoicesModule: false,
     showDebtsModule: false,
     showQuickActions: false,
@@ -60,6 +62,7 @@ const PLAN_CAPABILITIES: Record<CommercePlan, CommercePlanCapabilities> = {
     askInvoiceAfterOrder: false,
   },
   standard: {
+    showCommunicationsModule: true,
     showInvoicesModule: true,
     showDebtsModule: true,
     showQuickActions: false,
@@ -77,6 +80,7 @@ const PLAN_CAPABILITIES: Record<CommercePlan, CommercePlanCapabilities> = {
     askInvoiceAfterOrder: true,
   },
   pro: {
+    showCommunicationsModule: true,
     showInvoicesModule: true,
     showDebtsModule: true,
     showQuickActions: true,
