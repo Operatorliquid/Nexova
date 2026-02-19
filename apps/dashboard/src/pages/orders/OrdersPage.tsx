@@ -1157,7 +1157,8 @@ export default function OrdersPage(): JSX.Element {
     if (!workspace?.id || !selectedOrder) return;
     setIsAccepting(true);
     try {
-      if (selectedOrder.status === 'awaiting_acceptance' || selectedOrder.status === 'draft') {
+      const acceptanceStatus = resolveAcceptanceStatus(selectedOrder);
+      if (acceptanceStatus === 'awaiting_acceptance') {
         const res = await apiFetch(
           `/api/v1/orders/${selectedOrder.id}`,
           {
@@ -1986,7 +1987,7 @@ export default function OrdersPage(): JSX.Element {
           if (!open) resetReceiptUpload();
         }}
       >
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg max-h-[88dvh] overflow-hidden flex flex-col">
           <DialogHeader className="pb-4 border-b border-border">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
@@ -1998,7 +1999,7 @@ export default function OrdersPage(): JSX.Element {
               </div>
             </div>
           </DialogHeader>
-          <div className="space-y-4">
+          <div className="space-y-4 overflow-y-auto pr-1 flex-1 min-h-0">
             <div className="space-y-2">
               <label className="text-sm font-medium text-foreground">Método de pago</label>
               <Select
