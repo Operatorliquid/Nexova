@@ -42,6 +42,25 @@ export interface MetricsPaymentsByMethod {
   count: number;
 }
 
+export interface MetricsPromotionItem {
+  promotionId: string;
+  name: string;
+  promoType: string;
+  value: number;
+  orderCount: number;
+  revenue: number;
+  discountTotal: number;
+}
+
+export interface MetricsPromotionSummary {
+  ordersWithPromotion: number;
+  ordersWithoutPromotion: number;
+  revenueWithPromotion: number;
+  revenueWithoutPromotion: number;
+  discountTotalWithPromotion: number;
+  topPromotions: MetricsPromotionItem[];
+}
+
 export interface MetricsResponse {
   range: {
     from: string | null;
@@ -56,6 +75,7 @@ export interface MetricsResponse {
   salesByMonth: MetricsSeriesPoint[];
   stockPurchasesByMonth: MetricsSeriesPoint[];
   paymentsByMethod: MetricsPaymentsByMethod[];
+  promotion: MetricsPromotionSummary;
 }
 
 const EXCLUDED_STATUSES = ['cancelled', 'returned', 'draft'];
@@ -214,6 +234,8 @@ export async function buildMetrics(
       paidAmount: true,
       createdAt: true,
       customerId: true,
+      promotionId: true,
+      discount: true,
     },
   });
 
@@ -423,6 +445,57 @@ export async function buildMetrics(
     })
   );
 
+  const promotionAgg = new Map<string, { orderCount: number; revenue: number; discountTotal: number }>();
+  let ordersWithPromotion = 0;
+  let ordersWithoutPromotion = 0;
+  let revenueWithPromotion = 0;
+  let revenueWithoutPromotion = 0;
+  let discountTotalWithPromotion = 0;
+
+  for (const order of orders) {
+    if (order.promotionId) {
+      ordersWithPromotion += 1;
+      revenueWithPromotion += order.total;
+      discountTotalWithPromotion += order.discount;
+      const current = promotionAgg.get(order.promotionId) || {
+        orderCount: 0,
+        revenue: 0,
+        discountTotal: 0,
+      };
+      current.orderCount += 1;
+      current.revenue += order.total;
+      current.discountTotal += order.discount;
+      promotionAgg.set(order.promotionId, current);
+    } else {
+      ordersWithoutPromotion += 1;
+      revenueWithoutPromotion += order.total;
+    }
+  }
+
+  const promotionIds = Array.from(promotionAgg.keys());
+  const promotions = promotionIds.length
+    ? await prisma.promotion.findMany({
+      where: { workspaceId, id: { in: promotionIds }, deletedAt: null },
+      select: { id: true, name: true, promoType: true, value: true },
+    })
+    : [];
+  const promotionById = new Map(promotions.map((promotion) => [promotion.id, promotion]));
+  const topPromotions: MetricsPromotionItem[] = Array.from(promotionAgg.entries())
+    .map(([promotionId, summary]) => {
+      const promotion = promotionById.get(promotionId);
+      return {
+        promotionId,
+        name: promotion?.name || 'Promocion eliminada',
+        promoType: promotion?.promoType || 'unknown',
+        value: promotion?.value || 0,
+        orderCount: summary.orderCount,
+        revenue: summary.revenue,
+        discountTotal: summary.discountTotal,
+      };
+    })
+    .sort((a, b) => b.orderCount - a.orderCount)
+    .slice(0, 5);
+
   return {
     range: {
       from: from ? from.toISOString() : null,
@@ -446,5 +519,13 @@ export async function buildMetrics(
     salesByMonth,
     stockPurchasesByMonth,
     paymentsByMethod,
+    promotion: {
+      ordersWithPromotion,
+      ordersWithoutPromotion,
+      revenueWithPromotion,
+      revenueWithoutPromotion,
+      discountTotalWithPromotion,
+      topPromotions,
+    },
   };
 }

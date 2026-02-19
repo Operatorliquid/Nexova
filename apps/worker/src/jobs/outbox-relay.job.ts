@@ -17,6 +17,7 @@ interface OutboxRelayResult {
 
 const DEFAULT_REALTIME_CHANNEL = 'nexova:realtime';
 const OWNER_WHATSAPP_NOTIFICATION_EVENT = 'owner.whatsapp_notification';
+const COMMUNICATION_BROADCAST_EVENT = 'communications.broadcast_send';
 
 function resolveWhatsAppApiKey(number: {
   apiKeyEnc?: string | null;
@@ -112,6 +113,93 @@ async function sendOwnerWhatsAppNotification(
   await client.sendText(params.to, params.text);
 }
 
+async function sendWhatsAppMessage(
+  prisma: PrismaClient,
+  params: { workspaceId: string; to: string; text: string; imageUrl?: string | null }
+): Promise<{ provider: string; messageId: string }> {
+  const whatsappNumber = await prisma.whatsAppNumber.findFirst({
+    where: { workspaceId: params.workspaceId, isActive: true },
+    select: { apiKeyEnc: true, apiKeyIv: true, apiUrl: true, phoneNumber: true, provider: true, providerConfig: true },
+  });
+
+  if (!whatsappNumber) {
+    throw new Error('WhatsApp not configured');
+  }
+
+  const apiKey = resolveWhatsAppApiKey(whatsappNumber);
+  if (!apiKey) {
+    throw new Error('WhatsApp API key not configured');
+  }
+
+  const provider = (whatsappNumber.provider || 'infobip').toLowerCase();
+  if (provider === 'evolution') {
+    const baseUrl = resolveEvolutionBaseUrl(whatsappNumber.apiUrl);
+    const instanceName = getEvolutionInstanceName(whatsappNumber.providerConfig);
+    if (!baseUrl || !instanceName) {
+      throw new Error('Evolution not configured (baseUrl/instanceName missing)');
+    }
+    const client = new EvolutionClient({ apiKey, baseUrl, instanceName });
+    const result = params.imageUrl
+      ? await client.sendImage(params.to, params.imageUrl, params.text)
+      : await client.sendText(params.to, params.text);
+    return { provider, messageId: result.messageId };
+  }
+
+  const client = new InfobipClient({
+    apiKey,
+    baseUrl: resolveInfobipBaseUrl(whatsappNumber.apiUrl),
+    senderNumber: whatsappNumber.phoneNumber,
+  });
+
+  const result = params.imageUrl
+    ? await client.sendImage(params.to, params.imageUrl, params.text)
+    : await client.sendText(params.to, params.text);
+  return { provider, messageId: result.messageId };
+}
+
+async function refreshBroadcastCampaignStatus(
+  prisma: PrismaClient,
+  params: { workspaceId: string; campaignId: string; now: Date }
+): Promise<void> {
+  const counts = await prisma.broadcastRecipient.groupBy({
+    by: ['status'],
+    where: {
+      workspaceId: params.workspaceId,
+      campaignId: params.campaignId,
+    },
+    _count: { _all: true },
+  });
+
+  let pending = 0;
+  let sent = 0;
+  let failed = 0;
+  for (const row of counts) {
+    if (row.status === 'pending') pending = row._count._all;
+    if (row.status === 'sent') sent = row._count._all;
+    if (row.status === 'failed') failed = row._count._all;
+  }
+
+  let status = 'processing';
+  let finishedAt: Date | null = null;
+  if (pending === 0) {
+    finishedAt = params.now;
+    if (sent > 0 && failed === 0) status = 'completed';
+    else if (sent > 0 && failed > 0) status = 'partial';
+    else if (sent === 0 && failed > 0) status = 'failed';
+  }
+
+  await prisma.broadcastCampaign.updateMany({
+    where: { id: params.campaignId, workspaceId: params.workspaceId },
+    data: {
+      totalRecipients: sent + failed + pending,
+      sentCount: sent,
+      failedCount: failed,
+      status,
+      finishedAt,
+    },
+  });
+}
+
 export function createOutboxRelayProcessor(
   prisma: PrismaClient,
   publisher: Redis,
@@ -165,6 +253,110 @@ export function createOutboxRelayProcessor(
 
           processed++;
           continue;
+        }
+
+        if (event.eventType === COMMUNICATION_BROADCAST_EVENT) {
+          const payload = (event.payload as Record<string, unknown>) || {};
+          const campaignId = typeof payload.campaignId === 'string' ? payload.campaignId : '';
+          const recipientId = typeof payload.recipientId === 'string' ? payload.recipientId : '';
+          const to = typeof payload.to === 'string' ? payload.to : '';
+          const message = typeof payload.message === 'string' ? payload.message : '';
+          const imageUrl = typeof payload.imageUrl === 'string' ? payload.imageUrl : null;
+
+          if (!campaignId || !recipientId || !to.trim() || !message.trim()) {
+            throw new Error('Invalid broadcast payload');
+          }
+
+          const recipient = await prisma.broadcastRecipient.findFirst({
+            where: {
+              id: recipientId,
+              campaignId,
+              workspaceId: event.workspaceId,
+            },
+            select: {
+              id: true,
+              status: true,
+            },
+          });
+
+          if (!recipient) {
+            throw new Error('Broadcast recipient not found');
+          }
+
+          if (recipient.status === 'sent') {
+            await prisma.eventOutbox.updateMany({
+              where: { id: event.id, workspaceId: event.workspaceId },
+              data: {
+                status: 'published',
+                publishedAt: now,
+                errorMessage: null,
+              },
+            });
+            processed++;
+            continue;
+          }
+
+          try {
+            const sendResult = await sendWhatsAppMessage(prisma, {
+              workspaceId: event.workspaceId,
+              to,
+              text: message,
+              imageUrl,
+            });
+
+            await prisma.broadcastRecipient.updateMany({
+              where: {
+                id: recipientId,
+                campaignId,
+                workspaceId: event.workspaceId,
+              },
+              data: {
+                status: 'sent',
+                provider: sendResult.provider,
+                providerMessageId: sendResult.messageId,
+                errorMessage: null,
+                sentAt: now,
+              },
+            });
+
+            await refreshBroadcastCampaignStatus(prisma, {
+              workspaceId: event.workspaceId,
+              campaignId,
+              now,
+            });
+
+            await prisma.eventOutbox.updateMany({
+              where: { id: event.id, workspaceId: event.workspaceId },
+              data: {
+                status: 'published',
+                publishedAt: now,
+                errorMessage: null,
+              },
+            });
+
+            processed++;
+            continue;
+          } catch (error) {
+            await prisma.broadcastRecipient.updateMany({
+              where: {
+                id: recipientId,
+                campaignId,
+                workspaceId: event.workspaceId,
+              },
+              data: {
+                status: 'failed',
+                errorMessage: error instanceof Error ? error.message : 'Unknown error',
+              },
+            });
+
+            await refreshBroadcastCampaignStatus(prisma, {
+              workspaceId: event.workspaceId,
+              campaignId,
+              now,
+            });
+
+            throw error;
+          }
         }
 
         const payload = {

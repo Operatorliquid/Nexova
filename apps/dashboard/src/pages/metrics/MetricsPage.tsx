@@ -74,6 +74,22 @@ interface MetricsResponse {
   salesByMonth: MetricsSeriesPoint[];
   stockPurchasesByMonth: MetricsSeriesPoint[];
   paymentsByMethod: Array<{ method: string; total: number; count: number }>;
+  promotion?: {
+    ordersWithPromotion: number;
+    ordersWithoutPromotion: number;
+    revenueWithPromotion: number;
+    revenueWithoutPromotion: number;
+    discountTotalWithPromotion: number;
+    topPromotions: Array<{
+      promotionId: string;
+      name: string;
+      promoType: string;
+      value: number;
+      orderCount: number;
+      revenue: number;
+      discountTotal: number;
+    }>;
+  };
 }
 
 interface GeneratedInsights {
@@ -176,6 +192,7 @@ export default function MetricsPage(): JSX.Element {
   const salesByMonth = metrics?.salesByMonth ?? EMPTY_SERIES;
   const stockPurchasesByMonth = metrics?.stockPurchasesByMonth ?? EMPTY_SERIES;
   const paymentsByMethod = metrics?.paymentsByMethod ?? EMPTY_PAYMENTS;
+  const promotionSummary = metrics?.promotion;
 
   const paymentMethodTotals = useMemo(() => {
     const total = paymentsByMethod.reduce((sum, entry) => sum + entry.total, 0);
@@ -293,6 +310,56 @@ export default function MetricsPage(): JSX.Element {
           <StatCard label="Ticket promedio" value={formatCurrency(metrics?.summary.avgOrderValue ?? 0)} icon={TrendingUp} color="emerald" isLoading={isLoading} />
           <StatCard label="Cobrado" value={formatCurrency(metrics?.summary.totalPaid ?? 0)} icon={CreditCard} color="cyan" isLoading={isLoading} />
         </AnimatedStagger>
+
+        <div className="glass-card rounded-2xl p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="font-semibold text-foreground">Impacto de promociones</h3>
+              <p className="text-xs text-muted-foreground">Ventas con promo vs sin promo</p>
+            </div>
+            <span className="text-sm text-muted-foreground">
+              Descuento total: {formatCurrency(promotionSummary?.discountTotalWithPromotion ?? 0)}
+            </span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="rounded-xl border border-border bg-secondary/40 p-4">
+              <p className="text-xs text-muted-foreground">Con promocion</p>
+              <p className="text-lg font-semibold text-foreground mt-1">
+                {formatCurrency(promotionSummary?.revenueWithPromotion ?? 0)}
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {(promotionSummary?.ordersWithPromotion ?? 0)} pedidos
+              </p>
+            </div>
+            <div className="rounded-xl border border-border bg-secondary/40 p-4">
+              <p className="text-xs text-muted-foreground">Sin promocion</p>
+              <p className="text-lg font-semibold text-foreground mt-1">
+                {formatCurrency(promotionSummary?.revenueWithoutPromotion ?? 0)}
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {(promotionSummary?.ordersWithoutPromotion ?? 0)} pedidos
+              </p>
+            </div>
+          </div>
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-foreground">Promos mas pedidas</p>
+            {(promotionSummary?.topPromotions?.length ?? 0) === 0 ? (
+              <p className="text-xs text-muted-foreground">No hay promociones aplicadas en este rango.</p>
+            ) : (
+              <div className="space-y-2">
+                {(promotionSummary?.topPromotions ?? []).map((promotion) => (
+                  <div key={promotion.promotionId} className="flex items-center justify-between rounded-lg border border-border px-3 py-2">
+                    <div>
+                      <p className="text-sm text-foreground">{promotion.name}</p>
+                      <p className="text-xs text-muted-foreground">{promotion.orderCount} pedidos</p>
+                    </div>
+                    <p className="text-sm font-medium text-foreground">{formatCurrency(promotion.revenue)}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
 
         {/* Sales by day + top customers */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

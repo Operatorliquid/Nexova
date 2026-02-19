@@ -97,6 +97,13 @@ interface Order {
   paidAmount: number;
   pendingAmount: number;
   notes: string | null;
+  hasPromotion?: boolean;
+  promotion?: {
+    id: string;
+    name: string;
+    promoType: string;
+    value: number;
+  } | null;
   createdAt: string;
   updatedAt?: string;
   receipts?: ReceiptItem[];
@@ -977,6 +984,11 @@ export default function OrdersPage(): JSX.Element {
             {invoice.label}
           </span>
         )}
+        {order.hasPromotion && (
+          <span className="px-2 py-1 text-xs rounded-full bg-primary/20 text-primary">
+            Promo
+          </span>
+        )}
       </div>
     );
   };
@@ -1679,6 +1691,12 @@ export default function OrdersPage(): JSX.Element {
                           <div className="flex justify-between text-sm text-emerald-400">
                             <span>Descuento</span>
                             <span>-{formatCurrency(selectedOrder.discount)}</span>
+                          </div>
+                        )}
+                        {selectedOrder.hasPromotion && selectedOrder.promotion && (
+                          <div className="flex justify-between text-sm text-primary">
+                            <span>Promo aplicada</span>
+                            <span>{selectedOrder.promotion.name}</span>
                           </div>
                         )}
                         <div className="flex justify-between text-lg font-bold text-foreground pt-2 border-t border-border">

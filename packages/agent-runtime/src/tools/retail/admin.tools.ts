@@ -194,6 +194,69 @@ const AdminAdjustPricesPercentInput = z
     }
   );
 
+const ADMIN_PROMOTION_TYPE = z.enum(['percentage', 'fixed_price']);
+const ADMIN_PROMOTION_STATUS = z.enum(['draft', 'active', 'paused', 'archived']);
+const ADMIN_CAMPAIGN_STATUS = z.enum(['draft', 'processing', 'completed', 'partial', 'failed', 'cancelled']);
+
+const AdminCreatePromotionInput = z
+  .object({
+    name: z.string().min(2).max(150),
+    productId: z.string().uuid(),
+    promoType: ADMIN_PROMOTION_TYPE,
+    value: z.number().int().min(1),
+    description: z.string().max(500).optional(),
+    startsAt: z
+      .string()
+      .optional()
+      .describe('ISO datetime de inicio. Si se omite, usa ahora.'),
+    endsAt: z
+      .string()
+      .optional()
+      .describe('ISO datetime de fin. Si se omite, usa durationDays.'),
+    durationDays: z
+      .number()
+      .int()
+      .min(1)
+      .max(365)
+      .optional()
+      .default(7)
+      .describe('Duración en días si no se informa endsAt.'),
+    status: ADMIN_PROMOTION_STATUS.optional().default('active'),
+  })
+  .refine((value) => value.endsAt || value.durationDays, {
+    message: 'Debe informar endsAt o durationDays.',
+  });
+
+const AdminListPromotionsInput = z.object({
+  status: z.enum(['draft', 'active', 'paused', 'archived', 'expired']).optional(),
+  search: z.string().optional(),
+  limit: z.number().int().min(1).max(200).optional().default(50),
+  offset: z.number().int().min(0).optional().default(0),
+});
+
+const AdminCreateBroadcastCampaignInput = z
+  .object({
+    name: z.string().min(2).max(150),
+    message: z.string().min(3).max(3000),
+    imageUrl: z.string().url().max(2000).optional(),
+    promotionId: z.string().uuid().optional(),
+    sendToAll: z.boolean().optional().default(true),
+    customerIds: z.array(z.string().uuid()).max(5000).optional(),
+  })
+  .refine((value) => value.sendToAll || (value.customerIds && value.customerIds.length > 0), {
+    message: 'Si sendToAll es false, debe enviar customerIds.',
+  });
+
+const AdminGetCommunicationsMetricsInput = z.object({
+  period: OWNER_PERIOD.optional().default('last_30_days'),
+});
+
+const AdminListBroadcastCampaignsInput = z.object({
+  status: ADMIN_CAMPAIGN_STATUS.optional(),
+  limit: z.number().int().min(1).max(100).optional().default(20),
+  offset: z.number().int().min(0).optional().default(0),
+});
+
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 const ORDER_STATUS_ALIASES: Record<string, string> = {
@@ -398,6 +461,23 @@ function assertOwnerContext(context: ToolContext): ToolResult | null {
     return { success: false, error: 'No autorizado: tool solo disponible para el dueño.' };
   }
   return null;
+}
+
+function parseIsoDatetime(value: string | undefined): Date | null {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed;
+}
+
+function computePromotionComputedStatus(status: string, startsAt: Date, endsAt: Date): string {
+  if (status === 'archived' || status === 'paused' || status === 'draft' || status === 'expired') {
+    return status;
+  }
+  const now = new Date();
+  if (now > endsAt) return 'expired';
+  if (now < startsAt) return 'draft';
+  return status;
 }
 
 export class AdminGetOrdersKpisTool extends BaseTool<typeof AdminOrdersKpisInput> {
@@ -2615,6 +2695,626 @@ export class AdminProcessStockReceiptTool extends BaseTool<typeof AdminProcessSt
   }
 }
 
+export class AdminCreatePromotionTool extends BaseTool<typeof AdminCreatePromotionInput> {
+  private prisma: PrismaClient;
+
+  constructor(prisma: PrismaClient) {
+    super({
+      name: 'admin_create_promotion',
+      description: 'Crea una promoción por producto (porcentaje o precio fijo) con duración (solo owner).',
+      category: ToolCategory.MUTATION,
+      inputSchema: AdminCreatePromotionInput,
+      requiresConfirmation: true,
+    });
+    this.prisma = prisma;
+  }
+
+  async execute(input: z.infer<typeof AdminCreatePromotionInput>, context: ToolContext): Promise<ToolResult> {
+    const guard = assertOwnerContext(context);
+    if (guard) return guard;
+
+    const product = await this.prisma.product.findFirst({
+      where: {
+        id: input.productId,
+        workspaceId: context.workspaceId,
+        deletedAt: null,
+      },
+      select: { id: true, name: true, price: true },
+    });
+    if (!product) {
+      return { success: false, error: 'Producto no encontrado en este negocio.' };
+    }
+
+    if (input.promoType === 'percentage' && input.value > 100) {
+      return { success: false, error: 'El porcentaje debe estar entre 1 y 100.' };
+    }
+
+    const startsAt = parseIsoDatetime(input.startsAt) || new Date();
+    const parsedEnd = parseIsoDatetime(input.endsAt);
+    const endsAt = parsedEnd || new Date(startsAt.getTime() + (input.durationDays || 7) * MS_PER_DAY);
+    if (!parsedEnd && input.endsAt) {
+      return { success: false, error: 'endsAt no es una fecha válida (ISO).' };
+    }
+    if (endsAt <= startsAt) {
+      return { success: false, error: 'La fecha de fin debe ser mayor a la fecha de inicio.' };
+    }
+
+    const promotion = await this.prisma.promotion.create({
+      data: {
+        workspaceId: context.workspaceId,
+        productId: input.productId,
+        name: input.name.trim(),
+        description: input.description?.trim() || null,
+        promoType: input.promoType,
+        value: input.value,
+        startsAt,
+        endsAt,
+        status: input.status,
+        createdBy: context.userId || null,
+        metadata: {} as Prisma.InputJsonValue,
+      },
+      select: {
+        id: true,
+        name: true,
+        promoType: true,
+        value: true,
+        startsAt: true,
+        endsAt: true,
+        status: true,
+      },
+    });
+
+    return {
+      success: true,
+      data: {
+        promotionId: promotion.id,
+        name: promotion.name,
+        product: { id: product.id, name: product.name, basePriceCents: product.price },
+        promoType: promotion.promoType,
+        value: promotion.value,
+        status: promotion.status,
+        computedStatus: computePromotionComputedStatus(promotion.status, promotion.startsAt, promotion.endsAt),
+        startsAt: promotion.startsAt.toISOString(),
+        endsAt: promotion.endsAt.toISOString(),
+        message: `Promoción "${promotion.name}" creada para ${product.name}.`,
+      },
+    };
+  }
+}
+
+export class AdminListPromotionsTool extends BaseTool<typeof AdminListPromotionsInput> {
+  private prisma: PrismaClient;
+
+  constructor(prisma: PrismaClient) {
+    super({
+      name: 'admin_list_promotions',
+      description: 'Lista promociones del negocio con métricas de pedidos (solo owner).',
+      category: ToolCategory.QUERY,
+      inputSchema: AdminListPromotionsInput,
+    });
+    this.prisma = prisma;
+  }
+
+  async execute(input: z.infer<typeof AdminListPromotionsInput>, context: ToolContext): Promise<ToolResult> {
+    const guard = assertOwnerContext(context);
+    if (guard) return guard;
+
+    const where: Prisma.PromotionWhereInput = {
+      workspaceId: context.workspaceId,
+      deletedAt: null,
+    };
+    const andConditions: Prisma.PromotionWhereInput[] = [];
+
+    if (input.status) {
+      if (input.status === 'expired') {
+        andConditions.push({
+          OR: [{ status: 'expired' }, { status: 'active', endsAt: { lt: new Date() } }],
+        });
+      } else {
+        andConditions.push({ status: input.status });
+      }
+    }
+
+    if (input.search?.trim()) {
+      const term = input.search.trim();
+      andConditions.push({
+        OR: [
+          { name: { contains: term, mode: 'insensitive' } },
+          { product: { name: { contains: term, mode: 'insensitive' } } },
+        ],
+      });
+    }
+
+    if (andConditions.length > 0) {
+      where.AND = andConditions;
+    }
+
+    const promotions = await this.prisma.promotion.findMany({
+      where,
+      orderBy: [{ createdAt: 'desc' }],
+      skip: input.offset,
+      take: input.limit,
+      select: {
+        id: true,
+        name: true,
+        promoType: true,
+        value: true,
+        status: true,
+        startsAt: true,
+        endsAt: true,
+        createdAt: true,
+        product: {
+          select: {
+            id: true,
+            name: true,
+            price: true,
+          },
+        },
+      },
+    });
+
+    const total = await this.prisma.promotion.count({ where });
+    const promotionIds = promotions.map((promotion) => promotion.id);
+    const groupedOrders = promotionIds.length
+      ? await this.prisma.order.groupBy({
+        by: ['promotionId'],
+        where: {
+          workspaceId: context.workspaceId,
+          promotionId: { in: promotionIds },
+          deletedAt: null,
+          status: { notIn: ['cancelled', 'returned', 'draft', 'trashed'] },
+        },
+        _count: { _all: true },
+        _sum: { total: true, discount: true },
+      })
+      : [];
+
+    const summaryByPromotion = new Map(
+      groupedOrders.map((row) => [
+        row.promotionId || '',
+        {
+          orders: row._count._all,
+          revenueCents: row._sum.total ?? 0,
+          discountCents: row._sum.discount ?? 0,
+        },
+      ])
+    );
+
+    return {
+      success: true,
+      data: {
+        total,
+        limit: input.limit,
+        offset: input.offset,
+        hasMore: input.offset + input.limit < total,
+        promotions: promotions.map((promotion) => {
+          const summary = summaryByPromotion.get(promotion.id) || {
+            orders: 0,
+            revenueCents: 0,
+            discountCents: 0,
+          };
+          return {
+            id: promotion.id,
+            name: promotion.name,
+            promoType: promotion.promoType,
+            value: promotion.value,
+            status: promotion.status,
+            computedStatus: computePromotionComputedStatus(
+              promotion.status,
+              promotion.startsAt,
+              promotion.endsAt
+            ),
+            startsAt: promotion.startsAt.toISOString(),
+            endsAt: promotion.endsAt.toISOString(),
+            createdAt: promotion.createdAt.toISOString(),
+            product: promotion.product,
+            metrics: summary,
+          };
+        }),
+      },
+    };
+  }
+}
+
+export class AdminCreateBroadcastCampaignTool extends BaseTool<typeof AdminCreateBroadcastCampaignInput> {
+  private prisma: PrismaClient;
+
+  constructor(prisma: PrismaClient) {
+    super({
+      name: 'admin_create_broadcast_campaign',
+      description: 'Crea y encola una difusión masiva por WhatsApp (Evolution) para clientes (solo owner).',
+      category: ToolCategory.MUTATION,
+      inputSchema: AdminCreateBroadcastCampaignInput,
+      requiresConfirmation: true,
+    });
+    this.prisma = prisma;
+  }
+
+  async execute(
+    input: z.infer<typeof AdminCreateBroadcastCampaignInput>,
+    context: ToolContext
+  ): Promise<ToolResult> {
+    const guard = assertOwnerContext(context);
+    if (guard) return guard;
+
+    const whatsappNumber = await this.prisma.whatsAppNumber.findFirst({
+      where: { workspaceId: context.workspaceId, isActive: true },
+      select: { provider: true },
+    });
+    if (!whatsappNumber) {
+      return { success: false, error: 'No hay número de WhatsApp activo en este negocio.' };
+    }
+    if ((whatsappNumber.provider || '').toLowerCase() !== 'evolution') {
+      return { success: false, error: 'La difusión masiva requiere provider Evolution activo.' };
+    }
+
+    if (input.promotionId) {
+      const promotion = await this.prisma.promotion.findFirst({
+        where: {
+          id: input.promotionId,
+          workspaceId: context.workspaceId,
+          deletedAt: null,
+        },
+        select: { id: true },
+      });
+      if (!promotion) {
+        return { success: false, error: 'La promoción indicada no existe.' };
+      }
+    }
+
+    const customers = await this.prisma.customer.findMany({
+      where: {
+        workspaceId: context.workspaceId,
+        deletedAt: null,
+        ...(input.sendToAll ? {} : { id: { in: input.customerIds || [] } }),
+      },
+      select: {
+        id: true,
+        phone: true,
+      },
+    });
+
+    const seenPhones = new Set<string>();
+    const recipients = customers
+      .map((customer) => {
+        const normalized = normalizePhoneE164(customer.phone);
+        if (!normalized || !/^\+\d{6,}$/.test(normalized)) return null;
+        if (seenPhones.has(normalized)) return null;
+        seenPhones.add(normalized);
+        return { customerId: customer.id, phone: normalized };
+      })
+      .filter((entry): entry is { customerId: string; phone: string } => entry !== null);
+
+    if (recipients.length === 0) {
+      return { success: false, error: 'No hay clientes con teléfono válido para la difusión.' };
+    }
+
+    const now = new Date();
+    const campaign = await this.prisma.$transaction(async (tx) => {
+      const createdCampaign = await tx.broadcastCampaign.create({
+        data: {
+          workspaceId: context.workspaceId,
+          promotionId: input.promotionId || null,
+          name: input.name.trim(),
+          message: input.message.trim(),
+          imageUrl: input.imageUrl?.trim() || null,
+          targetType: input.sendToAll ? 'all_customers' : 'selected_customers',
+          status: 'processing',
+          totalRecipients: recipients.length,
+          sentCount: 0,
+          failedCount: 0,
+          startedAt: now,
+          createdBy: context.userId || null,
+          metadata: {} as Prisma.InputJsonValue,
+        },
+        select: { id: true, name: true, totalRecipients: true },
+      });
+
+      await tx.broadcastRecipient.createMany({
+        data: recipients.map((recipient) => ({
+          workspaceId: context.workspaceId,
+          campaignId: createdCampaign.id,
+          customerId: recipient.customerId,
+          phone: recipient.phone,
+          status: 'pending',
+          metadata: {} as Prisma.InputJsonValue,
+        })),
+        skipDuplicates: true,
+      });
+
+      const persistedRecipients = await tx.broadcastRecipient.findMany({
+        where: {
+          workspaceId: context.workspaceId,
+          campaignId: createdCampaign.id,
+        },
+        select: { id: true, phone: true },
+      });
+
+      if (persistedRecipients.length > 0) {
+        await tx.eventOutbox.createMany({
+          data: persistedRecipients.map((recipient) => ({
+            workspaceId: context.workspaceId,
+            eventType: 'communications.broadcast_send',
+            aggregateType: 'BroadcastCampaign',
+            aggregateId: createdCampaign.id,
+            payload: {
+              campaignId: createdCampaign.id,
+              recipientId: recipient.id,
+              to: recipient.phone,
+              message: input.message.trim(),
+              imageUrl: input.imageUrl?.trim() || null,
+            } as Prisma.InputJsonValue,
+            correlationId: context.correlationId || randomUUID(),
+            status: 'pending',
+          })),
+        });
+      }
+
+      return createdCampaign;
+    });
+
+    return {
+      success: true,
+      data: {
+        campaignId: campaign.id,
+        name: campaign.name,
+        recipients: campaign.totalRecipients,
+        message:
+          `Difusión "${campaign.name}" encolada para ${campaign.totalRecipients} destinatarios.` +
+          ' Se procesará en segundo plano.',
+      },
+    };
+  }
+}
+
+export class AdminGetCommunicationsMetricsTool extends BaseTool<typeof AdminGetCommunicationsMetricsInput> {
+  private prisma: PrismaClient;
+
+  constructor(prisma: PrismaClient) {
+    super({
+      name: 'admin_get_communications_metrics',
+      description: 'Resume impacto de promociones y campañas (ventas con promo, sin promo y difusión) (solo owner).',
+      category: ToolCategory.QUERY,
+      inputSchema: AdminGetCommunicationsMetricsInput,
+    });
+    this.prisma = prisma;
+  }
+
+  async execute(
+    input: z.infer<typeof AdminGetCommunicationsMetricsInput>,
+    context: ToolContext
+  ): Promise<ToolResult> {
+    const guard = assertOwnerContext(context);
+    if (guard) return guard;
+
+    const timeZone = await resolveWorkspaceTimeZone(this.prisma, context.workspaceId);
+    const { start, end } = resolvePeriodRange(new Date(), input.period, timeZone);
+
+    const orderBaseWhere: Prisma.OrderWhereInput = {
+      workspaceId: context.workspaceId,
+      createdAt: { gte: start, lte: end },
+      deletedAt: null,
+      status: { notIn: ['cancelled', 'returned', 'draft', 'trashed'] },
+    };
+
+    const [
+      promotionsTotal,
+      promotionsActive,
+      ordersWithPromoCount,
+      ordersWithoutPromoCount,
+      ordersWithPromoAgg,
+      ordersWithoutPromoAgg,
+      topPromotionRows,
+      promotions,
+      campaignsAgg,
+    ] = await Promise.all([
+      this.prisma.promotion.count({
+        where: {
+          workspaceId: context.workspaceId,
+          deletedAt: null,
+          createdAt: { lte: end },
+        },
+      }),
+      this.prisma.promotion.count({
+        where: {
+          workspaceId: context.workspaceId,
+          deletedAt: null,
+          status: 'active',
+          startsAt: { lte: end },
+          endsAt: { gte: start },
+        },
+      }),
+      this.prisma.order.count({
+        where: {
+          ...orderBaseWhere,
+          promotionId: { not: null },
+        },
+      }),
+      this.prisma.order.count({
+        where: {
+          ...orderBaseWhere,
+          promotionId: null,
+        },
+      }),
+      this.prisma.order.aggregate({
+        where: {
+          ...orderBaseWhere,
+          promotionId: { not: null },
+        },
+        _sum: { total: true, discount: true },
+      }),
+      this.prisma.order.aggregate({
+        where: {
+          ...orderBaseWhere,
+          promotionId: null,
+        },
+        _sum: { total: true },
+      }),
+      this.prisma.order.groupBy({
+        by: ['promotionId'],
+        where: {
+          ...orderBaseWhere,
+          promotionId: { not: null },
+        },
+        _count: { _all: true },
+        _sum: { total: true, discount: true },
+      }),
+      this.prisma.promotion.findMany({
+        where: { workspaceId: context.workspaceId, deletedAt: null },
+        select: { id: true, name: true, promoType: true, value: true },
+      }),
+      this.prisma.broadcastCampaign.aggregate({
+        where: {
+          workspaceId: context.workspaceId,
+          createdAt: { gte: start, lte: end },
+        },
+        _count: { _all: true },
+        _sum: { totalRecipients: true, sentCount: true, failedCount: true },
+      }),
+    ]);
+
+    const promotionById = new Map(promotions.map((promotion) => [promotion.id, promotion]));
+    const topPromotions = topPromotionRows
+      .map((row) => {
+        const promotion = row.promotionId ? promotionById.get(row.promotionId) : null;
+        return {
+          promotionId: row.promotionId,
+          name: promotion?.name || 'Promoción eliminada',
+          promoType: promotion?.promoType || null,
+          value: promotion?.value || null,
+          orderCount: row._count._all,
+          revenueCents: row._sum.total ?? 0,
+          discountCents: row._sum.discount ?? 0,
+        };
+      })
+      .sort((a, b) => b.orderCount - a.orderCount)
+      .slice(0, 10);
+
+    const sent = campaignsAgg._sum.sentCount ?? 0;
+    const failed = campaignsAgg._sum.failedCount ?? 0;
+    const attempted = sent + failed;
+
+    return {
+      success: true,
+      data: {
+        period: input.period,
+        range: { start: start.toISOString(), end: end.toISOString(), timeZone },
+        promotions: {
+          total: promotionsTotal,
+          active: promotionsActive,
+          requestedOrders: ordersWithPromoCount,
+          topPromotions,
+        },
+        orders: {
+          withPromotion: {
+            count: ordersWithPromoCount,
+            revenueCents: ordersWithPromoAgg._sum.total ?? 0,
+            discountCents: ordersWithPromoAgg._sum.discount ?? 0,
+          },
+          withoutPromotion: {
+            count: ordersWithoutPromoCount,
+            revenueCents: ordersWithoutPromoAgg._sum.total ?? 0,
+          },
+        },
+        campaigns: {
+          total: campaignsAgg._count._all ?? 0,
+          totalRecipients: campaignsAgg._sum.totalRecipients ?? 0,
+          sent,
+          failed,
+          deliveryRate: attempted > 0 ? sent / attempted : 0,
+        },
+      },
+    };
+  }
+}
+
+export class AdminListBroadcastCampaignsTool extends BaseTool<typeof AdminListBroadcastCampaignsInput> {
+  private prisma: PrismaClient;
+
+  constructor(prisma: PrismaClient) {
+    super({
+      name: 'admin_list_broadcast_campaigns',
+      description: 'Lista campañas de difusión y su estado de entrega (solo owner).',
+      category: ToolCategory.QUERY,
+      inputSchema: AdminListBroadcastCampaignsInput,
+    });
+    this.prisma = prisma;
+  }
+
+  async execute(
+    input: z.infer<typeof AdminListBroadcastCampaignsInput>,
+    context: ToolContext
+  ): Promise<ToolResult> {
+    const guard = assertOwnerContext(context);
+    if (guard) return guard;
+
+    const where: Prisma.BroadcastCampaignWhereInput = {
+      workspaceId: context.workspaceId,
+      ...(input.status ? { status: input.status } : {}),
+    };
+
+    const [campaigns, total] = await Promise.all([
+      this.prisma.broadcastCampaign.findMany({
+        where,
+        orderBy: [{ createdAt: 'desc' }],
+        skip: input.offset,
+        take: input.limit,
+        select: {
+          id: true,
+          name: true,
+          status: true,
+          message: true,
+          imageUrl: true,
+          targetType: true,
+          totalRecipients: true,
+          sentCount: true,
+          failedCount: true,
+          startedAt: true,
+          finishedAt: true,
+          createdAt: true,
+          promotion: {
+            select: { id: true, name: true, promoType: true, value: true },
+          },
+          _count: {
+            select: { recipients: true },
+          },
+        },
+      }),
+      this.prisma.broadcastCampaign.count({ where }),
+    ]);
+
+    return {
+      success: true,
+      data: {
+        total,
+        limit: input.limit,
+        offset: input.offset,
+        hasMore: input.offset + input.limit < total,
+        campaigns: campaigns.map((campaign) => ({
+          id: campaign.id,
+          name: campaign.name,
+          status: campaign.status,
+          message: campaign.message,
+          imageUrl: campaign.imageUrl,
+          targetType: campaign.targetType,
+          totalRecipients: campaign.totalRecipients,
+          recipientsCount: campaign._count.recipients,
+          sentCount: campaign.sentCount,
+          failedCount: campaign.failedCount,
+          startedAt: campaign.startedAt ? campaign.startedAt.toISOString() : null,
+          finishedAt: campaign.finishedAt ? campaign.finishedAt.toISOString() : null,
+          createdAt: campaign.createdAt.toISOString(),
+          progress:
+            campaign.totalRecipients > 0
+              ? Math.round((campaign.sentCount / campaign.totalRecipients) * 100)
+              : 0,
+          promotion: campaign.promotion,
+        })),
+      },
+    };
+  }
+}
+
 export function createAdminTools(
   prisma: PrismaClient,
   deps: AdminToolsDependencies = {}
@@ -2631,5 +3331,10 @@ export function createAdminTools(
     new AdminSendDebtReminderTool(prisma, deps.messageQueue),
     new AdminAdjustPricesPercentTool(prisma),
     new AdminProcessStockReceiptTool(prisma),
+    new AdminCreatePromotionTool(prisma),
+    new AdminListPromotionsTool(prisma),
+    new AdminCreateBroadcastCampaignTool(prisma),
+    new AdminGetCommunicationsMetricsTool(prisma),
+    new AdminListBroadcastCampaignsTool(prisma),
   ];
 }

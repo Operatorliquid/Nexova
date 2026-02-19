@@ -34,6 +34,13 @@ export const modules: Record<string, Module> = {
     icon: 'inbox',
     description: 'Conversaciones con clientes',
   },
+  communications: {
+    id: 'communications',
+    name: 'Comunicacion',
+    path: '/communications',
+    icon: 'communications',
+    description: 'Difusion y promociones comerciales',
+  },
   orders: {
     id: 'orders',
     name: 'Pedidos',
@@ -119,7 +126,7 @@ export const businessTypes: Record<string, BusinessTypeConfig> = {
   commerce: {
     id: 'commerce',
     name: 'Comercio',
-    modules: ['dashboard', 'metrics', 'inbox', 'orders', 'invoices', 'stock', 'customers', 'debts', 'settings'],
+    modules: ['dashboard', 'metrics', 'inbox', 'communications', 'orders', 'invoices', 'stock', 'customers', 'debts', 'settings'],
   },
   bookings: {
     id: 'bookings',

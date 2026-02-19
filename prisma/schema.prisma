@@ -37,33 +37,36 @@ model Workspace {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   // Relations
-  users           Membership[]
-  roles           Role[]
-  policies        Policy[]
-  connections     Connection[]
-  products          Product[]
-  productCategories ProductCategory[]
-  customers         Customer[]
-  orders          Order[]
-  agentSessions   AgentSession[]
-  webhookInbox    WebhookInbox[]
-  audioTranscriptions AudioTranscription[]
-  eventOutbox     EventOutbox[]
-  auditLogs       AuditLog[]
-  usageRecords    UsageRecord[]
-  handoffRequests HandoffRequest[]
-  whatsappNumbers WhatsAppNumber[]
-  integrations    WorkspaceIntegration[]
-  receipts        Receipt[]
-  ledgerEntries   LedgerEntry[]
+  users                    Membership[]
+  roles                    Role[]
+  policies                 Policy[]
+  connections              Connection[]
+  products                 Product[]
+  productCategories        ProductCategory[]
+  customers                Customer[]
+  orders                   Order[]
+  agentSessions            AgentSession[]
+  webhookInbox             WebhookInbox[]
+  audioTranscriptions      AudioTranscription[]
+  eventOutbox              EventOutbox[]
+  auditLogs                AuditLog[]
+  usageRecords             UsageRecord[]
+  handoffRequests          HandoffRequest[]
+  whatsappNumbers          WhatsAppNumber[]
+  integrations             WorkspaceIntegration[]
+  receipts                 Receipt[]
+  ledgerEntries            LedgerEntry[]
   quickActionConfirmations QuickActionConfirmation[]
-  notifications   Notification[]
-  arcaInvoices    ArcaInvoice[]
-  arcaInvoiceRecords ArcaInvoiceRecord[]
-  stockPurchaseReceipts StockPurchaseReceipt[]
-  subscription      WorkspaceSubscription?
-  billingCheckouts  BillingCheckoutIntent[]
-  billingPayments   BillingPayment[]
+  notifications            Notification[]
+  arcaInvoices             ArcaInvoice[]
+  arcaInvoiceRecords       ArcaInvoiceRecord[]
+  stockPurchaseReceipts    StockPurchaseReceipt[]
+  promotions               Promotion[]
+  broadcastCampaigns       BroadcastCampaign[]
+  broadcastRecipients      BroadcastRecipient[]
+  subscription             WorkspaceSubscription?
+  billingCheckouts         BillingCheckoutIntent[]
+  billingPayments          BillingPayment[]
 
   @@index([status])
   @@index([plan])
@@ -73,47 +76,47 @@ model Workspace {
 /// User represents an authenticated user in the system.
 /// Users can belong to multiple workspaces via Membership.
 model User {
-  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  email             String    @unique @db.VarChar(255)
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email            String    @unique @db.VarChar(255)
   /// Argon2id hashed password
-  passwordHash      String    @map("password_hash") @db.VarChar(255)
-  firstName         String?   @map("first_name") @db.VarChar(100)
-  lastName          String?   @map("last_name") @db.VarChar(100)
-  avatarUrl         String?   @map("avatar_url") @db.Text
+  passwordHash     String    @map("password_hash") @db.VarChar(255)
+  firstName        String?   @map("first_name") @db.VarChar(100)
+  lastName         String?   @map("last_name") @db.VarChar(100)
+  avatarUrl        String?   @map("avatar_url") @db.Text
   /// User status: active, suspended, pending_verification
-  status            String    @default("pending_verification") @db.VarChar(20)
+  status           String    @default("pending_verification") @db.VarChar(20)
   /// SUPER ADMIN flag - can access admin panel, manage all workspaces
-  isSuperAdmin      Boolean   @default(false) @map("is_super_admin")
+  isSuperAdmin     Boolean   @default(false) @map("is_super_admin")
   /// Email verification timestamp
-  emailVerifiedAt   DateTime? @map("email_verified_at")
+  emailVerifiedAt  DateTime? @map("email_verified_at")
   /// Last successful login timestamp
-  lastLoginAt       DateTime? @map("last_login_at")
+  lastLoginAt      DateTime? @map("last_login_at")
   /// Failed login attempts (reset on successful login)
-  failedLoginCount  Int       @default(0) @map("failed_login_count")
+  failedLoginCount Int       @default(0) @map("failed_login_count")
   /// Account locked until (after too many failed attempts)
-  lockedUntil       DateTime? @map("locked_until")
-  createdAt         DateTime  @default(now()) @map("created_at")
-  updatedAt         DateTime  @updatedAt @map("updated_at")
+  lockedUntil      DateTime? @map("locked_until")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
 
   // MFA fields
   /// TOTP secret (encrypted)
-  mfaSecret         String?   @map("mfa_secret") @db.VarChar(255)
+  mfaSecret      String? @map("mfa_secret") @db.VarChar(255)
   /// MFA enabled flag
-  mfaEnabled        Boolean   @default(false) @map("mfa_enabled")
+  mfaEnabled     Boolean @default(false) @map("mfa_enabled")
   /// Backup codes (encrypted JSON array)
-  mfaBackupCodes    String?   @map("mfa_backup_codes") @db.Text
+  mfaBackupCodes String? @map("mfa_backup_codes") @db.Text
 
   // Relations
-  memberships       Membership[]
-  refreshTokens     RefreshToken[]
-  passwordResets    PasswordReset[]
-  auditLogsAsActor  AuditLog[]       @relation("AuditActor")
+  memberships              Membership[]
+  refreshTokens            RefreshToken[]
+  passwordResets           PasswordReset[]
+  auditLogsAsActor         AuditLog[]                @relation("AuditActor")
   quickActionConfirmations QuickActionConfirmation[]
-  emailVerificationTokens EmailVerificationToken[]
-  oauthStates       OAuthState[]
-  billingCheckouts  BillingCheckoutIntent[]
-  billingPayments   BillingPayment[]
-  subscriptions     WorkspaceSubscription[]
+  emailVerificationTokens  EmailVerificationToken[]
+  oauthStates              OAuthState[]
+  billingCheckouts         BillingCheckoutIntent[]
+  billingPayments          BillingPayment[]
+  subscriptions            WorkspaceSubscription[]
 
   @@index([email])
   @@index([status])
@@ -124,20 +127,20 @@ model User {
 /// Membership links Users to Workspaces with a specific Role.
 /// A user can have different roles in different workspaces.
 model Membership {
-  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId      String    @map("user_id") @db.Uuid
-  workspaceId String    @map("workspace_id") @db.Uuid
-  roleId      String    @map("role_id") @db.Uuid
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId          String    @map("user_id") @db.Uuid
+  workspaceId     String    @map("workspace_id") @db.Uuid
+  roleId          String    @map("role_id") @db.Uuid
   /// Membership status: active, invited, suspended
-  status      String    @default("invited") @db.VarChar(20)
+  status          String    @default("invited") @db.VarChar(20)
   /// Invitation token (for pending invites)
-  inviteToken String?   @map("invite_token") @db.VarChar(255)
+  inviteToken     String?   @map("invite_token") @db.VarChar(255)
   /// Invitation expiry
   inviteExpiresAt DateTime? @map("invite_expires_at")
   /// When the user accepted the invitation
-  joinedAt    DateTime? @map("joined_at")
-  createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @updatedAt @map("updated_at")
+  joinedAt        DateTime? @map("joined_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
 
   // Relations
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -214,23 +217,23 @@ model Policy {
 
 /// RefreshToken stores JWT refresh tokens for session management.
 model RefreshToken {
-  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId      String    @map("user_id") @db.Uuid
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
   /// Hashed refresh token (SHA-256)
-  tokenHash   String    @unique @map("token_hash") @db.VarChar(64)
+  tokenHash    String    @unique @map("token_hash") @db.VarChar(64)
   /// Token family for refresh token rotation detection
-  family      String    @db.Uuid
+  family       String    @db.Uuid
   /// Device/browser fingerprint
-  deviceInfo  String?   @map("device_info") @db.VarChar(500)
+  deviceInfo   String?   @map("device_info") @db.VarChar(500)
   /// IP address at token creation
-  ipAddress   String?   @map("ip_address") @db.VarChar(45)
+  ipAddress    String?   @map("ip_address") @db.VarChar(45)
   /// Token expiry timestamp
-  expiresAt   DateTime  @map("expires_at")
+  expiresAt    DateTime  @map("expires_at")
   /// Revocation timestamp (null = valid)
-  revokedAt   DateTime? @map("revoked_at")
+  revokedAt    DateTime? @map("revoked_at")
   /// Revocation reason
-  revokeReason String?  @map("revoke_reason") @db.VarChar(100)
-  createdAt   DateTime  @default(now()) @map("created_at")
+  revokeReason String?   @map("revoke_reason") @db.VarChar(100)
+  createdAt    DateTime  @default(now()) @map("created_at")
 
   // Relations
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -279,15 +282,15 @@ model EmailVerificationToken {
 
 /// OAuthState stores temporary state for third-party OAuth login flows.
 model OAuthState {
-  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  provider     String    @db.VarChar(50)
-  state        String    @unique @db.VarChar(128)
-  userId       String?   @map("user_id") @db.Uuid
-  flowToken    String?   @map("flow_token") @db.VarChar(64)
-  redirectUri  String?   @map("redirect_uri") @db.VarChar(1000)
-  expiresAt    DateTime  @map("expires_at")
-  usedAt       DateTime? @map("used_at")
-  createdAt    DateTime  @default(now()) @map("created_at")
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  provider    String    @db.VarChar(50)
+  state       String    @unique @db.VarChar(128)
+  userId      String?   @map("user_id") @db.Uuid
+  flowToken   String?   @map("flow_token") @db.VarChar(64)
+  redirectUri String?   @map("redirect_uri") @db.VarChar(1000)
+  expiresAt   DateTime  @map("expires_at")
+  usedAt      DateTime? @map("used_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
 
   user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
@@ -317,8 +320,8 @@ model BillingCheckoutIntent {
   createdAt               DateTime  @default(now()) @map("created_at")
   updatedAt               DateTime  @updatedAt @map("updated_at")
 
-  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
-  user      User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  workspace Workspace?       @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  user      User?            @relation(fields: [userId], references: [id], onDelete: SetNull)
   payments  BillingPayment[]
 
   @@index([status, expiresAt])
@@ -330,20 +333,20 @@ model BillingCheckoutIntent {
 
 /// WorkspaceSubscription stores the active billing subscription state of each workspace.
 model WorkspaceSubscription {
-  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  workspaceId           String    @unique @map("workspace_id") @db.Uuid
-  userId                String?   @map("user_id") @db.Uuid
-  plan                  String    @db.VarChar(50)
-  status                String    @default("active") @db.VarChar(30)
-  billingCycleMonths    Int       @default(1) @map("billing_cycle_months")
-  currentPeriodStart    DateTime  @map("current_period_start")
-  currentPeriodEnd      DateTime  @map("current_period_end")
-  nextChargeAt          DateTime? @map("next_charge_at")
-  stripeCustomerId      String?   @map("stripe_customer_id") @db.VarChar(255)
-  stripeSubscriptionId  String?   @unique @map("stripe_subscription_id") @db.VarChar(255)
-  cancelledAt           DateTime? @map("cancelled_at")
-  createdAt             DateTime  @default(now()) @map("created_at")
-  updatedAt             DateTime  @updatedAt @map("updated_at")
+  id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId          String    @unique @map("workspace_id") @db.Uuid
+  userId               String?   @map("user_id") @db.Uuid
+  plan                 String    @db.VarChar(50)
+  status               String    @default("active") @db.VarChar(30)
+  billingCycleMonths   Int       @default(1) @map("billing_cycle_months")
+  currentPeriodStart   DateTime  @map("current_period_start")
+  currentPeriodEnd     DateTime  @map("current_period_end")
+  nextChargeAt         DateTime? @map("next_charge_at")
+  stripeCustomerId     String?   @map("stripe_customer_id") @db.VarChar(255)
+  stripeSubscriptionId String?   @unique @map("stripe_subscription_id") @db.VarChar(255)
+  cancelledAt          DateTime? @map("cancelled_at")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   user      User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
@@ -372,8 +375,8 @@ model BillingPayment {
   metadata                Json      @default("{}")
   createdAt               DateTime  @default(now()) @map("created_at")
 
-  workspace      Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  user           User?                 @relation(fields: [userId], references: [id], onDelete: SetNull)
+  workspace      Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user           User?                  @relation(fields: [userId], references: [id], onDelete: SetNull)
   checkoutIntent BillingCheckoutIntent? @relation(fields: [checkoutIntentId], references: [id], onDelete: SetNull)
 
   @@index([workspaceId, paidAt])
@@ -428,7 +431,7 @@ model WhatsAppNumber {
   updatedAt       DateTime  @updatedAt @map("updated_at")
 
   // Relations
-  workspace       Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
 
   @@index([status])
   @@index([workspaceId])
@@ -463,19 +466,19 @@ model QuickActionConfirmation {
 
 /// SystemSettings stores global system configuration (super admin only).
 model SystemSettings {
-  id        String   @id @default("system") @db.VarChar(50)
+  id              String   @id @default("system") @db.VarChar(50)
   /// Anthropic API Key (encrypted)
-  anthropicKeyEnc String? @map("anthropic_key_enc") @db.Text
-  anthropicKeyIv  String? @map("anthropic_key_iv") @db.VarChar(32)
+  anthropicKeyEnc String?  @map("anthropic_key_enc") @db.Text
+  anthropicKeyIv  String?  @map("anthropic_key_iv") @db.VarChar(32)
   /// Default LLM model
-  defaultLlmModel String  @default("claude-sonnet-4-20250514") @map("default_llm_model") @db.VarChar(100)
+  defaultLlmModel String   @default("claude-sonnet-4-20250514") @map("default_llm_model") @db.VarChar(100)
   /// Global rate limits
-  rateLimits      Json    @default("{}") @map("rate_limits")
+  rateLimits      Json     @default("{}") @map("rate_limits")
   /// Feature flags
-  featureFlags    Json    @default("{}") @map("feature_flags")
+  featureFlags    Json     @default("{}") @map("feature_flags")
   /// Maintenance mode
-  maintenanceMode Boolean @default(false) @map("maintenance_mode")
-  maintenanceMsg  String? @map("maintenance_msg") @db.Text
+  maintenanceMode Boolean  @default(false) @map("maintenance_mode")
+  maintenanceMsg  String?  @map("maintenance_msg") @db.Text
   updatedAt       DateTime @updatedAt @map("updated_at")
 
   @@map("system_settings")
@@ -488,44 +491,44 @@ model SystemSettings {
 /// AgentSession represents a conversation session with the AI agent.
 /// Hot state is stored in Redis; this table is for persistence and history.
 model AgentSession {
-  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  workspaceId   String    @map("workspace_id") @db.Uuid
-  customerId    String    @map("customer_id") @db.Uuid
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId    String    @map("workspace_id") @db.Uuid
+  customerId     String    @map("customer_id") @db.Uuid
   /// External channel identifier (e.g., WhatsApp phone number)
-  channelId     String    @map("channel_id") @db.VarChar(100)
+  channelId      String    @map("channel_id") @db.VarChar(100)
   /// Channel type: whatsapp, web, api
-  channelType   String    @default("whatsapp") @map("channel_type") @db.VarChar(20)
+  channelType    String    @default("whatsapp") @map("channel_type") @db.VarChar(20)
   /// Current state machine state
-  currentState  String    @default("IDLE") @map("current_state") @db.VarChar(50)
+  currentState   String    @default("IDLE") @map("current_state") @db.VarChar(50)
   /// Previous state (for transition tracking)
-  previousState String?   @map("previous_state") @db.VarChar(50)
+  previousState  String?   @map("previous_state") @db.VarChar(50)
   /// Whether the AI agent is active (false = human took over)
-  agentActive   Boolean   @default(true) @map("agent_active")
+  agentActive    Boolean   @default(true) @map("agent_active")
   /// Consecutive failure count (triggers handoff at threshold)
-  failureCount  Int       @default(0) @map("failure_count")
+  failureCount   Int       @default(0) @map("failure_count")
   /// Last failure reason
-  lastFailure   String?   @map("last_failure") @db.VarChar(500)
+  lastFailure    String?   @map("last_failure") @db.VarChar(500)
   /// Session metadata (JSON: cart, context, preferences)
-  metadata      Json      @default("{}")
+  metadata       Json      @default("{}")
   /// Last activity timestamp (for timeout calculations)
-  lastActivityAt DateTime @default(now()) @map("last_activity_at")
+  lastActivityAt DateTime  @default(now()) @map("last_activity_at")
   /// Session start
-  startedAt     DateTime  @default(now()) @map("started_at")
+  startedAt      DateTime  @default(now()) @map("started_at")
   /// Session end (null = active)
-  endedAt       DateTime? @map("ended_at")
+  endedAt        DateTime? @map("ended_at")
   /// End reason: completed, timeout, handoff, error
-  endReason     String?   @map("end_reason") @db.VarChar(50)
-  createdAt     DateTime  @default(now()) @map("created_at")
-  updatedAt     DateTime  @updatedAt @map("updated_at")
+  endReason      String?   @map("end_reason") @db.VarChar(50)
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
 
   // Relations
-  workspace       Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  customer        Customer         @relation(fields: [customerId], references: [id])
-  messages        AgentMessage[]
-  memories        AgentMemory[]
-  toolExecutions  AgentToolExecution[]
-  handoffRequests HandoffRequest[]
-  receipts        Receipt[]
+  workspace           Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  customer            Customer             @relation(fields: [customerId], references: [id])
+  messages            AgentMessage[]
+  memories            AgentMemory[]
+  toolExecutions      AgentToolExecution[]
+  handoffRequests     HandoffRequest[]
+  receipts            Receipt[]
   audioTranscriptions AudioTranscription[]
 
   @@unique([workspaceId, channelId, channelType])
@@ -539,19 +542,19 @@ model AgentSession {
 
 /// AgentMessage stores individual messages in a conversation.
 model AgentMessage {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  sessionId   String   @map("session_id") @db.Uuid
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sessionId  String   @map("session_id") @db.Uuid
   /// Message role: user, assistant, system, tool
-  role        String   @db.VarChar(20)
+  role       String   @db.VarChar(20)
   /// Message content
-  content     String   @db.Text
+  content    String   @db.Text
   /// External message ID (for deduplication)
-  externalId  String?  @map("external_id") @db.VarChar(255)
+  externalId String?  @map("external_id") @db.VarChar(255)
   /// Message metadata (JSON: tool_calls, attachments, etc.)
-  metadata    Json     @default("{}")
+  metadata   Json     @default("{}")
   /// Token count (for context management)
-  tokenCount  Int?     @map("token_count")
-  createdAt   DateTime @default(now()) @map("created_at")
+  tokenCount Int?     @map("token_count")
+  createdAt  DateTime @default(now()) @map("created_at")
 
   // Relations
   session AgentSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
@@ -565,22 +568,22 @@ model AgentMessage {
 /// AgentMemory stores summarized/compressed conversation context.
 /// Used for long-term memory beyond the active context window.
 model AgentMemory {
-  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  sessionId   String    @map("session_id") @db.Uuid
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sessionId  String    @map("session_id") @db.Uuid
   /// Memory type: summary, fact, preference, entity
-  type        String    @db.VarChar(50)
+  type       String    @db.VarChar(50)
   /// Memory key (for retrieval)
-  key         String?   @db.VarChar(255)
+  key        String?   @db.VarChar(255)
   /// Memory content
-  content     String    @db.Text
+  content    String    @db.Text
   /// Importance score (for pruning)
-  importance  Float     @default(0.5)
+  importance Float     @default(0.5)
   /// Token count
-  tokenCount  Int?      @map("token_count")
+  tokenCount Int?      @map("token_count")
   /// TTL expiry (null = no expiry)
-  expiresAt   DateTime? @map("expires_at")
-  createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @updatedAt @map("updated_at")
+  expiresAt  DateTime? @map("expires_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
 
   // Relations
   session AgentSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
@@ -594,39 +597,39 @@ model AgentMemory {
 /// AgentToolExecution logs every tool call made by the agent.
 /// Critical for audit trail and debugging.
 model AgentToolExecution {
-  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  sessionId       String   @map("session_id") @db.Uuid
+  id                   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sessionId            String   @map("session_id") @db.Uuid
   /// Correlation ID for grouping related operations
-  correlationId   String   @map("correlation_id") @db.Uuid
+  correlationId        String   @map("correlation_id") @db.Uuid
   /// Tool name (e.g., "search_products", "create_order")
-  toolName        String   @map("tool_name") @db.VarChar(100)
+  toolName             String   @map("tool_name") @db.VarChar(100)
   /// Tool category: query, mutation
-  toolCategory    String   @map("tool_category") @db.VarChar(20)
+  toolCategory         String   @map("tool_category") @db.VarChar(20)
   /// Input parameters (JSON, sanitized - no PII)
-  inputParams     Json     @map("input_params")
+  inputParams          Json     @map("input_params")
   /// Validation result: passed, failed
-  validationStatus String  @map("validation_status") @db.VarChar(20)
+  validationStatus     String   @map("validation_status") @db.VarChar(20)
   /// Validation errors (if any)
-  validationErrors Json?   @map("validation_errors")
+  validationErrors     Json?    @map("validation_errors")
   /// Whether human confirmation was required
-  confirmationRequired Boolean @default(false) @map("confirmation_required")
+  confirmationRequired Boolean  @default(false) @map("confirmation_required")
   /// Whether human confirmed (null if not required)
-  confirmed       Boolean?
+  confirmed            Boolean?
   /// Execution result: success, error, timeout, cancelled
-  resultStatus    String   @map("result_status") @db.VarChar(20)
+  resultStatus         String   @map("result_status") @db.VarChar(20)
   /// Output data (JSON, summarized)
-  resultData      Json?    @map("result_data")
+  resultData           Json?    @map("result_data")
   /// Error message (if failed)
-  errorMessage    String?  @map("error_message") @db.Text
+  errorMessage         String?  @map("error_message") @db.Text
   /// Error code
-  errorCode       String?  @map("error_code") @db.VarChar(50)
+  errorCode            String?  @map("error_code") @db.VarChar(50)
   /// Execution duration in milliseconds
-  durationMs      Int      @map("duration_ms")
+  durationMs           Int      @map("duration_ms")
   /// LLM model used for this turn
-  llmModel        String?  @map("llm_model") @db.VarChar(100)
+  llmModel             String?  @map("llm_model") @db.VarChar(100)
   /// Tokens used for this turn
-  tokensUsed      Int?     @map("tokens_used")
-  createdAt       DateTime @default(now()) @map("created_at")
+  tokensUsed           Int?     @map("tokens_used")
+  createdAt            DateTime @default(now()) @map("created_at")
 
   // Relations
   session AgentSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
@@ -717,38 +720,38 @@ model Connection {
 
 /// WebhookInbox stores incoming webhooks for idempotency and processing.
 model WebhookInbox {
-  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  workspaceId    String    @map("workspace_id") @db.Uuid
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId   String    @map("workspace_id") @db.Uuid
   /// Provider that sent the webhook: infobip, mercadopago, etc.
-  provider       String    @db.VarChar(50)
+  provider      String    @db.VarChar(50)
   /// External webhook ID (for idempotency)
-  externalId     String    @map("external_id") @db.VarChar(255)
+  externalId    String    @map("external_id") @db.VarChar(255)
   /// Webhook event type (provider-specific)
-  eventType      String    @map("event_type") @db.VarChar(100)
+  eventType     String    @map("event_type") @db.VarChar(100)
   /// Raw payload (JSON)
-  payload        Json
+  payload       Json
   /// Signature from provider (for verification)
-  signature      String?   @db.VarChar(500)
+  signature     String?   @db.VarChar(500)
   /// Processing status: pending, processing, completed, failed
-  status         String    @default("pending") @db.VarChar(20)
+  status        String    @default("pending") @db.VarChar(20)
   /// Correlation ID for tracing
-  correlationId  String?   @map("correlation_id") @db.Uuid
+  correlationId String?   @map("correlation_id") @db.Uuid
   /// Retry count
-  retryCount     Int       @default(0) @map("retry_count")
+  retryCount    Int       @default(0) @map("retry_count")
   /// Last attempt timestamp
-  lastAttemptAt  DateTime? @map("last_attempt_at")
+  lastAttemptAt DateTime? @map("last_attempt_at")
   /// Error message (if failed)
-  errorMessage   String?   @map("error_message") @db.Text
+  errorMessage  String?   @map("error_message") @db.Text
   /// When processing completed
-  processedAt    DateTime? @map("processed_at")
+  processedAt   DateTime? @map("processed_at")
   /// Processing result (JSON)
-  result         Json?
+  result        Json?
   /// Webhook received timestamp (from provider if available)
-  receivedAt     DateTime  @default(now()) @map("received_at")
-  createdAt      DateTime  @default(now()) @map("created_at")
+  receivedAt    DateTime  @default(now()) @map("received_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
 
   // Relations
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace           Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   audioTranscriptions AudioTranscription[]
 
   // Idempotency: same webhook from same provider should be unique per workspace
@@ -763,45 +766,45 @@ model WebhookInbox {
 
 /// AudioTranscription tracks WhatsApp audio-to-text processing lifecycle.
 model AudioTranscription {
-  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  workspaceId   String    @map("workspace_id") @db.Uuid
-  webhookInboxId String?  @map("webhook_inbox_id") @db.Uuid
-  sessionId     String?   @map("session_id") @db.Uuid
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId    String    @map("workspace_id") @db.Uuid
+  webhookInboxId String?   @map("webhook_inbox_id") @db.Uuid
+  sessionId      String?   @map("session_id") @db.Uuid
   /// Source provider (infobip, evolution)
-  provider      String    @db.VarChar(50)
+  provider       String    @db.VarChar(50)
   /// External message ID (provider message id)
-  messageId     String    @map("message_id") @db.VarChar(255)
+  messageId      String    @map("message_id") @db.VarChar(255)
   /// Channel identifier (usually customer phone)
-  channelId     String?   @map("channel_id") @db.VarChar(100)
+  channelId      String?   @map("channel_id") @db.VarChar(100)
   /// Processing status: pending, processing, completed, failed, skipped
-  status        String    @default("pending") @db.VarChar(20)
+  status         String    @default("pending") @db.VarChar(20)
   /// Audio MIME type when available
-  mimeType      String?   @map("mime_type") @db.VarChar(100)
+  mimeType       String?   @map("mime_type") @db.VarChar(100)
   /// Audio file size in bytes
-  sizeBytes     BigInt?   @map("size_bytes")
+  sizeBytes      BigInt?   @map("size_bytes")
   /// Audio duration in milliseconds
-  durationMs    Int?      @map("duration_ms")
+  durationMs     Int?      @map("duration_ms")
   /// Transcript language code (e.g. es, en)
-  language      String?   @db.VarChar(20)
+  language       String?   @db.VarChar(20)
   /// Final transcript text
-  transcript    String?   @db.Text
+  transcript     String?   @db.Text
   /// Model confidence score (0-1) if provided
-  confidence    Float?
+  confidence     Float?
   /// Last error message when processing fails
-  errorMessage  String?   @map("error_message") @db.Text
+  errorMessage   String?   @map("error_message") @db.Text
   /// How many attempts were executed
-  attemptCount  Int       @default(0) @map("attempt_count")
+  attemptCount   Int       @default(0) @map("attempt_count")
   /// STT provider/model metadata, file refs, diagnostics
-  metadata      Json      @default("{}")
-  startedAt     DateTime? @map("started_at")
-  completedAt   DateTime? @map("completed_at")
-  createdAt     DateTime  @default(now()) @map("created_at")
-  updatedAt     DateTime  @updatedAt @map("updated_at")
+  metadata       Json      @default("{}")
+  startedAt      DateTime? @map("started_at")
+  completedAt    DateTime? @map("completed_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
 
   // Relations
-  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace    Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   webhookInbox WebhookInbox? @relation(fields: [webhookInboxId], references: [id], onDelete: SetNull)
-  session     AgentSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  session      AgentSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
 
   @@unique([workspaceId, provider, messageId])
   @@index([workspaceId, status, createdAt])
@@ -813,27 +816,27 @@ model AudioTranscription {
 
 /// EventOutbox implements the transactional outbox pattern for event-driven architecture.
 model EventOutbox {
-  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  workspaceId    String    @map("workspace_id") @db.Uuid
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId   String    @map("workspace_id") @db.Uuid
   /// Event type (e.g., "order.created", "payment.completed")
-  eventType      String    @map("event_type") @db.VarChar(100)
+  eventType     String    @map("event_type") @db.VarChar(100)
   /// Aggregate type (e.g., "Order", "Payment")
-  aggregateType  String    @map("aggregate_type") @db.VarChar(50)
+  aggregateType String    @map("aggregate_type") @db.VarChar(50)
   /// Aggregate ID (the entity this event relates to)
-  aggregateId    String    @map("aggregate_id") @db.VarChar(255)
+  aggregateId   String    @map("aggregate_id") @db.VarChar(255)
   /// Event payload (JSON)
-  payload        Json
+  payload       Json
   /// Correlation ID for distributed tracing
-  correlationId  String?   @map("correlation_id") @db.Uuid
+  correlationId String?   @map("correlation_id") @db.Uuid
   /// Event status: pending, published, failed
-  status         String    @default("pending") @db.VarChar(20)
+  status        String    @default("pending") @db.VarChar(20)
   /// When the event was published
-  publishedAt    DateTime? @map("published_at")
+  publishedAt   DateTime? @map("published_at")
   /// Processing error (if any)
-  errorMessage   String?   @map("error_message") @db.Text
+  errorMessage  String?   @map("error_message") @db.Text
   /// Retry count
-  retryCount     Int       @default(0) @map("retry_count")
-  createdAt      DateTime  @default(now()) @map("created_at")
+  retryCount    Int       @default(0) @map("retry_count")
+  createdAt     DateTime  @default(now()) @map("created_at")
 
   // Relations
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -848,23 +851,23 @@ model EventOutbox {
 
 /// Notification represents a dashboard notification for workspace users.
 model Notification {
-  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  workspaceId String @map("workspace_id") @db.Uuid
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String    @map("workspace_id") @db.Uuid
   /// Notification type (order.new, order.cancelled, order.edited, customer.new, receipt.new, handoff.requested)
-  type       String   @db.VarChar(50)
+  type        String    @db.VarChar(50)
   /// Short title to display
-  title      String   @db.VarChar(255)
+  title       String    @db.VarChar(255)
   /// Detailed message
-  message    String   @db.Text
+  message     String    @db.Text
   /// Related entity type (Order, Customer, Receipt, Handoff)
-  entityType String?  @map("entity_type") @db.VarChar(50)
+  entityType  String?   @map("entity_type") @db.VarChar(50)
   /// Related entity id
-  entityId   String?  @map("entity_id") @db.Uuid
+  entityId    String?   @map("entity_id") @db.Uuid
   /// Additional metadata (JSON)
-  metadata   Json     @default("{}")
+  metadata    Json      @default("{}")
   /// When the notification was read
-  readAt     DateTime? @map("read_at")
-  createdAt  DateTime @default(now()) @map("created_at")
+  readAt      DateTime? @map("read_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
 
   // Relations
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -880,55 +883,56 @@ model Notification {
 
 /// Product represents an item in the catalog.
 model Product {
-  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  workspaceId String    @map("workspace_id") @db.Uuid
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId        String    @map("workspace_id") @db.Uuid
   /// SKU (Stock Keeping Unit) - unique per workspace
-  sku         String    @db.VarChar(100)
+  sku                String    @db.VarChar(100)
   /// Product name
-  name        String    @db.VarChar(255)
+  name               String    @db.VarChar(255)
   /// Product description
-  description String?   @db.Text
+  description        String?   @db.Text
   /// Short description for chat responses
-  shortDesc   String?   @map("short_desc") @db.VarChar(500)
+  shortDesc          String?   @map("short_desc") @db.VarChar(500)
   /// Unit of measure (unit, kg, g, l, ml, m, cm)
-  unit        String    @default("unit") @db.VarChar(20)
+  unit               String    @default("unit") @db.VarChar(20)
   /// Unit content/size (e.g., 2.25 for 2.25 lts)
-  unitValue   String?   @map("unit_value") @db.VarChar(20)
+  unitValue          String?   @map("unit_value") @db.VarChar(20)
   /// Secondary unit of measure (pack, box, bundle, dozen)
-  secondaryUnit String? @map("secondary_unit") @db.VarChar(20)
+  secondaryUnit      String?   @map("secondary_unit") @db.VarChar(20)
   /// Secondary unit content/size (e.g., 6 for pack 6; dozen = 12)
-  secondaryUnitValue String? @map("secondary_unit_value") @db.VarChar(20)
+  secondaryUnitValue String?   @map("secondary_unit_value") @db.VarChar(20)
   /// Category path (e.g., "Electronics > Phones > Smartphones")
-  category    String?   @db.VarChar(500)
+  category           String?   @db.VarChar(500)
   /// Base price in smallest currency unit (e.g., cents)
-  price       Int
+  price              Int
   /// Compare-at price (for discounts)
-  comparePrice Int?     @map("compare_price")
+  comparePrice       Int?      @map("compare_price")
   /// Currency code (ISO 4217)
-  currency    String    @default("ARS") @db.VarChar(3)
+  currency           String    @default("ARS") @db.VarChar(3)
   /// Tax rate as decimal (e.g., 0.21 for 21%)
-  taxRate     Decimal   @default(0) @map("tax_rate") @db.Decimal(5, 4)
+  taxRate            Decimal   @default(0) @map("tax_rate") @db.Decimal(5, 4)
   /// Product images (JSON array of URLs)
-  images      Json      @default("[]")
+  images             Json      @default("[]")
   /// Product attributes (JSON: color, size, etc.)
-  attributes  Json      @default("{}")
+  attributes         Json      @default("{}")
   /// SEO/search keywords
-  keywords    String[]  @default([])
+  keywords           String[]  @default([])
   /// Product status: active, draft, archived
-  status      String    @default("draft") @db.VarChar(20)
+  status             String    @default("draft") @db.VarChar(20)
   /// Sort order within category
-  sortOrder   Int       @default(0) @map("sort_order")
-  createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @updatedAt @map("updated_at")
+  sortOrder          Int       @default(0) @map("sort_order")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
   /// Soft delete timestamp
-  deletedAt   DateTime? @map("deleted_at")
+  deletedAt          DateTime? @map("deleted_at")
 
   // Relations
-  workspace        Workspace                @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  variants         ProductVariant[]
-  stockItems       StockItem[]
-  orderItems       OrderItem[]
-  categoryMappings ProductCategoryMapping[]
+  workspace                Workspace                  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  variants                 ProductVariant[]
+  stockItems               StockItem[]
+  orderItems               OrderItem[]
+  promotions               Promotion[]
+  categoryMappings         ProductCategoryMapping[]
   matchedStockReceiptItems StockPurchaseReceiptItem[] @relation("StockReceiptMatchedProduct")
   createdStockReceiptItems StockPurchaseReceiptItem[] @relation("StockReceiptCreatedProduct")
 
@@ -985,27 +989,125 @@ model ProductCategoryMapping {
   @@map("product_category_mappings")
 }
 
-/// ProductVariant represents a variation of a product (size, color, etc.).
-model ProductVariant {
+/// Promotion represents a product campaign discount that can be applied to orders.
+model Promotion {
   id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String    @map("workspace_id") @db.Uuid
   productId   String    @map("product_id") @db.Uuid
-  /// Variant SKU (must be unique within workspace via product)
-  sku         String    @db.VarChar(100)
-  /// Variant name (e.g., "Large / Red")
-  name        String    @db.VarChar(255)
-  /// Price override (null = use product price)
-  price       Int?
-  /// Variant attributes (JSON: size, color, etc.)
-  attributes  Json      @default("{}")
-  /// Variant images (JSON array of URLs)
-  images      Json      @default("[]")
-  /// Variant status: active, inactive
-  status      String    @default("active") @db.VarChar(20)
-  /// Sort order
-  sortOrder   Int       @default(0) @map("sort_order")
+  /// Human readable promo name
+  name        String    @db.VarChar(150)
+  /// Optional description for internal use
+  description String?   @db.VarChar(500)
+  /// percentage | fixed_price
+  promoType   String    @map("promo_type") @db.VarChar(20)
+  /// Percentage integer (1..100) or fixed unit price (in cents), depending on promoType
+  value       Int
+  startsAt    DateTime  @map("starts_at")
+  endsAt      DateTime  @map("ends_at")
+  /// draft | active | paused | archived | expired
+  status      String    @default("draft") @db.VarChar(20)
+  metadata    Json      @default("{}")
+  createdBy   String?   @map("created_by") @db.Uuid
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
   deletedAt   DateTime? @map("deleted_at")
+
+  // Relations
+  workspace Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  product   Product             @relation(fields: [productId], references: [id], onDelete: Restrict)
+  orders    Order[]
+  campaigns BroadcastCampaign[]
+
+  @@index([workspaceId, status])
+  @@index([workspaceId, startsAt, endsAt])
+  @@index([productId])
+  @@index([deletedAt])
+  @@map("promotions")
+}
+
+/// BroadcastCampaign tracks WhatsApp diffusion campaigns and aggregated delivery counters.
+model BroadcastCampaign {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId     String    @map("workspace_id") @db.Uuid
+  promotionId     String?   @map("promotion_id") @db.Uuid
+  name            String    @db.VarChar(150)
+  message         String    @db.Text
+  imageUrl        String?   @map("image_url") @db.Text
+  /// all_customers | selected_customers
+  targetType      String    @default("all_customers") @map("target_type") @db.VarChar(30)
+  /// draft | processing | completed | partial | failed | cancelled
+  status          String    @default("draft") @db.VarChar(20)
+  totalRecipients Int       @default(0) @map("total_recipients")
+  sentCount       Int       @default(0) @map("sent_count")
+  failedCount     Int       @default(0) @map("failed_count")
+  startedAt       DateTime? @map("started_at")
+  finishedAt      DateTime? @map("finished_at")
+  metadata        Json      @default("{}")
+  createdBy       String?   @map("created_by") @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  workspace  Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  promotion  Promotion?           @relation(fields: [promotionId], references: [id], onDelete: SetNull)
+  recipients BroadcastRecipient[]
+
+  @@index([workspaceId, status])
+  @@index([workspaceId, createdAt])
+  @@index([promotionId])
+  @@map("broadcast_campaigns")
+}
+
+/// BroadcastRecipient stores per-recipient delivery status for a campaign.
+model BroadcastRecipient {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId       String    @map("workspace_id") @db.Uuid
+  campaignId        String    @map("campaign_id") @db.Uuid
+  customerId        String?   @map("customer_id") @db.Uuid
+  phone             String    @db.VarChar(20)
+  /// pending | sent | failed | skipped
+  status            String    @default("pending") @db.VarChar(20)
+  provider          String?   @db.VarChar(30)
+  providerMessageId String?   @map("provider_message_id") @db.VarChar(255)
+  errorMessage      String?   @map("error_message") @db.Text
+  sentAt            DateTime? @map("sent_at")
+  metadata          Json      @default("{}")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  workspace Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  campaign  BroadcastCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  customer  Customer?         @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  @@unique([campaignId, phone])
+  @@index([workspaceId, status])
+  @@index([campaignId, status])
+  @@index([customerId])
+  @@map("broadcast_recipients")
+}
+
+/// ProductVariant represents a variation of a product (size, color, etc.).
+model ProductVariant {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  productId  String    @map("product_id") @db.Uuid
+  /// Variant SKU (must be unique within workspace via product)
+  sku        String    @db.VarChar(100)
+  /// Variant name (e.g., "Large / Red")
+  name       String    @db.VarChar(255)
+  /// Price override (null = use product price)
+  price      Int?
+  /// Variant attributes (JSON: size, color, etc.)
+  attributes Json      @default("{}")
+  /// Variant images (JSON array of URLs)
+  images     Json      @default("[]")
+  /// Variant status: active, inactive
+  status     String    @default("active") @db.VarChar(20)
+  /// Sort order
+  sortOrder  Int       @default(0) @map("sort_order")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+  deletedAt  DateTime? @map("deleted_at")
 
   // Relations
   product    Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
@@ -1019,23 +1121,23 @@ model ProductVariant {
 
 /// StockItem tracks inventory levels for products/variants.
 model StockItem {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  productId   String   @map("product_id") @db.Uuid
-  variantId   String?  @map("variant_id") @db.Uuid
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  productId    String   @map("product_id") @db.Uuid
+  variantId    String?  @map("variant_id") @db.Uuid
   /// Current available quantity
-  quantity    Int      @default(0)
+  quantity     Int      @default(0)
   /// Reserved quantity (in pending orders)
-  reserved    Int      @default(0)
+  reserved     Int      @default(0)
   /// Low stock threshold
-  lowThreshold Int     @default(10) @map("low_threshold")
+  lowThreshold Int      @default(10) @map("low_threshold")
   /// Location/warehouse identifier
-  location    String?  @db.VarChar(100)
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  location     String?  @db.VarChar(100)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
 
   // Relations
-  product  Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
-  variant  ProductVariant? @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  product   Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variant   ProductVariant? @relation(fields: [variantId], references: [id], onDelete: Cascade)
   movements StockMovement[]
 
   // Unique stock item per product/variant/location combination
@@ -1048,25 +1150,25 @@ model StockItem {
 
 /// StockMovement records all inventory changes for audit trail.
 model StockMovement {
-  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  stockItemId  String   @map("stock_item_id") @db.Uuid
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  stockItemId   String   @map("stock_item_id") @db.Uuid
   /// Movement type: adjustment, sale, return, reservation, release
-  type         String   @db.VarChar(20)
+  type          String   @db.VarChar(20)
   /// Quantity change (positive = increase, negative = decrease)
-  quantity     Int
+  quantity      Int
   /// Quantity before movement
-  previousQty  Int      @map("previous_qty")
+  previousQty   Int      @map("previous_qty")
   /// Quantity after movement
-  newQty       Int      @map("new_qty")
+  newQty        Int      @map("new_qty")
   /// Reason/notes for the movement
-  reason       String?  @db.VarChar(500)
+  reason        String?  @db.VarChar(500)
   /// Reference type (e.g., "Order", "StockReservation")
-  referenceType String? @map("reference_type") @db.VarChar(50)
+  referenceType String?  @map("reference_type") @db.VarChar(50)
   /// Reference ID
-  referenceId  String?  @map("reference_id") @db.Uuid
+  referenceId   String?  @map("reference_id") @db.Uuid
   /// User who made the change (null for system changes)
-  createdBy    String?  @map("created_by") @db.Uuid
-  createdAt    DateTime @default(now()) @map("created_at")
+  createdBy     String?  @map("created_by") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at")
 
   // Relations
   stockItem StockItem @relation(fields: [stockItemId], references: [id], onDelete: Cascade)
@@ -1105,29 +1207,29 @@ model StockReservation {
 
 /// StockPurchaseReceipt represents a supplier receipt/invoice used to increase stock.
 model StockPurchaseReceipt {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  workspaceId String   @map("workspace_id") @db.Uuid
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId   String    @map("workspace_id") @db.Uuid
   /// Receipt status: draft, applied
-  status      String   @default("draft") @db.VarChar(20)
-  vendorName  String?  @map("vendor_name") @db.VarChar(255)
-  issuedAt    DateTime? @map("issued_at")
+  status        String    @default("draft") @db.VarChar(20)
+  vendorName    String?   @map("vendor_name") @db.VarChar(255)
+  issuedAt      DateTime? @map("issued_at")
   /// Total amount in cents
-  total       Int      @default(0)
+  total         Int       @default(0)
   /// Currency code
-  currency    String   @default("ARS") @db.VarChar(3)
+  currency      String    @default("ARS") @db.VarChar(3)
   /// Local/public file reference (e.g. /uploads/stock-receipts/<file>)
-  fileRef     String   @map("file_ref") @db.Text
+  fileRef       String    @map("file_ref") @db.Text
   /// SHA-256 hex (used for dedupe)
-  fileHash    String   @map("file_hash") @db.VarChar(64)
+  fileHash      String    @map("file_hash") @db.VarChar(64)
   /// Media type (image/* or application/pdf)
-  mediaType   String?  @map("media_type") @db.VarChar(100)
+  mediaType     String?   @map("media_type") @db.VarChar(100)
   /// Raw extracted data (OCR/LLM output)
-  extractedData Json   @map("extracted_data") @default("{}")
-  createdAt   DateTime @default(now()) @map("created_at")
-  appliedAt   DateTime? @map("applied_at")
+  extractedData Json      @default("{}") @map("extracted_data")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  appliedAt     DateTime? @map("applied_at")
 
   // Relations
-  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace Workspace                  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   items     StockPurchaseReceiptItem[]
 
   @@unique([workspaceId, fileHash])
@@ -1138,33 +1240,33 @@ model StockPurchaseReceipt {
 
 /// StockPurchaseReceiptItem is a parsed line item from a stock purchase receipt.
 model StockPurchaseReceiptItem {
-  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  receiptId    String   @map("receipt_id") @db.Uuid
-  rawDescription String @map("raw_description") @db.VarChar(500)
+  id                   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  receiptId            String   @map("receipt_id") @db.Uuid
+  rawDescription       String   @map("raw_description") @db.VarChar(500)
   /// Quantity as seen in the receipt (packs or units)
-  quantity     Int
+  quantity             Int
   /// Whether quantity refers to a secondary unit (pack/box/etc)
-  isPack       Boolean  @default(false) @map("is_pack")
+  isPack               Boolean  @default(false) @map("is_pack")
   /// Units per pack if known
-  unitsPerPack Int?     @map("units_per_pack")
+  unitsPerPack         Int?     @map("units_per_pack")
   /// Computed base units to apply to stock
-  quantityBaseUnits Int @map("quantity_base_units")
+  quantityBaseUnits    Int      @map("quantity_base_units")
   /// Matched existing product (optional)
-  matchedProductId String? @map("matched_product_id") @db.Uuid
+  matchedProductId     String?  @map("matched_product_id") @db.Uuid
   /// Created product (optional)
-  createdProductId String? @map("created_product_id") @db.Uuid
-  unitPrice   Int?    @map("unit_price")
-  lineTotal   Int?    @map("line_total")
+  createdProductId     String?  @map("created_product_id") @db.Uuid
+  unitPrice            Int?     @map("unit_price")
+  lineTotal            Int?     @map("line_total")
   /// 0..1 match confidence
-  matchConfidence Decimal? @map("match_confidence") @db.Decimal(4, 3)
+  matchConfidence      Decimal? @map("match_confidence") @db.Decimal(4, 3)
   /// Suggested new product data or matching reasoning
-  suggestedProductData Json @map("suggested_product_data") @default("{}")
-  createdAt   DateTime @default(now()) @map("created_at")
+  suggestedProductData Json     @default("{}") @map("suggested_product_data")
+  createdAt            DateTime @default(now()) @map("created_at")
 
   // Relations
-  receipt StockPurchaseReceipt @relation(fields: [receiptId], references: [id], onDelete: Cascade)
-  matchedProduct Product? @relation("StockReceiptMatchedProduct", fields: [matchedProductId], references: [id])
-  createdProduct Product? @relation("StockReceiptCreatedProduct", fields: [createdProductId], references: [id])
+  receipt        StockPurchaseReceipt @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  matchedProduct Product?             @relation("StockReceiptMatchedProduct", fields: [matchedProductId], references: [id])
+  createdProduct Product?             @relation("StockReceiptCreatedProduct", fields: [createdProductId], references: [id])
 
   @@index([receiptId])
   @@index([matchedProductId])
@@ -1174,64 +1276,65 @@ model StockPurchaseReceiptItem {
 
 /// Customer represents a buyer/contact in the system.
 model Customer {
-  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  workspaceId String    @map("workspace_id") @db.Uuid
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId   String    @map("workspace_id") @db.Uuid
   /// Phone number (E.164 format) - primary identifier for WhatsApp
-  phone       String    @db.VarChar(20)
+  phone         String    @db.VarChar(20)
   /// Email (optional)
-  email       String?   @db.VarChar(255)
+  email         String?   @db.VarChar(255)
   /// First name
-  firstName   String?   @map("first_name") @db.VarChar(100)
+  firstName     String?   @map("first_name") @db.VarChar(100)
   /// Last name
-  lastName    String?   @map("last_name") @db.VarChar(100)
+  lastName      String?   @map("last_name") @db.VarChar(100)
   /// CUIT (tax ID)
-  cuit        String?   @db.VarChar(20)
+  cuit          String?   @db.VarChar(20)
   /// Razón social
-  businessName String?  @map("business_name") @db.VarChar(255)
+  businessName  String?   @map("business_name") @db.VarChar(255)
   /// Domicilio fiscal
-  fiscalAddress String? @map("fiscal_address") @db.Text
+  fiscalAddress String?   @map("fiscal_address") @db.Text
   /// Condición frente al IVA
-  vatCondition String?  @map("vat_condition") @db.VarChar(50)
+  vatCondition  String?   @map("vat_condition") @db.VarChar(50)
   /// External ID (from CRM or other system)
-  externalId  String?   @map("external_id") @db.VarChar(255)
+  externalId    String?   @map("external_id") @db.VarChar(255)
   /// Customer status: active, blocked
-  status      String    @default("active") @db.VarChar(20)
+  status        String    @default("active") @db.VarChar(20)
   /// Customer preferences (JSON: language, notifications, etc.)
-  preferences Json      @default("{}")
+  preferences   Json      @default("{}")
   /// Additional metadata
-  metadata    Json      @default("{}")
+  metadata      Json      @default("{}")
   /// Total orders count
-  orderCount  Int       @default(0) @map("order_count")
+  orderCount    Int       @default(0) @map("order_count")
   /// Total spent (in smallest currency unit)
-  totalSpent  BigInt    @default(0) @map("total_spent")
+  totalSpent    BigInt    @default(0) @map("total_spent")
   /// Last order timestamp
-  lastOrderAt DateTime? @map("last_order_at")
+  lastOrderAt   DateTime? @map("last_order_at")
   /// First contact timestamp
-  firstSeenAt DateTime  @default(now()) @map("first_seen_at")
+  firstSeenAt   DateTime  @default(now()) @map("first_seen_at")
   /// Last contact timestamp
-  lastSeenAt  DateTime  @default(now()) @map("last_seen_at")
-  createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @updatedAt @map("updated_at")
-  deletedAt   DateTime? @map("deleted_at")
+  lastSeenAt    DateTime  @default(now()) @map("last_seen_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  deletedAt     DateTime? @map("deleted_at")
 
   // Debt tracking fields
   /// Current balance (positive = owes, negative = credit)
-  currentBalance      Int       @default(0) @map("current_balance")
+  currentBalance     Int       @default(0) @map("current_balance")
   /// Debt reminder counter
-  debtReminderCount   Int       @default(0) @map("debt_reminder_count")
+  debtReminderCount  Int       @default(0) @map("debt_reminder_count")
   /// Last debt reminder sent
-  lastDebtReminderAt  DateTime? @map("last_debt_reminder_at")
+  lastDebtReminderAt DateTime? @map("last_debt_reminder_at")
   /// Payment score (0-100): 100 = excellent payer, 0 = bad payer
-  paymentScore        Int       @default(100) @map("payment_score")
+  paymentScore       Int       @default(100) @map("payment_score")
 
   // Relations
-  workspace      Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  addresses      CustomerAddress[]
-  orders         Order[]
-  agentSessions  AgentSession[]
-  receipts       Receipt[]
-  ledgerEntries  LedgerEntry[]
-  notes          CustomerNote[]
+  workspace           Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  addresses           CustomerAddress[]
+  orders              Order[]
+  broadcastRecipients BroadcastRecipient[]
+  agentSessions       AgentSession[]
+  receipts            Receipt[]
+  ledgerEntries       LedgerEntry[]
+  notes               CustomerNote[]
 
   @@unique([workspaceId, phone])
   @@unique([workspaceId, externalId])
@@ -1243,28 +1346,28 @@ model Customer {
 
 /// CustomerAddress stores delivery/billing addresses.
 model CustomerAddress {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  customerId  String   @map("customer_id") @db.Uuid
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  customerId String   @map("customer_id") @db.Uuid
   /// Address type: shipping, billing
-  type        String   @db.VarChar(20)
+  type       String   @db.VarChar(20)
   /// Address label (e.g., "Home", "Work")
-  label       String?  @db.VarChar(100)
+  label      String?  @db.VarChar(100)
   /// Street address line 1
-  line1       String   @db.VarChar(255)
+  line1      String   @db.VarChar(255)
   /// Street address line 2
-  line2       String?  @db.VarChar(255)
+  line2      String?  @db.VarChar(255)
   /// City
-  city        String   @db.VarChar(100)
+  city       String   @db.VarChar(100)
   /// State/Province
-  state       String?  @db.VarChar(100)
+  state      String?  @db.VarChar(100)
   /// Postal/ZIP code
-  postalCode  String?  @map("postal_code") @db.VarChar(20)
+  postalCode String?  @map("postal_code") @db.VarChar(20)
   /// Country code (ISO 3166-1 alpha-2)
-  country     String   @default("AR") @db.VarChar(2)
+  country    String   @default("AR") @db.VarChar(2)
   /// Is default address for this type
-  isDefault   Boolean  @default(false) @map("is_default")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  isDefault  Boolean  @default(false) @map("is_default")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
 
   // Relations
   customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
@@ -1275,15 +1378,15 @@ model CustomerAddress {
 
 /// CustomerNote stores notes about a customer (preferences, observations, etc.)
 model CustomerNote {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  customerId  String   @map("customer_id") @db.Uuid
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  customerId String   @map("customer_id") @db.Uuid
   /// Note content
-  content     String   @db.Text
+  content    String   @db.Text
   /// Who created this note: 'user' (dashboard), 'agent' (AI), 'system'
-  createdBy   String   @default("user") @map("created_by") @db.VarChar(20)
+  createdBy  String   @default("user") @map("created_by") @db.VarChar(20)
   /// User ID if created by dashboard user
-  userId      String?  @map("user_id") @db.Uuid
-  createdAt   DateTime @default(now()) @map("created_at")
+  userId     String?  @map("user_id") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at")
 
   // Relations
   customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
@@ -1297,6 +1400,7 @@ model Order {
   id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   workspaceId     String    @map("workspace_id") @db.Uuid
   customerId      String    @map("customer_id") @db.Uuid
+  promotionId     String?   @map("promotion_id") @db.Uuid
   /// Order number (human-readable, unique per workspace)
   orderNumber     String    @map("order_number") @db.VarChar(50)
   /// Order status: draft, awaiting_acceptance, accepted, trashed, pending_payment, partial_payment, paid, processing, shipped, delivered, cancelled, returned
@@ -1342,8 +1446,9 @@ model Order {
   deletedAt       DateTime? @map("deleted_at")
 
   // Relations
-  workspace         Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  customer          Customer           @relation(fields: [customerId], references: [id])
+  workspace         Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  customer          Customer             @relation(fields: [customerId], references: [id])
+  promotion         Promotion?           @relation(fields: [promotionId], references: [id], onDelete: SetNull)
   items             OrderItem[]
   payments          Payment[]
   statusHistory     OrderStatusHistory[]
@@ -1354,6 +1459,7 @@ model Order {
   @@unique([workspaceId, orderNumber])
   @@index([workspaceId, status])
   @@index([workspaceId, createdAt])
+  @@index([workspaceId, promotionId])
   @@index([customerId])
   @@index([sessionId])
   @@index([deletedAt])
@@ -1362,30 +1468,30 @@ model Order {
 
 /// OrderItem represents a line item in an order.
 model OrderItem {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  orderId     String   @map("order_id") @db.Uuid
-  productId   String   @map("product_id") @db.Uuid
-  variantId   String?  @map("variant_id") @db.Uuid
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId   String   @map("order_id") @db.Uuid
+  productId String   @map("product_id") @db.Uuid
+  variantId String?  @map("variant_id") @db.Uuid
   /// Product SKU (snapshot)
-  sku         String   @db.VarChar(100)
+  sku       String   @db.VarChar(100)
   /// Product name (snapshot)
-  name        String   @db.VarChar(255)
+  name      String   @db.VarChar(255)
   /// Quantity ordered
-  quantity    Int
+  quantity  Int
   /// Unit price at time of order
-  unitPrice   Int      @map("unit_price")
+  unitPrice Int      @map("unit_price")
   /// Tax amount for this line
-  tax         Int      @default(0)
+  tax       Int      @default(0)
   /// Discount for this line
-  discount    Int      @default(0)
+  discount  Int      @default(0)
   /// Line total (quantity * unitPrice + tax - discount)
-  total       Int
+  total     Int
   /// Item notes
-  notes       String?  @db.VarChar(500)
+  notes     String?  @db.VarChar(500)
   /// Item metadata (variant attributes snapshot, etc.)
-  metadata    Json     @default("{}")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  metadata  Json     @default("{}")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   // Relations
   order   Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
@@ -1399,14 +1505,14 @@ model OrderItem {
 
 /// OrderStatusHistory tracks order status changes.
 model OrderStatusHistory {
-  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  orderId       String   @map("order_id") @db.Uuid
-  previousStatus String? @map("previous_status") @db.VarChar(20)
-  newStatus     String   @map("new_status") @db.VarChar(20)
-  reason        String?  @db.VarChar(500)
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId        String   @map("order_id") @db.Uuid
+  previousStatus String?  @map("previous_status") @db.VarChar(20)
+  newStatus      String   @map("new_status") @db.VarChar(20)
+  reason         String?  @db.VarChar(500)
   /// Who made the change (user ID or "system")
-  changedBy     String?  @map("changed_by") @db.VarChar(100)
-  createdAt     DateTime @default(now()) @map("created_at")
+  changedBy      String?  @map("changed_by") @db.VarChar(100)
+  createdAt      DateTime @default(now()) @map("created_at")
 
   // Relations
   order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
@@ -1417,46 +1523,46 @@ model OrderStatusHistory {
 
 /// Payment represents a payment attempt/transaction.
 model Payment {
-  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  orderId         String    @map("order_id") @db.Uuid
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId      String    @map("order_id") @db.Uuid
   /// Payment provider: mercadopago, manual, etc.
-  provider        String    @db.VarChar(50)
+  provider     String    @db.VarChar(50)
   /// External payment ID from provider
-  externalId      String?   @map("external_id") @db.VarChar(255)
+  externalId   String?   @map("external_id") @db.VarChar(255)
   /// Payment method: credit_card, debit_card, cash, transfer, etc.
-  method          String?   @db.VarChar(50)
+  method       String?   @db.VarChar(50)
   /// Payment status: pending, processing, completed, failed, refunded, cancelled
-  status          String    @default("pending") @db.VarChar(20)
+  status       String    @default("pending") @db.VarChar(20)
   /// Amount in smallest currency unit
-  amount          Int
+  amount       Int
   /// Currency code
-  currency        String    @default("ARS") @db.VarChar(3)
+  currency     String    @default("ARS") @db.VarChar(3)
   /// Fee charged by provider
-  fee             Int       @default(0)
+  fee          Int       @default(0)
   /// Net amount after fees
-  netAmount       Int       @map("net_amount") @default(0)
+  netAmount    Int       @default(0) @map("net_amount")
   /// Provider-specific metadata
-  providerData    Json      @default("{}") @map("provider_data")
+  providerData Json      @default("{}") @map("provider_data")
   /// Error message (if failed)
-  errorMessage    String?   @map("error_message") @db.Text
+  errorMessage String?   @map("error_message") @db.Text
   /// Error code
-  errorCode       String?   @map("error_code") @db.VarChar(50)
+  errorCode    String?   @map("error_code") @db.VarChar(50)
   /// Payment URL (for redirect payments)
-  paymentUrl      String?   @map("payment_url") @db.VarChar(1000)
+  paymentUrl   String?   @map("payment_url") @db.VarChar(1000)
   /// When payment was initiated
-  initiatedAt     DateTime  @default(now()) @map("initiated_at")
+  initiatedAt  DateTime  @default(now()) @map("initiated_at")
   /// When payment completed
-  completedAt     DateTime? @map("completed_at")
+  completedAt  DateTime? @map("completed_at")
   /// When payment failed
-  failedAt        DateTime? @map("failed_at")
+  failedAt     DateTime? @map("failed_at")
   /// When payment was refunded
-  refundedAt      DateTime? @map("refunded_at")
+  refundedAt   DateTime? @map("refunded_at")
   /// Refund amount (partial refunds possible)
-  refundAmount    Int?      @map("refund_amount")
+  refundAmount Int?      @map("refund_amount")
   /// Refund reason
-  refundReason    String?   @map("refund_reason") @db.VarChar(500)
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
+  refundReason String?   @map("refund_reason") @db.VarChar(500)
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
 
   // Relations
   order       Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
@@ -1471,26 +1577,26 @@ model Payment {
 
 /// Attachment stores files/documents related to orders, payments, etc.
 model Attachment {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   /// Reference type: Order, Payment, Customer
-  refType     String   @map("ref_type") @db.VarChar(50)
+  refType    String   @map("ref_type") @db.VarChar(50)
   /// Reference ID
-  refId       String   @map("ref_id") @db.Uuid
+  refId      String   @map("ref_id") @db.Uuid
   /// Attachment type: receipt, invoice, proof, other
-  type        String   @db.VarChar(50)
+  type       String   @db.VarChar(50)
   /// Original filename
-  filename    String   @db.VarChar(255)
+  filename   String   @db.VarChar(255)
   /// MIME type
-  mimeType    String   @map("mime_type") @db.VarChar(100)
+  mimeType   String   @map("mime_type") @db.VarChar(100)
   /// File size in bytes
-  size        Int
+  size       Int
   /// Storage URL/path
-  url         String   @db.VarChar(1000)
+  url        String   @db.VarChar(1000)
   /// Storage provider: s3, local
-  storage     String   @default("s3") @db.VarChar(20)
+  storage    String   @default("s3") @db.VarChar(20)
   /// Who uploaded
-  uploadedBy  String?  @map("uploaded_by") @db.Uuid
-  createdAt   DateTime @default(now()) @map("created_at")
+  uploadedBy String?  @map("uploaded_by") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at")
 
   // Optional relations (polymorphic)
   payment Payment? @relation(fields: [refId], references: [id], onDelete: Cascade, map: "attachments_payment_fkey")
@@ -1579,12 +1685,12 @@ model UsageRecord {
 /// WorkspaceIntegration stores OAuth tokens and settings for third-party integrations.
 /// Supports MercadoPago, Google Sheets, etc.
 model WorkspaceIntegration {
-  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  workspaceId     String    @map("workspace_id") @db.Uuid
+  id          String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String @map("workspace_id") @db.Uuid
   /// Provider identifier: mercadopago, google_sheets, contabilium, tiendanube
-  provider        String    @db.VarChar(50)
+  provider    String @db.VarChar(50)
   /// Connection status: disconnected, connected, error, expired
-  status          String    @default("disconnected") @db.VarChar(20)
+  status      String @default("disconnected") @db.VarChar(20)
 
   // OAuth tokens (AES-256 encrypted)
   accessTokenEnc  String?   @map("access_token_enc") @db.Text
@@ -1594,27 +1700,27 @@ model WorkspaceIntegration {
   tokenExpiresAt  DateTime? @map("token_expires_at")
 
   // Provider-specific identifiers
-  externalUserId  String?   @map("external_user_id") @db.VarChar(100)
-  externalEmail   String?   @map("external_email") @db.VarChar(255)
+  externalUserId String? @map("external_user_id") @db.VarChar(100)
+  externalEmail  String? @map("external_email") @db.VarChar(255)
 
   // Provider-specific settings (webhook URLs, preferences, etc.)
-  providerData    Json      @default("{}") @map("provider_data")
+  providerData Json @default("{}") @map("provider_data")
 
   // Webhook secret for signature verification (encrypted)
-  webhookSecretEnc String?  @map("webhook_secret_enc") @db.Text
-  webhookSecretIv  String?  @map("webhook_secret_iv") @db.VarChar(32)
+  webhookSecretEnc String? @map("webhook_secret_enc") @db.Text
+  webhookSecretIv  String? @map("webhook_secret_iv") @db.VarChar(32)
 
   // Statistics
-  linksGenerated  Int       @default(0) @map("links_generated")
-  paymentsReceived Int      @default(0) @map("payments_received")
-  amountCollected BigInt    @default(0) @map("amount_collected")
+  linksGenerated   Int    @default(0) @map("links_generated")
+  paymentsReceived Int    @default(0) @map("payments_received")
+  amountCollected  BigInt @default(0) @map("amount_collected")
 
   // Timestamps
-  connectedAt     DateTime? @map("connected_at")
-  disconnectedAt  DateTime? @map("disconnected_at")
-  lastUsedAt      DateTime? @map("last_used_at")
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
+  connectedAt    DateTime? @map("connected_at")
+  disconnectedAt DateTime? @map("disconnected_at")
+  lastUsedAt     DateTime? @map("last_used_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
 
   // Relations
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -1626,22 +1732,22 @@ model WorkspaceIntegration {
 
 /// ArcaInvoice stores AFIP/ARCA WSFEv1 invoice responses.
 model ArcaInvoice {
-  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  workspaceId  String   @map("workspace_id") @db.Uuid
-  orderId      String?  @map("order_id") @db.Uuid
-  cuit         String   @db.VarChar(20)
-  pointOfSale  Int      @map("point_of_sale")
-  cbteTipo     Int      @map("cbte_tipo")
-  cbteNro      Int      @map("cbte_nro")
-  cae          String?  @db.VarChar(20)
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId  String    @map("workspace_id") @db.Uuid
+  orderId      String?   @map("order_id") @db.Uuid
+  cuit         String    @db.VarChar(20)
+  pointOfSale  Int       @map("point_of_sale")
+  cbteTipo     Int       @map("cbte_tipo")
+  cbteNro      Int       @map("cbte_nro")
+  cae          String?   @db.VarChar(20)
   caeExpiresAt DateTime? @map("cae_expires_at")
   total        Int
-  currency     String   @default("ARS") @db.VarChar(3)
-  status       String   @default("authorized") @db.VarChar(20)
-  requestData  Json?    @map("request_data")
-  responseData Json?    @map("response_data")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  currency     String    @default("ARS") @db.VarChar(3)
+  status       String    @default("authorized") @db.VarChar(20)
+  requestData  Json?     @map("request_data")
+  responseData Json?     @map("response_data")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   order     Order?    @relation(fields: [orderId], references: [id], onDelete: SetNull)
@@ -1677,17 +1783,17 @@ model ArcaInvoiceRecord {
 
 /// Receipt represents a payment proof uploaded by customer (transfer, cash deposit, etc.).
 model Receipt {
-  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  workspaceId     String    @map("workspace_id") @db.Uuid
-  customerId      String    @map("customer_id") @db.Uuid
-  sessionId       String?   @map("session_id") @db.Uuid
+  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String  @map("workspace_id") @db.Uuid
+  customerId  String  @map("customer_id") @db.Uuid
+  sessionId   String? @map("session_id") @db.Uuid
 
   // File storage
-  fileRef         String?   @map("file_ref") @db.VarChar(500)
-  fileHash        String?   @map("file_hash") @db.VarChar(64)
-  fileType        String    @map("file_type") @db.VarChar(20)
-  fileSizeBytes   Int?      @map("file_size_bytes")
-  fileUrl         String?   @map("file_url") @db.VarChar(1000)
+  fileRef       String? @map("file_ref") @db.VarChar(500)
+  fileHash      String? @map("file_hash") @db.VarChar(64)
+  fileType      String  @map("file_type") @db.VarChar(20)
+  fileSizeBytes Int?    @map("file_size_bytes")
+  fileUrl       String? @map("file_url") @db.VarChar(1000)
 
   // OCR/Vision extraction results
   extractedAmount     Int?      @map("extracted_amount")
@@ -1696,78 +1802,78 @@ model Receipt {
   extractedRawText    String?   @map("extracted_raw_text") @db.Text
 
   // Customer declaration
-  declaredAmount      Int?      @map("declared_amount")
-  declaredDate        DateTime? @map("declared_date")
+  declaredAmount Int?      @map("declared_amount")
+  declaredDate   DateTime? @map("declared_date")
 
   // Payment metadata
-  paymentMethod       String?   @map("payment_method") @db.VarChar(50)
+  paymentMethod String? @map("payment_method") @db.VarChar(50)
 
   // Application to order/balance
-  appliedAmount       Int?      @map("applied_amount")
-  orderId             String?   @map("order_id") @db.Uuid
-  ledgerEntryId       String?   @map("ledger_entry_id") @db.Uuid
+  appliedAmount Int?    @map("applied_amount")
+  orderId       String? @map("order_id") @db.Uuid
+  ledgerEntryId String? @map("ledger_entry_id") @db.Uuid
 
   // Status workflow: pending_review → confirmed → applied | rejected
-  status              String    @default("pending_review") @db.VarChar(20)
-  rejectionReason     String?   @map("rejection_reason") @db.VarChar(500)
+  status          String  @default("pending_review") @db.VarChar(20)
+  rejectionReason String? @map("rejection_reason") @db.VarChar(500)
 
   // Audit trail
-  uploadedAt          DateTime  @default(now()) @map("uploaded_at")
-  confirmedAt         DateTime? @map("confirmed_at")
-  confirmedBy         String?   @map("confirmed_by") @db.Uuid
-  appliedAt           DateTime? @map("applied_at")
-  appliedBy           String?   @map("applied_by") @db.VarChar(100)
+  uploadedAt  DateTime  @default(now()) @map("uploaded_at")
+  confirmedAt DateTime? @map("confirmed_at")
+  confirmedBy String?   @map("confirmed_by") @db.Uuid
+  appliedAt   DateTime? @map("applied_at")
+  appliedBy   String?   @map("applied_by") @db.VarChar(100)
 
-  createdAt           DateTime  @default(now()) @map("created_at")
-  updatedAt           DateTime  @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   // Relations
-  workspace     Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  customer      Customer      @relation(fields: [customerId], references: [id])
-  session       AgentSession? @relation(fields: [sessionId], references: [id])
-  order         Order?        @relation(fields: [orderId], references: [id])
+  workspace Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  customer  Customer      @relation(fields: [customerId], references: [id])
+  session   AgentSession? @relation(fields: [sessionId], references: [id])
+  order     Order?        @relation(fields: [orderId], references: [id])
 
+  @@unique([customerId, fileHash])
   @@index([workspaceId, customerId])
   @@index([workspaceId, status])
   @@index([orderId])
-  @@unique([customerId, fileHash])
   @@map("receipts")
 }
 
 /// LedgerEntry tracks all debt/credit movements for customers.
 /// Uses double-entry style: debit = customer owes, credit = customer paid.
 model LedgerEntry {
-  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  workspaceId     String    @map("workspace_id") @db.Uuid
-  customerId      String    @map("customer_id") @db.Uuid
+  id          String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String @map("workspace_id") @db.Uuid
+  customerId  String @map("customer_id") @db.Uuid
 
   /// Movement type: debit (customer owes), credit (customer paid)
-  type            String    @db.VarChar(10)
+  type String @db.VarChar(10)
 
   /// Amount (always positive, sign determined by type)
-  amount          Int
-  currency        String    @default("ARS") @db.VarChar(3)
+  amount   Int
+  currency String @default("ARS") @db.VarChar(3)
 
   /// Running balance after this entry (positive = owes, negative = credit balance)
-  balanceAfter    Int       @map("balance_after")
+  balanceAfter Int @map("balance_after")
 
   /// Reference to source document
-  referenceType   String    @map("reference_type") @db.VarChar(50)
-  referenceId     String    @map("reference_id") @db.Uuid
+  referenceType String @map("reference_type") @db.VarChar(50)
+  referenceId   String @map("reference_id") @db.Uuid
 
   /// Human-readable description
-  description     String    @db.VarChar(500)
+  description String @db.VarChar(500)
 
   /// Additional metadata (order details, payment method, etc.)
-  metadata        Json      @default("{}")
+  metadata Json @default("{}")
 
   /// Who created this entry: userId, 'agent', 'system', 'webhook'
-  createdBy       String?   @map("created_by") @db.VarChar(100)
-  createdAt       DateTime  @default(now()) @map("created_at")
+  createdBy String?  @map("created_by") @db.VarChar(100)
+  createdAt DateTime @default(now()) @map("created_at")
 
   // Relations
-  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  customer        Customer  @relation(fields: [customerId], references: [id])
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  customer  Customer  @relation(fields: [customerId], references: [id])
 
   @@index([workspaceId, customerId, createdAt])
   @@index([referenceType, referenceId])

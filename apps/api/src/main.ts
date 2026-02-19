@@ -30,6 +30,7 @@ import { audioTranscriptionsRoutes } from './routes/v1/audio-transcriptions.rout
 import { authRoutes } from './routes/v1/auth.routes.js';
 import { billingRoutes } from './routes/v1/billing.routes.js';
 import { categoriesRoutes } from './routes/v1/categories.routes.js';
+import { communicationsRoutes } from './routes/v1/communications.routes.js';
 import { conversationsRoutes } from './routes/v1/conversations.routes.js';
 import { customersRoutes } from './routes/v1/customers.routes.js';
 import { healthRoutes } from './routes/v1/health.routes.js';
@@ -177,6 +178,7 @@ async function bootstrap(): Promise<void> {
   await app.register(customersRoutes, { prefix: '/api/v1/customers' });
   await app.register(productsRoutes, { prefix: '/api/v1/products' });
   await app.register(categoriesRoutes, { prefix: '/api/v1/categories' });
+  await app.register(communicationsRoutes, { prefix: '/api/v1/communications' });
   await app.register(ordersRoutes, { prefix: '/api/v1/orders' });
   await app.register(notificationsRoutes, { prefix: '/api/v1/notifications' });
   await app.register(billingRoutes, { prefix: '/api/v1/billing' });

@@ -17,6 +17,7 @@ const ResetPasswordPage = lazy(() => import('./pages/auth/ResetPasswordPage'));
 const OnboardingPage = lazy(() => import('./pages/onboarding/OnboardingPage'));
 const DashboardHome = lazy(() => import('./pages/dashboard/DashboardHome'));
 const InboxPage = lazy(() => import('./pages/inbox/InboxPage'));
+const CommunicationsPage = lazy(() => import('./pages/communications/CommunicationsPage'));
 const OrdersPage = lazy(() => import('./pages/orders/OrdersPage'));
 const InvoicesPage = lazy(() => import('./pages/invoices/InvoicesPage'));
 const StockPage = lazy(() => import('./pages/stock/StockPage'));
@@ -192,6 +193,7 @@ function AppRoutes(): JSX.Element {
         >
           <Route path="/" element={<DashboardHome />} />
           <Route path="/inbox" element={<InboxPage />} />
+          <Route path="/communications" element={<CommunicationsPage />} />
           <Route path="/orders" element={<OrdersPage />} />
           <Route
             path="/facturacion"

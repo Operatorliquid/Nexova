@@ -18,6 +18,7 @@ import { getEffectiveCommercePlanLimits } from '../../utils/commerce-plan-limits
 import { getWorkspacePlanContext } from '../../utils/commerce-plan.js';
 import { recalcCustomerFinancials } from '../../utils/customer-financials.js';
 import { createNotificationIfEnabled } from '../../utils/notifications.js';
+import { calculatePromotionDiscount, promotionIsUsable } from '../../utils/promotions.js';
 import { extractReceiptAmountWithClaude, parseAmountInputToCents } from '../../utils/receipt-claude.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -53,6 +54,7 @@ const orderQuerySchema = z.object({
   from: z.coerce.date().optional(),
   to: z.coerce.date().optional(),
   includeTrashed: z.coerce.boolean().optional(),
+  promotion: z.enum(['with', 'without']).optional(),
 });
 
 const createOrderSchema = z.object({
@@ -87,6 +89,7 @@ const createOrderSchema = z.object({
   }).optional(),
   shipping: z.number().int().min(0).default(0),
   discount: z.number().int().min(0).default(0),
+  promotionId: z.string().uuid().optional().nullable(),
 });
 
 const UNIT_SHORT_LABELS: Record<string, string> = {
@@ -163,6 +166,7 @@ const updateOrderSchema = z.object({
   }).optional(),
   shipping: z.number().int().min(0).optional(),
   discount: z.number().int().min(0).optional(),
+  promotionId: z.string().uuid().optional().nullable(),
 });
 
 export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
@@ -196,7 +200,19 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(400).send({ error: 'MISSING_WORKSPACE', message: 'X-Workspace-Id header required' });
       }
       const query = orderQuerySchema.parse(request.query);
-      const { search, status, customerId, limit, offset, sortBy, sortOrder, from, to, includeTrashed } = query;
+      const {
+        search,
+        status,
+        customerId,
+        limit,
+        offset,
+        sortBy,
+        sortOrder,
+        from,
+        to,
+        includeTrashed,
+        promotion,
+      } = query;
       const paymentFilters = ['pending_payment', 'partial_payment', 'paid'] as const;
       const paymentFilterSet = new Set<string>(paymentFilters);
       const isPaymentFilter = typeof status === 'string' && paymentFilterSet.has(status);
@@ -243,6 +259,12 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
         where.customerId = customerId;
       }
 
+      if (promotion === 'with') {
+        where.promotionId = { not: null };
+      } else if (promotion === 'without') {
+        where.promotionId = null;
+      }
+
       if (from || to) {
         where.createdAt = {};
         if (from) where.createdAt.gte = from;
@@ -286,6 +308,14 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
               where: { status: 'completed' },
               select: { amount: true },
             },
+            promotion: {
+              select: {
+                id: true,
+                name: true,
+                promoType: true,
+                value: true,
+              },
+            },
           },
         }),
         isPaymentFilter ? Promise.resolve(0) : fastify.prisma.order.count({ where }),
@@ -315,6 +345,15 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
           pendingAmount: o.total - paidAmount,
           notes: o.notes,
           items: o.items,
+          hasPromotion: !!o.promotionId,
+          promotion: o.promotion
+            ? {
+              id: o.promotion.id,
+              name: o.promotion.name,
+              promoType: o.promotion.promoType,
+              value: o.promotion.value,
+            }
+            : null,
           createdAt: o.createdAt,
           updatedAt: o.updatedAt,
         };
@@ -525,6 +564,17 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
             orderBy: { createdAt: 'desc' },
             take: 10,
           },
+          promotion: {
+            select: {
+              id: true,
+              name: true,
+              promoType: true,
+              value: true,
+              startsAt: true,
+              endsAt: true,
+              status: true,
+            },
+          },
         },
       });
 
@@ -540,6 +590,7 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.send({
         order: {
           ...order,
+          hasPromotion: !!order.promotionId,
           paidAmount,
           pendingAmount: order.total - paidAmount,
         },
@@ -1192,7 +1243,82 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      const total = subtotal + body.shipping - body.discount;
+      let appliedPromotion: {
+        id: string;
+        name: string;
+        promoType: string;
+        value: number;
+        startsAt: Date;
+        endsAt: Date;
+        status: string;
+        productId: string;
+      } | null = null;
+      let finalDiscount = body.discount;
+      let promotionMetadata: Record<string, unknown> | null = null;
+
+      if (body.promotionId) {
+        const promotion = await fastify.prisma.promotion.findFirst({
+          where: {
+            id: body.promotionId,
+            workspaceId,
+            deletedAt: null,
+          },
+          select: {
+            id: true,
+            name: true,
+            promoType: true,
+            value: true,
+            startsAt: true,
+            endsAt: true,
+            status: true,
+            productId: true,
+          },
+        });
+
+        if (!promotion) {
+          return reply.code(404).send({
+            error: 'PROMOTION_NOT_FOUND',
+            message: 'La promocion seleccionada no existe',
+          });
+        }
+
+        if (!promotionIsUsable(promotion)) {
+          return reply.code(400).send({
+            error: 'PROMOTION_NOT_ACTIVE',
+            message: 'La promocion seleccionada no esta activa en este momento',
+          });
+        }
+
+        const promotionDiscount = calculatePromotionDiscount({
+          promotion,
+          items: orderItems.map((item) => ({
+            productId: item.productId,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+          })),
+        });
+
+        if (promotionDiscount.matchedSubtotal <= 0) {
+          return reply.code(400).send({
+            error: 'PROMOTION_NOT_APPLICABLE',
+            message: 'La promocion no aplica a los productos del pedido',
+          });
+        }
+
+        appliedPromotion = promotion;
+        finalDiscount = promotionDiscount.discount;
+        promotionMetadata = {
+          id: promotion.id,
+          name: promotion.name,
+          promoType: promotion.promoType,
+          value: promotion.value,
+          matchedSubtotal: promotionDiscount.matchedSubtotal,
+          discountAmount: promotionDiscount.discount,
+          appliedAt: new Date().toISOString(),
+        };
+      }
+
+      const total = subtotal + body.shipping - finalDiscount;
       const status = body.status ?? 'draft';
       const safePaidAmount = Math.max(0, Math.min(body.paidAmount ?? 0, total));
       const maxAttempts = 3;
@@ -1211,12 +1337,16 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
                 status,
                 subtotal,
                 shipping: body.shipping,
-                discount: body.discount,
+                discount: finalDiscount,
                 total,
+                promotionId: appliedPromotion?.id ?? null,
                 paidAmount: safePaidAmount,
                 paidAt: safePaidAmount >= total && total > 0 ? new Date() : null,
                 notes: body.notes,
                 shippingAddress: body.shippingAddress,
+                metadata: promotionMetadata
+                  ? ({ promotion: promotionMetadata } as Prisma.InputJsonValue)
+                  : ({} as Prisma.InputJsonValue),
                 items: {
                   create: orderItems,
                 },
@@ -1232,6 +1362,14 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
                   select: { id: true, phone: true, firstName: true, lastName: true },
                 },
                 items: true,
+                promotion: {
+                  select: {
+                    id: true,
+                    name: true,
+                    promoType: true,
+                    value: true,
+                  },
+                },
               },
             });
 
@@ -1366,7 +1504,12 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
         request.log.error({ error }, 'Failed to create order notification');
       }
 
-      return reply.code(201).send({ order });
+      return reply.code(201).send({
+        order: {
+          ...order,
+          hasPromotion: !!order.promotionId,
+        },
+      });
     }
   );
 
@@ -1386,33 +1529,130 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
       // Check order exists
       const existing = await fastify.prisma.order.findFirst({
         where: { id, workspaceId, deletedAt: null },
+        include: {
+          items: {
+            select: {
+              productId: true,
+              quantity: true,
+              unitPrice: true,
+            },
+          },
+        },
       });
 
       if (!existing) {
         return reply.code(404).send({ error: 'NOT_FOUND', message: 'Order not found' });
       }
 
+      const baseMetadata = (existing.metadata as Record<string, unknown>) || {};
+      let mergedMetadata: Record<string, unknown> | null = null;
+      let finalDiscount = body.discount ?? existing.discount;
+      let promotionIdForOrder = body.promotionId !== undefined ? body.promotionId : existing.promotionId;
+      let promotionSnapshot: Record<string, unknown> | null = null;
+
+      if (body.promotionId !== undefined) {
+        if (body.promotionId === null) {
+          if (body.discount === undefined) {
+            finalDiscount = 0;
+          }
+          promotionIdForOrder = null;
+          promotionSnapshot = null;
+        } else {
+          const promotion = await fastify.prisma.promotion.findFirst({
+            where: {
+              id: body.promotionId,
+              workspaceId,
+              deletedAt: null,
+            },
+            select: {
+              id: true,
+              name: true,
+              promoType: true,
+              value: true,
+              startsAt: true,
+              endsAt: true,
+              status: true,
+              productId: true,
+            },
+          });
+
+          if (!promotion) {
+            return reply.code(404).send({
+              error: 'PROMOTION_NOT_FOUND',
+              message: 'La promocion seleccionada no existe',
+            });
+          }
+
+          if (!promotionIsUsable(promotion)) {
+            return reply.code(400).send({
+              error: 'PROMOTION_NOT_ACTIVE',
+              message: 'La promocion seleccionada no esta activa en este momento',
+            });
+          }
+
+          const promoDiscount = calculatePromotionDiscount({
+            promotion,
+            items: existing.items.map((item) => ({
+              productId: item.productId,
+              quantity: item.quantity,
+              unitPrice: item.unitPrice,
+            })),
+          });
+
+          if (promoDiscount.matchedSubtotal <= 0) {
+            return reply.code(400).send({
+              error: 'PROMOTION_NOT_APPLICABLE',
+              message: 'La promocion no aplica a los productos del pedido',
+            });
+          }
+
+          finalDiscount = promoDiscount.discount;
+          promotionIdForOrder = promotion.id;
+          promotionSnapshot = {
+            id: promotion.id,
+            name: promotion.name,
+            promoType: promotion.promoType,
+            value: promotion.value,
+            matchedSubtotal: promoDiscount.matchedSubtotal,
+            discountAmount: promoDiscount.discount,
+            appliedAt: new Date().toISOString(),
+          };
+        }
+      }
+
       // Build update data
-      const updateData: Prisma.OrderUpdateManyMutationInput = {};
+      const updateData: Prisma.OrderUncheckedUpdateManyInput = {};
       if (body.notes !== undefined) updateData.notes = body.notes;
       if (body.internalNotes !== undefined) updateData.internalNotes = body.internalNotes;
       if (body.shippingAddress !== undefined) {
         updateData.shippingAddress = body.shippingAddress as Prisma.InputJsonValue;
       }
-      if (body.shipping !== undefined) {
-        updateData.shipping = body.shipping;
-        updateData.total = existing.subtotal + body.shipping - (body.discount ?? existing.discount);
+      const nextShipping = body.shipping ?? existing.shipping;
+      const shippingChanged = body.shipping !== undefined && body.shipping !== existing.shipping;
+      const discountChanged = body.discount !== undefined || body.promotionId !== undefined;
+      if (shippingChanged) {
+        updateData.shipping = nextShipping;
       }
-      if (body.discount !== undefined) {
-        updateData.discount = body.discount;
-        updateData.total = existing.subtotal + (body.shipping ?? existing.shipping) - body.discount;
+      if (discountChanged) {
+        updateData.discount = finalDiscount;
+      }
+      if (body.promotionId !== undefined) {
+        updateData.promotionId = promotionIdForOrder;
+        mergedMetadata = {
+          ...baseMetadata,
+          promotion: promotionSnapshot,
+        };
+      }
+      if (shippingChanged || discountChanged) {
+        updateData.total = existing.subtotal + nextShipping - finalDiscount;
       }
       const statusChanged = !!body.status && body.status !== existing.status;
       const hasContentEdits = body.notes !== undefined
         || body.internalNotes !== undefined
         || body.shippingAddress !== undefined
         || body.shipping !== undefined
-        || body.discount !== undefined;
+        || body.discount !== undefined
+        || body.promotionId !== undefined;
 
       // Handle status change
       if (statusChanged && body.status) {
@@ -1429,14 +1669,14 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
         });
 
         if (body.status === 'trashed') {
-          const metadata = (existing.metadata as Record<string, unknown>) || {};
-          updateData.metadata = {
-            ...metadata,
+          const metadataBase = mergedMetadata || baseMetadata;
+          mergedMetadata = {
+            ...metadataBase,
             trash: {
               previousStatus: existing.status,
               trashedAt: new Date().toISOString(),
             },
-          } as Prisma.InputJsonValue;
+          };
         }
 
         // Update timestamps based on status
@@ -1444,6 +1684,10 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
         if (body.status === 'shipped') updateData.shippedAt = new Date();
         if (body.status === 'delivered') updateData.deliveredAt = new Date();
         if (body.status === 'cancelled') updateData.cancelledAt = new Date();
+      }
+
+      if (mergedMetadata) {
+        updateData.metadata = mergedMetadata as Prisma.InputJsonValue;
       }
 
       await fastify.prisma.order.updateMany({
@@ -1457,6 +1701,14 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
           customer: { select: { id: true, phone: true, firstName: true, lastName: true } },
           items: true,
           payments: true,
+          promotion: {
+            select: {
+              id: true,
+              name: true,
+              promoType: true,
+              value: true,
+            },
+          },
         },
       });
       if (!order) {
@@ -1505,7 +1757,12 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
-      return reply.send({ order });
+      return reply.send({
+        order: {
+          ...order,
+          hasPromotion: !!order.promotionId,
+        },
+      });
     }
   );
 
@@ -1638,6 +1895,17 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
           },
           items: true,
           payments: { orderBy: { createdAt: 'desc' } },
+          promotion: {
+            select: {
+              id: true,
+              name: true,
+              promoType: true,
+              value: true,
+              startsAt: true,
+              endsAt: true,
+              status: true,
+            },
+          },
         },
       });
 
@@ -1652,6 +1920,7 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.send({
         order: {
           ...order,
+          hasPromotion: !!order.promotionId,
           paidAmount,
           pendingAmount: order.total - paidAmount,
         },
