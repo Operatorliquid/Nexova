@@ -48,11 +48,15 @@ export function resolveUploadDirCandidates(currentDir: string): string[] {
 
   const cwd = process.cwd();
   const candidates = uniquePaths([
+    // Recommended persistent mount path on Railway.
+    '/data/uploads',
     path.resolve(cwd, 'uploads'),
     path.resolve(cwd, '..', 'uploads'),
     path.resolve(cwd, '..', '..', 'uploads'),
     path.resolve(cwd, '..', '..', '..', 'uploads'),
     path.resolve(cwd, 'apps', 'api', 'uploads'),
+    path.resolve(cwd, 'apps', 'api', 'dist', 'uploads'),
+    path.resolve(cwd, 'apps', 'worker', 'apps', 'api', 'uploads'),
     path.resolve(cwd, '..', 'apps', 'api', 'uploads'),
     path.resolve(currentDir, '..', 'uploads'),
     path.resolve(currentDir, '..', '..', 'uploads'),
