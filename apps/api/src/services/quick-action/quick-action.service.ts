@@ -1657,6 +1657,9 @@ export class QuickActionService {
       } else if (promotion.promoType === 'second_unit_percentage') {
         const percentage = Math.max(0, Math.min(100, promotion.value));
         promoPrice = Math.max(0, Math.round(productPrice * (1 - percentage / 200)));
+      } else if (promotion.promoType === 'second_unit_fixed') {
+        const fixedDiscount = Math.max(0, promotion.value);
+        promoPrice = Math.max(0, productPrice - Math.round(Math.min(fixedDiscount, productPrice) / 2));
       } else if (promotion.promoType === 'buy_x_pay_y') {
         const metadata = toRecord(promotion.metadata);
         const rules = toRecord(metadata?.promoRules) || toRecord(metadata?.rules);

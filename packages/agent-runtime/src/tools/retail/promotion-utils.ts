@@ -123,6 +123,16 @@ export function formatPromotionValueLabel(params: {
     };
   }
 
+  if (promotion.promoType === 'second_unit_fixed') {
+    const fixedDiscount = Math.max(0, promotion.value);
+    const promoPrice = Math.max(0, productBasePrice - Math.round(Math.min(fixedDiscount, productBasePrice) / 2));
+    return {
+      label: `$${Math.round(fixedDiscount / 100).toLocaleString('es-AR')} en 2da unidad`,
+      promoPrice,
+      savings: Math.max(productBasePrice - promoPrice, 0),
+    };
+  }
+
   if (promotion.promoType === 'buy_x_pay_y') {
     const rules = getPromotionRules(promotion) || DEFAULT_BUY_X_PAY_Y_RULES;
     const promoPrice = Math.max(0, Math.round((productBasePrice * rules.payQuantity) / rules.buyQuantity));
@@ -171,6 +181,18 @@ export function calculatePromotionDiscount(params: {
       const discountedUnits = Math.floor(item.quantity / 2);
       if (discountedUnits <= 0) continue;
       const discountPerUnit = Math.round((item.unitPrice * percent) / 100);
+      totalDiscount += discountPerUnit * discountedUnits;
+    }
+    return { discount: totalDiscount, matchedSubtotal };
+  }
+
+  if (params.promotion.promoType === 'second_unit_fixed') {
+    const fixedDiscount = Math.max(0, params.promotion.value);
+    let totalDiscount = 0;
+    for (const item of matchedItems) {
+      const discountedUnits = Math.floor(item.quantity / 2);
+      if (discountedUnits <= 0) continue;
+      const discountPerUnit = Math.min(fixedDiscount, item.unitPrice);
       totalDiscount += discountPerUnit * discountedUnits;
     }
     return { discount: totalDiscount, matchedSubtotal };

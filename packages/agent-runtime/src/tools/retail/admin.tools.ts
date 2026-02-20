@@ -199,6 +199,7 @@ const ADMIN_PROMOTION_TYPE = z.enum([
   'percentage',
   'fixed_price',
   'second_unit_percentage',
+  'second_unit_fixed',
   'buy_x_pay_y',
 ]);
 const ADMIN_PROMOTION_STATUS = z.enum(['draft', 'active', 'paused', 'archived']);
@@ -571,6 +572,13 @@ function validatePromotionDefinition(params: {
     return { valid: true, normalizedRules: null };
   }
 
+  if (params.promoType === 'second_unit_fixed') {
+    if (params.value < 1) {
+      return { valid: false, message: 'El descuento de 2da unidad debe ser mayor a 0.' };
+    }
+    return { valid: true, normalizedRules: null };
+  }
+
   if (params.promoType === 'buy_x_pay_y') {
     const rules = normalizePromotionRules({
       promoType: params.promoType,
@@ -613,6 +621,9 @@ function getPromotionValueLabel(params: {
   if (params.promoType === 'second_unit_percentage') {
     const percentage = Math.max(0, Math.min(100, params.value));
     return `${percentage}% en 2da unidad`;
+  }
+  if (params.promoType === 'second_unit_fixed') {
+    return `$${Math.round(Math.max(0, params.value) / 100).toLocaleString('es-AR')} en 2da unidad`;
   }
   if (params.promoType === 'buy_x_pay_y') {
     const rules = normalizePromotionRules({

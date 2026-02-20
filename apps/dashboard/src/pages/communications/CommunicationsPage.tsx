@@ -254,6 +254,7 @@ function promotionTypeLabel(promoType: string): string {
   if (promoType === 'percentage') return 'Porcentaje';
   if (promoType === 'fixed_price') return 'Precio fijo';
   if (promoType === 'second_unit_percentage') return 'Desc. 2da unidad';
+  if (promoType === 'second_unit_fixed') return 'Desc. fijo 2da unidad';
   if (promoType === 'buy_x_pay_y') return 'X por Y';
   return promoType;
 }
@@ -263,6 +264,7 @@ function promotionValueLabel(promotion: PromotionView): string {
   if (promotion.promoType === 'percentage') return `${promotion.value}%`;
   if (promotion.promoType === 'fixed_price') return `Precio fijo ${formatCurrency(promotion.value)}`;
   if (promotion.promoType === 'second_unit_percentage') return `${promotion.value}% en 2da unidad`;
+  if (promotion.promoType === 'second_unit_fixed') return `${formatCurrency(promotion.value)} en 2da unidad`;
   if (promotion.promoType === 'buy_x_pay_y' && promotion.rules) {
     return `${promotion.rules.buyQuantity}x${promotion.rules.payQuantity}`;
   }
@@ -335,7 +337,9 @@ export default function CommunicationsPage(): JSX.Element {
   const [promoName, setPromoName] = useState('');
   const [promoProductId, setPromoProductId] = useState('');
   const [promoProductSearch, setPromoProductSearch] = useState('');
-  const [promoType, setPromoType] = useState<'percentage' | 'fixed_price' | 'second_unit_percentage' | 'buy_x_pay_y'>('percentage');
+  const [promoType, setPromoType] = useState<
+    'percentage' | 'fixed_price' | 'second_unit_percentage' | 'second_unit_fixed' | 'buy_x_pay_y'
+  >('percentage');
   const [promoValue, setPromoValue] = useState('');
   const [promoBuyQuantity, setPromoBuyQuantity] = useState('2');
   const [promoPayQuantity, setPromoPayQuantity] = useState('1');
@@ -697,6 +701,10 @@ export default function CommunicationsPage(): JSX.Element {
     }
     if ((promoType === 'percentage' || promoType === 'second_unit_percentage') && (value < 1 || value > 100)) {
       toastError('El porcentaje debe estar entre 1 y 100');
+      return;
+    }
+    if (promoType === 'second_unit_fixed' && value < 1) {
+      toastError('El descuento fijo en 2da unidad debe ser mayor a 0');
       return;
     }
 
@@ -1136,7 +1144,9 @@ export default function CommunicationsPage(): JSX.Element {
               <Select
                 value={promoType}
                 onValueChange={(value) =>
-                  setPromoType(value as 'percentage' | 'fixed_price' | 'second_unit_percentage' | 'buy_x_pay_y')
+                  setPromoType(
+                    value as 'percentage' | 'fixed_price' | 'second_unit_percentage' | 'second_unit_fixed' | 'buy_x_pay_y'
+                  )
                 }
               >
                 <SelectTrigger>
@@ -1146,6 +1156,7 @@ export default function CommunicationsPage(): JSX.Element {
                   <SelectItem value="percentage">Porcentaje</SelectItem>
                   <SelectItem value="fixed_price">Precio fijo</SelectItem>
                   <SelectItem value="second_unit_percentage">Descuento 2da unidad</SelectItem>
+                  <SelectItem value="second_unit_fixed">Descuento fijo 2da unidad</SelectItem>
                   <SelectItem value="buy_x_pay_y">Promo X por Y</SelectItem>
                 </SelectContent>
               </Select>
@@ -1153,6 +1164,8 @@ export default function CommunicationsPage(): JSX.Element {
                 placeholder={
                   promoType === 'percentage' || promoType === 'second_unit_percentage'
                     ? 'Valor %'
+                    : promoType === 'second_unit_fixed'
+                      ? 'Descuento 2da unidad en centavos'
                     : promoType === 'fixed_price'
                       ? 'Precio fijo en centavos'
                       : 'No aplica (se usa X por Y)'
