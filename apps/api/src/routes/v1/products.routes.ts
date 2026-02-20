@@ -7,6 +7,7 @@ import { type FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 
 import { createNotificationIfEnabled } from '../../utils/notifications.js';
+import { buildSignedUploadPath, sanitizeUploadFilename } from '../../utils/upload-access.js';
 
 const productQuerySchema = z.object({
   search: z.string().optional(),
@@ -95,6 +96,9 @@ const SECONDARY_UNIT_LABELS: Record<string, string> = {
   dozen: 'Docena',
 };
 
+const PRODUCT_UPLOADS_PREFIX = '/uploads/products/';
+const PRODUCT_UPLOADS_PROXY_PREFIX = '/api/v1/uploads/file/products/';
+
 const normalizeUnitValue = (value?: string | number | null): string | null => {
   if (value === undefined || value === null) return null;
   const normalized = value.toString().trim();
@@ -147,6 +151,71 @@ const normalizeLowStockThreshold = (value: unknown): number | null => {
     return normalized >= 0 ? normalized : null;
   }
   return null;
+};
+
+const decodePathname = (value: string): string => {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+};
+
+const extractProductImageFilename = (value: string): string | null => {
+  const raw = value.trim();
+  if (!raw) return null;
+
+  const fromPath = (pathname: string, prefix: string): string | null => {
+    if (!pathname.startsWith(prefix)) return null;
+    const remainder = pathname.slice(prefix.length);
+    const filenameCandidate = remainder.split('/')[0] || '';
+    return sanitizeUploadFilename(filenameCandidate);
+  };
+
+  if (raw.startsWith('http://') || raw.startsWith('https://')) {
+    try {
+      const parsed = new URL(raw);
+      const pathname = decodePathname(parsed.pathname);
+      return fromPath(pathname, PRODUCT_UPLOADS_PREFIX) ?? fromPath(pathname, PRODUCT_UPLOADS_PROXY_PREFIX);
+    } catch {
+      return null;
+    }
+  }
+
+  const withoutQuery = decodePathname(raw.split('?')[0] || '');
+  return fromPath(withoutQuery, PRODUCT_UPLOADS_PREFIX) ?? fromPath(withoutQuery, PRODUCT_UPLOADS_PROXY_PREFIX);
+};
+
+const normalizeProductImageForStorage = (value: string): string => {
+  const trimmed = value.trim();
+  if (!trimmed) return trimmed;
+  const filename = extractProductImageFilename(trimmed);
+  return filename ? `${PRODUCT_UPLOADS_PREFIX}${filename}` : trimmed;
+};
+
+const normalizeProductImagesForStorage = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => normalizeProductImageForStorage(item))
+    .filter((item) => item.length > 0);
+};
+
+const buildPublicProductImageUrl = (filename: string): string => {
+  const signed = buildSignedUploadPath({ category: 'products', filename });
+  if (!signed.includes('sig=')) {
+    // If signing secret is missing, fall back to public static path.
+    return `${PRODUCT_UPLOADS_PREFIX}${filename}`;
+  }
+  return signed;
+};
+
+const resolveProductImageUrls = (value: unknown): string[] => {
+  const storedImages = normalizeProductImagesForStorage(value);
+  return storedImages.map((image) => {
+    const filename = extractProductImageFilename(image);
+    return filename ? buildPublicProductImageUrl(filename) : image;
+  });
 };
 
 const getWorkspaceLowStockThreshold = async (
@@ -271,7 +340,7 @@ export const productsRoutes: FastifyPluginAsync = async (fastify) => {
             })),
           price: p.price,
           comparePrice: p.comparePrice,
-          images: p.images,
+          images: resolveProductImageUrls(p.images),
           attributes: p.attributes,
           keywords: p.keywords,
           status: p.status,
@@ -375,7 +444,7 @@ export const productsRoutes: FastifyPluginAsync = async (fastify) => {
             })),
           price: p.price,
           comparePrice: p.comparePrice,
-          images: p.images,
+          images: resolveProductImageUrls(p.images),
           attributes: p.attributes,
           keywords: p.keywords,
           status: p.status,
@@ -592,6 +661,7 @@ export const productsRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.send({
         product: {
           ...product,
+          images: resolveProductImageUrls(product.images),
           stock: totalStock,
         },
       });
@@ -646,7 +716,7 @@ export const productsRoutes: FastifyPluginAsync = async (fastify) => {
           category: body.category,
           price: body.price,
           comparePrice: body.comparePrice,
-          images: body.images || [],
+          images: normalizeProductImagesForStorage(body.images),
           attributes: (body.attributes || {}) as Prisma.InputJsonValue,
           keywords: body.keywords || [],
           status: body.status,
@@ -675,6 +745,7 @@ export const productsRoutes: FastifyPluginAsync = async (fastify) => {
       // Format response with categories
       const responseProduct = {
         ...product,
+        images: resolveProductImageUrls(product.images),
         categories: product.categoryMappings
           .filter((m) => m.category)
           .map((m) => ({
@@ -730,7 +801,9 @@ export const productsRoutes: FastifyPluginAsync = async (fastify) => {
       if (body.category !== undefined) updateData.category = body.category;
       if (body.price !== undefined) updateData.price = body.price;
       if (body.comparePrice !== undefined) updateData.comparePrice = body.comparePrice;
-      if (body.images !== undefined) updateData.images = body.images as Prisma.InputJsonValue;
+      if (body.images !== undefined) {
+        updateData.images = normalizeProductImagesForStorage(body.images) as Prisma.InputJsonValue;
+      }
       if (body.keywords !== undefined) updateData.keywords = body.keywords;
       if (body.status !== undefined) updateData.status = body.status;
       if (body.attributes) {
@@ -815,6 +888,7 @@ export const productsRoutes: FastifyPluginAsync = async (fastify) => {
         const responseProduct = updatedProduct
           ? {
               ...updatedProduct,
+              images: resolveProductImageUrls(updatedProduct.images),
               categories: updatedProduct.categoryMappings
                 .filter((m) => m.category)
                 .map((m) => ({
@@ -831,6 +905,7 @@ export const productsRoutes: FastifyPluginAsync = async (fastify) => {
       // Format response with categories
       const responseProduct = {
         ...product,
+        images: resolveProductImageUrls(product.images),
         categories: product.categoryMappings
           .filter((m) => m.category)
           .map((m) => ({
