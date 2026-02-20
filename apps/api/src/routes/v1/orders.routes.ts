@@ -20,6 +20,7 @@ import { getWorkspacePlanContext } from '../../utils/commerce-plan.js';
 import { recalcCustomerFinancials } from '../../utils/customer-financials.js';
 import { createNotificationIfEnabled } from '../../utils/notifications.js';
 import {
+  ORDER_INVOICE_STATUSES,
   buildOrderInvoiceStatusWhere,
   isOrderInvoiceStatus,
   resolveOrderInvoiceStatus,
@@ -59,6 +60,12 @@ type OrderTrashMetadata = {
 };
 
 const ORDER_TRASH_STATUS = 'trashed';
+const INVOICE_STATUS_HISTORY_INCLUDE = {
+  where: { newStatus: { in: [...ORDER_INVOICE_STATUSES] } },
+  orderBy: { createdAt: 'desc' as const },
+  take: 6,
+  select: { newStatus: true, createdAt: true },
+};
 
 const asOrderMetadataRecord = (value: Prisma.JsonValue | null | undefined): OrderMetadataRecord => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
@@ -596,6 +603,7 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
                 value: true,
               },
             },
+            statusHistory: INVOICE_STATUS_HISTORY_INCLUDE,
           },
         }),
         isPaymentFilter ? Promise.resolve(0) : fastify.prisma.order.count({ where }),
@@ -1895,6 +1903,7 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
               unitPrice: true,
             },
           },
+          statusHistory: INVOICE_STATUS_HISTORY_INCLUDE,
         },
       });
 
@@ -2142,6 +2151,7 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
           customer: { select: { id: true, phone: true, firstName: true, lastName: true } },
           items: true,
           payments: true,
+          statusHistory: INVOICE_STATUS_HISTORY_INCLUDE,
           promotion: {
             select: {
               id: true,
@@ -2155,6 +2165,12 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
       if (!order) {
         return reply.code(404).send({ error: 'NOT_FOUND', message: 'Order not found' });
       }
+      const { statusHistory: _statusHistory, ...orderWithoutStatusHistory } = order;
+      const invoiceStatus = resolveOrderInvoiceStatus({
+        status: order.status,
+        metadata: order.metadata,
+        statusHistory: _statusHistory,
+      });
 
       await recalcCustomerFinancials(fastify.prisma, workspaceId, existing.customerId);
 
@@ -2234,8 +2250,8 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
       const trash = parseOrderTrashMetadata(order.metadata);
       return reply.send({
         order: {
-          ...order,
-          invoiceStatus: resolveOrderInvoiceStatus(order),
+          ...orderWithoutStatusHistory,
+          invoiceStatus,
           cancelledByCustomer: isCustomerInitiatedCancellation(order.cancelReason, order.metadata),
           hasPromotion: !!order.promotionId,
           isTrashed: orderIsInTrash(order.status, order.metadata),
@@ -2399,6 +2415,7 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
           },
           items: true,
           payments: { orderBy: { createdAt: 'desc' } },
+          statusHistory: INVOICE_STATUS_HISTORY_INCLUDE,
           promotion: {
             select: {
               id: true,
@@ -2416,6 +2433,12 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
       if (!order) {
         return reply.code(404).send({ error: 'NOT_FOUND', message: 'Order not found' });
       }
+      const { statusHistory: _statusHistory, ...orderWithoutStatusHistory } = order;
+      const invoiceStatus = resolveOrderInvoiceStatus({
+        status: order.status,
+        metadata: order.metadata,
+        statusHistory: _statusHistory,
+      });
 
       const paidAmount = order.payments
         .filter((p) => p.status === 'completed')
@@ -2423,8 +2446,8 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
 
       return reply.send({
         order: {
-          ...order,
-          invoiceStatus: resolveOrderInvoiceStatus(order),
+          ...orderWithoutStatusHistory,
+          invoiceStatus,
           cancelledByCustomer: isCustomerInitiatedCancellation(order.cancelReason, order.metadata),
           hasPromotion: !!order.promotionId,
           paidAmount,

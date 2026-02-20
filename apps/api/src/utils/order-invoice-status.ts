@@ -5,6 +5,11 @@ export type OrderInvoiceStatus = (typeof ORDER_INVOICE_STATUSES)[number];
 
 const ORDER_INVOICE_STATUS_SET = new Set<string>(ORDER_INVOICE_STATUSES);
 
+type OrderStatusHistoryLike = {
+  newStatus?: string | null;
+  createdAt?: Date | string | null;
+};
+
 const asMetadataRecord = (value: Prisma.JsonValue | null | undefined): Record<string, unknown> => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   return value as Record<string, unknown>;
@@ -13,9 +18,40 @@ const asMetadataRecord = (value: Prisma.JsonValue | null | undefined): Record<st
 export const isOrderInvoiceStatus = (value: string | null | undefined): value is OrderInvoiceStatus =>
   typeof value === 'string' && ORDER_INVOICE_STATUS_SET.has(value);
 
+const resolveFromStatusHistory = (
+  statusHistory?: OrderStatusHistoryLike[] | null
+): OrderInvoiceStatus | null => {
+  if (!Array.isArray(statusHistory) || statusHistory.length === 0) return null;
+
+  let latestStatus: OrderInvoiceStatus | null = null;
+  let latestTimestamp = Number.NEGATIVE_INFINITY;
+
+  for (const entry of statusHistory) {
+    const status = typeof entry?.newStatus === 'string' ? entry.newStatus : null;
+    if (!isOrderInvoiceStatus(status)) continue;
+
+    const createdAtValue = entry?.createdAt;
+    const timestamp = createdAtValue ? new Date(createdAtValue).getTime() : Number.NaN;
+    if (Number.isFinite(timestamp)) {
+      if (timestamp > latestTimestamp) {
+        latestTimestamp = timestamp;
+        latestStatus = status;
+      }
+      continue;
+    }
+
+    if (!latestStatus) {
+      latestStatus = status;
+    }
+  }
+
+  return latestStatus;
+};
+
 export const resolveOrderInvoiceStatus = (input: {
   status: string;
   metadata?: Prisma.JsonValue | null;
+  statusHistory?: OrderStatusHistoryLike[] | null;
 }): OrderInvoiceStatus | null => {
   if (isOrderInvoiceStatus(input.status)) return input.status;
   const metadata = asMetadataRecord(input.metadata);
@@ -23,7 +59,7 @@ export const resolveOrderInvoiceStatus = (input: {
   if (typeof raw === 'string' && isOrderInvoiceStatus(raw)) {
     return raw;
   }
-  return null;
+  return resolveFromStatusHistory(input.statusHistory);
 };
 
 export const buildOrderInvoiceStatusWhere = (invoiceStatus: OrderInvoiceStatus): Prisma.OrderWhereInput => ({
