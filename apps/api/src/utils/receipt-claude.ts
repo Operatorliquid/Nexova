@@ -2,26 +2,59 @@ import Anthropic from '@anthropic-ai/sdk';
 
 const INT32_MAX = 2_147_483_647;
 
-function parseAmountToCents(raw: string): number | null {
-  let value = raw.trim();
-  if (!value) return null;
+function detectDecimalSeparator(token: string): { separator: '.' | ','; index: number } | null {
+  const lastDot = token.lastIndexOf('.');
+  const lastComma = token.lastIndexOf(',');
 
-  if (value.includes('.') && value.includes(',')) {
-    value = value.replace(/\./g, '').replace(',', '.');
-  } else if (value.includes(',')) {
-    const parts = value.split(',');
-    if (parts[1] && parts[1].length === 2) {
-      value = `${parts[0].replace(/\./g, '')}.${parts[1]}`;
-    } else {
-      value = value.replace(/,/g, '');
-    }
-  } else {
-    value = value.replace(/,/g, '');
+  if (lastDot >= 0 && lastComma >= 0) {
+    const index = Math.max(lastDot, lastComma);
+    const separator = token[index] as '.' | ',';
+    const fractionLength = token.length - index - 1;
+    return fractionLength >= 1 && fractionLength <= 2 ? { separator, index } : null;
   }
 
-  const amount = Number(value);
-  if (Number.isNaN(amount) || amount <= 0) return null;
-  const cents = Math.round(amount * 100);
+  if (lastDot >= 0 || lastComma >= 0) {
+    const separator = (lastDot >= 0 ? '.' : ',') as '.' | ',';
+    const index = token.lastIndexOf(separator);
+    const occurrences = token.split(separator).length - 1;
+    if (occurrences !== 1) return null;
+    const fractionLength = token.length - index - 1;
+    return fractionLength >= 1 && fractionLength <= 2 ? { separator, index } : null;
+  }
+
+  return null;
+}
+
+function parseAmountToCents(raw: string): number | null {
+  const compact = raw.replace(/\s+/g, '').trim();
+  if (!compact) return null;
+
+  const match = compact.match(/[0-9][0-9.,]*/);
+  if (!match) return null;
+
+  const token = match[0];
+  const decimal = detectDecimalSeparator(token);
+
+  let cents = 0;
+  if (decimal) {
+    const integerDigits = token.slice(0, decimal.index).replace(/[.,]/g, '');
+    const fractionDigits = token.slice(decimal.index + 1).replace(/[.,]/g, '');
+    if (!fractionDigits || fractionDigits.length > 2) return null;
+
+    const integerPart = Number(integerDigits || '0');
+    const fractionPart = Number(fractionDigits.padEnd(2, '0'));
+    if (!Number.isFinite(integerPart) || !Number.isFinite(fractionPart)) return null;
+
+    cents = integerPart * 100 + fractionPart;
+  } else {
+    const integerDigits = token.replace(/[.,]/g, '');
+    if (!integerDigits) return null;
+    const integerPart = Number(integerDigits);
+    if (!Number.isFinite(integerPart)) return null;
+    cents = integerPart * 100;
+  }
+
+  if (!Number.isFinite(cents) || cents <= 0) return null;
   if (cents <= 0 || cents > INT32_MAX) return null;
   return cents;
 }

@@ -29,7 +29,7 @@ El usuario que te escribe por este chat es el dueño/administrador del negocio (
 - Usá \`admin_adjust_prices_percent\` para subir/bajar precios por porcentaje o por monto en pesos, por producto, lista o categoría (acción riesgosa: pedí confirmación).
 - Usá \`adjust_stock\` para ajustar stock (acción riesgosa: pedí confirmación).
 - Usá \`admin_process_stock_receipt\` cuando el owner envía una boleta/factura de compra (foto o PDF) para sumar stock.
-- Usá \`admin_create_promotion\` para crear promociones por producto con porcentaje o precio fijo (acción riesgosa: pedí confirmación).
+- Usá \`admin_create_promotion\` para crear promociones por producto (porcentaje, precio fijo, 2da unidad o X por Y) (acción riesgosa: pedí confirmación).
 - Usá \`admin_list_promotions\` para listar promociones y su rendimiento.
 - Usá \`admin_create_broadcast_campaign\` para lanzar difusión por WhatsApp a clientes (acción riesgosa: pedí confirmación).
 - Usá \`admin_list_broadcast_campaigns\` para ver estado de campañas.

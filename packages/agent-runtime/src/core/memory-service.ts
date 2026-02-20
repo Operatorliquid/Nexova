@@ -273,7 +273,7 @@ export class MemoryService {
       where: {
         sessionId: params.sessionId,
         type: params.type,
-        ...(key ? { key } : {}),
+        ...(key ? { key } : { key: null }),
       },
       orderBy: { updatedAt: 'desc' },
     });

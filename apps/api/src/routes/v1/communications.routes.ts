@@ -13,11 +13,20 @@ import { COMMERCE_USAGE_METRICS, type CommercePlan } from '@nexova/shared';
 import { getEffectiveCommercePlanLimits } from '../../utils/commerce-plan-limits.js';
 import { getWorkspacePlanContext } from '../../utils/commerce-plan.js';
 import { getMonthlyUsage, recordMonthlyUsage } from '../../utils/monthly-usage.js';
-import { computePromotionStatus } from '../../utils/promotions.js';
+import {
+  computePromotionStatus,
+  getPromotionValueLabel,
+  type PromotionRuleConfig,
+  validatePromotionDefinition,
+} from '../../utils/promotions.js';
 
 const promotionStatuses = ['draft', 'active', 'paused', 'archived', 'expired'] as const;
-const promotionTypes = ['percentage', 'fixed_price'] as const;
+const promotionTypes = ['percentage', 'fixed_price', 'second_unit_percentage', 'buy_x_pay_y'] as const;
 const campaignStatuses = ['draft', 'processing', 'completed', 'partial', 'failed', 'cancelled'] as const;
+const promotionRulesSchema = z.object({
+  buyQuantity: z.coerce.number().int().min(2).max(100).optional(),
+  payQuantity: z.coerce.number().int().min(1).max(99).optional(),
+});
 
 const promotionsQuerySchema = z.object({
   search: z.string().optional(),
@@ -38,7 +47,8 @@ const createPromotionSchema = z.object({
   description: z.string().max(500).optional(),
   imageUrl: z.string().max(2000).optional().nullable(),
   promoType: z.enum(promotionTypes),
-  value: z.coerce.number().int().min(1),
+  value: z.coerce.number().int().min(0),
+  rules: promotionRulesSchema.optional().nullable(),
   startsAt: z.coerce.date(),
   endsAt: z.coerce.date(),
   status: z.enum(['draft', 'active', 'paused', 'archived']).default('active'),
@@ -50,7 +60,8 @@ const updatePromotionSchema = z.object({
   description: z.string().max(500).optional().nullable(),
   imageUrl: z.string().max(2000).optional().nullable(),
   promoType: z.enum(promotionTypes).optional(),
-  value: z.coerce.number().int().min(1).optional(),
+  value: z.coerce.number().int().min(0).optional(),
+  rules: promotionRulesSchema.optional().nullable(),
   startsAt: z.coerce.date().optional(),
   endsAt: z.coerce.date().optional(),
   status: z.enum(promotionStatuses).optional(),
@@ -119,6 +130,31 @@ function readPromotionImageUrl(metadata: Prisma.JsonValue): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function readPromotionRules(metadata: Prisma.JsonValue | null | undefined): PromotionRuleConfig | null {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
+  const raw = (metadata as Record<string, unknown>).promoRules;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+
+  const rules = raw as Record<string, unknown>;
+  const buyRaw = rules.buyQuantity;
+  const payRaw = rules.payQuantity;
+  const buyQuantity =
+    typeof buyRaw === 'number' && Number.isFinite(buyRaw)
+      ? Math.trunc(buyRaw)
+      : typeof buyRaw === 'string' && Number.isFinite(Number(buyRaw))
+        ? Math.trunc(Number(buyRaw))
+        : null;
+  const payQuantity =
+    typeof payRaw === 'number' && Number.isFinite(payRaw)
+      ? Math.trunc(payRaw)
+      : typeof payRaw === 'string' && Number.isFinite(Number(payRaw))
+        ? Math.trunc(Number(payRaw))
+        : null;
+
+  if (!buyQuantity || !payQuantity) return null;
+  return { buyQuantity, payQuantity };
 }
 
 type CommunicationsUsageSummary = {
@@ -387,6 +423,12 @@ export const communicationsRoutes: FastifyPluginAsync = async (fastify) => {
             imageUrl: readPromotionImageUrl(promotion.metadata),
             promoType: promotion.promoType,
             value: promotion.value,
+            valueLabel: getPromotionValueLabel({
+              promoType: promotion.promoType,
+              value: promotion.value,
+              metadata: promotion.metadata,
+            }),
+            rules: readPromotionRules(promotion.metadata),
             startsAt: promotion.startsAt,
             endsAt: promotion.endsAt,
             status: promotion.status,
@@ -448,10 +490,15 @@ export const communicationsRoutes: FastifyPluginAsync = async (fastify) => {
           message: 'La fecha de finalizacion debe ser mayor a la de inicio',
         });
       }
-      if (body.promoType === 'percentage' && body.value > 100) {
+      const promotionValidation = validatePromotionDefinition({
+        promoType: body.promoType,
+        value: body.value,
+        rules: body.rules || undefined,
+      });
+      if (!promotionValidation.valid) {
         return reply.code(400).send({
           error: 'INVALID_PROMO_VALUE',
-          message: 'El porcentaje debe estar entre 1 y 100',
+          message: promotionValidation.message,
         });
       }
 
@@ -463,7 +510,11 @@ export const communicationsRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(404).send({ error: 'PRODUCT_NOT_FOUND', message: 'Producto no encontrado' });
       }
 
-      const promotionMetadata: Prisma.InputJsonObject = imageUrl ? { imageUrl } : {};
+      const promotionMetadata: Record<string, unknown> = {};
+      if (imageUrl) promotionMetadata.imageUrl = imageUrl;
+      if (promotionValidation.normalizedRules) {
+        promotionMetadata.promoRules = promotionValidation.normalizedRules;
+      }
       const promotion = await fastify.prisma.promotion.create({
         data: {
           workspaceId,
@@ -476,7 +527,7 @@ export const communicationsRoutes: FastifyPluginAsync = async (fastify) => {
           endsAt: body.endsAt,
           status: body.status,
           createdBy: request.user?.sub || null,
-          metadata: promotionMetadata,
+          metadata: promotionMetadata as Prisma.InputJsonObject,
         },
       });
 
@@ -514,6 +565,12 @@ export const communicationsRoutes: FastifyPluginAsync = async (fastify) => {
         promotion: {
           ...promotion,
           imageUrl: readPromotionImageUrl(promotion.metadata),
+          rules: readPromotionRules(promotion.metadata),
+          valueLabel: getPromotionValueLabel({
+            promoType: promotion.promoType,
+            value: promotion.value,
+            metadata: promotion.metadata,
+          }),
           product,
           computedStatus: computePromotionStatus(promotion.status, promotion.startsAt, promotion.endsAt),
         },
@@ -557,13 +614,6 @@ export const communicationsRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.code(404).send({ error: 'NOT_FOUND', message: 'Promocion no encontrada' });
       }
 
-      if (body.promoType === 'percentage' && body.value !== undefined && body.value > 100) {
-        return reply.code(400).send({
-          error: 'INVALID_PROMO_VALUE',
-          message: 'El porcentaje debe estar entre 1 y 100',
-        });
-      }
-
       const startsAt = body.startsAt ?? existing.startsAt;
       const endsAt = body.endsAt ?? existing.endsAt;
       if (endsAt <= startsAt) {
@@ -584,17 +634,41 @@ export const communicationsRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       let nextMetadata: Prisma.InputJsonObject | undefined;
-      if (body.imageUrl !== undefined) {
-        const currentMetadata =
-          existing.metadata && typeof existing.metadata === 'object' && !Array.isArray(existing.metadata)
-            ? { ...(existing.metadata as Record<string, unknown>) }
-            : {};
+      const currentMetadata =
+        existing.metadata && typeof existing.metadata === 'object' && !Array.isArray(existing.metadata)
+          ? { ...(existing.metadata as Record<string, unknown>) }
+          : {};
 
-        if (nextImageUrl) {
-          currentMetadata.imageUrl = nextImageUrl;
-        } else {
-          delete currentMetadata.imageUrl;
+      const nextPromoType = body.promoType ?? existing.promoType;
+      const nextValue = body.value ?? existing.value;
+      const nextRulesInput = body.rules !== undefined
+        ? (body.rules || undefined)
+        : currentMetadata.promoRules;
+      const promotionValidation = validatePromotionDefinition({
+        promoType: nextPromoType,
+        value: nextValue,
+        rules: nextRulesInput,
+      });
+      if (!promotionValidation.valid) {
+        return reply.code(400).send({
+          error: 'INVALID_PROMO_VALUE',
+          message: promotionValidation.message,
+        });
+      }
+
+      if (body.imageUrl !== undefined || body.rules !== undefined || body.promoType !== undefined) {
+        if (body.imageUrl !== undefined) {
+          if (nextImageUrl) currentMetadata.imageUrl = nextImageUrl;
+          else delete currentMetadata.imageUrl;
         }
+
+        if (promotionValidation.normalizedRules) {
+          currentMetadata.promoRules =
+            promotionValidation.normalizedRules as unknown as Prisma.InputJsonValue;
+        } else {
+          delete currentMetadata.promoRules;
+        }
+
         nextMetadata = currentMetadata as Prisma.InputJsonObject;
       }
 
@@ -622,6 +696,12 @@ export const communicationsRoutes: FastifyPluginAsync = async (fastify) => {
         promotion: {
           ...updated,
           imageUrl: readPromotionImageUrl(updated.metadata),
+          rules: readPromotionRules(updated.metadata),
+          valueLabel: getPromotionValueLabel({
+            promoType: updated.promoType,
+            value: updated.value,
+            metadata: updated.metadata,
+          }),
           computedStatus: computePromotionStatus(updated.status, updated.startsAt, updated.endsAt),
         },
       });
@@ -806,10 +886,32 @@ export const communicationsRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
+      let selectedPromotion: {
+        id: string;
+        name: string;
+        promoType: string;
+        value: number;
+        startsAt: Date;
+        endsAt: Date;
+        status: string;
+        metadata: Prisma.JsonValue;
+        product: { id: string; name: string; price: number };
+      } | null = null;
+
       if (body.promotionId) {
         const promotion = await fastify.prisma.promotion.findFirst({
           where: { id: body.promotionId, workspaceId, deletedAt: null },
-          select: { id: true },
+          select: {
+            id: true,
+            name: true,
+            promoType: true,
+            value: true,
+            startsAt: true,
+            endsAt: true,
+            status: true,
+            metadata: true,
+            product: { select: { id: true, name: true, price: true } },
+          },
         });
         if (!promotion) {
           return reply.code(404).send({
@@ -817,6 +919,14 @@ export const communicationsRoutes: FastifyPluginAsync = async (fastify) => {
             message: 'La promocion seleccionada no existe',
           });
         }
+        const computedStatus = computePromotionStatus(promotion.status, promotion.startsAt, promotion.endsAt);
+        if (computedStatus !== 'active') {
+          return reply.code(400).send({
+            error: 'PROMOTION_NOT_ACTIVE',
+            message: 'La promoción seleccionada debe estar activa para difundirla.',
+          });
+        }
+        selectedPromotion = promotion;
       }
 
       const customers = await fastify.prisma.customer.findMany({
@@ -865,7 +975,25 @@ export const communicationsRoutes: FastifyPluginAsync = async (fastify) => {
             failedCount: 0,
             startedAt: now,
             createdBy: request.user?.sub || null,
-            metadata: {} as Prisma.InputJsonValue,
+            metadata: selectedPromotion
+              ? ({
+                  promotionSnapshot: {
+                    id: selectedPromotion.id,
+                    name: selectedPromotion.name,
+                    promoType: selectedPromotion.promoType,
+                    value: selectedPromotion.value,
+                    valueLabel: getPromotionValueLabel({
+                      promoType: selectedPromotion.promoType,
+                      value: selectedPromotion.value,
+                      metadata: selectedPromotion.metadata,
+                    }),
+                    rules: readPromotionRules(selectedPromotion.metadata),
+                    startsAt: selectedPromotion.startsAt.toISOString(),
+                    endsAt: selectedPromotion.endsAt.toISOString(),
+                    product: selectedPromotion.product,
+                  },
+                } as Prisma.InputJsonValue)
+              : ({} as Prisma.InputJsonValue),
           },
         });
 

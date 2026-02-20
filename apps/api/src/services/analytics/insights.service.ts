@@ -35,14 +35,15 @@ const extractJson = (text: string): unknown => {
 export async function generateBusinessInsights(
   prisma: PrismaClient,
   workspaceId: string,
-  rangeInput?: string
+  rangeInput?: string,
+  selectedYear?: number
 ): Promise<{
   insights: z.infer<typeof INSIGHTS_SCHEMA>;
   generatedAt: string;
   model: string;
 }> {
   const range = normalizeRange(rangeInput);
-  const metrics = await buildMetrics(prisma, workspaceId, range);
+  const metrics = await buildMetrics(prisma, workspaceId, range, selectedYear);
 
   const lastSeven = metrics.salesByDay.slice(-7);
   const prevSeven = metrics.salesByDay.slice(-14, -7);

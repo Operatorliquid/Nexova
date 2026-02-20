@@ -21,6 +21,7 @@ import { ToolCategory, type ToolContext, type ToolResult } from '../../types/ind
 import { getEffectivePlanLimits, resolveWorkspacePlan } from '../../utils/commerce-plan-limits.js';
 import { getMonthlyUsage, recordMonthlyUsage } from '../../utils/monthly-usage.js';
 import { createNotificationIfEnabled } from '../../utils/notifications.js';
+import { resolveOrderReference } from '../../utils/order-reference.js';
 import { withVisibleOrders } from '../../utils/orders.js';
 import { fetchBinaryWithGuards } from '../../utils/remote-fetch-guard.js';
 import { extractStockReceiptWithClaude } from '../../utils/stock-receipt-claude.js';
@@ -194,16 +195,26 @@ const AdminAdjustPricesPercentInput = z
     }
   );
 
-const ADMIN_PROMOTION_TYPE = z.enum(['percentage', 'fixed_price']);
+const ADMIN_PROMOTION_TYPE = z.enum([
+  'percentage',
+  'fixed_price',
+  'second_unit_percentage',
+  'buy_x_pay_y',
+]);
 const ADMIN_PROMOTION_STATUS = z.enum(['draft', 'active', 'paused', 'archived']);
 const ADMIN_CAMPAIGN_STATUS = z.enum(['draft', 'processing', 'completed', 'partial', 'failed', 'cancelled']);
+const ADMIN_PROMOTION_RULES = z.object({
+  buyQuantity: z.number().int().min(2).max(100).optional(),
+  payQuantity: z.number().int().min(1).max(99).optional(),
+});
 
 const AdminCreatePromotionInput = z
   .object({
     name: z.string().min(2).max(150),
     productId: z.string().uuid(),
     promoType: ADMIN_PROMOTION_TYPE,
-    value: z.number().int().min(1),
+    value: z.number().int().min(0),
+    rules: ADMIN_PROMOTION_RULES.optional(),
     description: z.string().max(500).optional(),
     startsAt: z
       .string()
@@ -494,6 +505,125 @@ function parseIsoDatetime(value: string | undefined): Date | null {
   return parsed;
 }
 
+function toMetadataRecord(value: Prisma.JsonValue | null | undefined): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}
+
+function readPromoRules(value: unknown): { buyQuantity: number; payQuantity: number } | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+
+  const buyRaw =
+    typeof record.buyQuantity === 'number'
+      ? Math.trunc(record.buyQuantity)
+      : typeof record.buyQuantity === 'string' && Number.isFinite(Number(record.buyQuantity))
+        ? Math.trunc(Number(record.buyQuantity))
+        : null;
+  const payRaw =
+    typeof record.payQuantity === 'number'
+      ? Math.trunc(record.payQuantity)
+      : typeof record.payQuantity === 'string' && Number.isFinite(Number(record.payQuantity))
+        ? Math.trunc(Number(record.payQuantity))
+        : null;
+
+  if (!buyRaw || !payRaw) return null;
+  return {
+    buyQuantity: buyRaw,
+    payQuantity: payRaw,
+  };
+}
+
+function getPromotionRulesFromMetadata(metadata: Prisma.JsonValue | null | undefined): { buyQuantity: number; payQuantity: number } | null {
+  const record = toMetadataRecord(metadata);
+  return readPromoRules(record.promoRules) || readPromoRules(record.rules);
+}
+
+function normalizePromotionRules(params: {
+  promoType: string;
+  rules?: unknown;
+  metadata?: Prisma.JsonValue | null | undefined;
+}): { buyQuantity: number; payQuantity: number } | null {
+  if (params.promoType !== 'buy_x_pay_y') return null;
+  const fromInput = readPromoRules(params.rules);
+  if (fromInput) return fromInput;
+  const fromMetadata = getPromotionRulesFromMetadata(params.metadata);
+  return fromMetadata || { buyQuantity: 2, payQuantity: 1 };
+}
+
+function validatePromotionDefinition(params: {
+  promoType: string;
+  value: number;
+  rules?: unknown;
+  metadata?: Prisma.JsonValue | null | undefined;
+}): { valid: true; normalizedRules: { buyQuantity: number; payQuantity: number } | null } | { valid: false; message: string } {
+  if (params.promoType === 'fixed_price') {
+    if (params.value < 1) {
+      return { valid: false, message: 'El precio fijo debe ser mayor a 0.' };
+    }
+    return { valid: true, normalizedRules: null };
+  }
+
+  if (params.promoType === 'percentage' || params.promoType === 'second_unit_percentage') {
+    if (params.value < 1 || params.value > 100) {
+      return { valid: false, message: 'El porcentaje debe estar entre 1 y 100.' };
+    }
+    return { valid: true, normalizedRules: null };
+  }
+
+  if (params.promoType === 'buy_x_pay_y') {
+    const rules = normalizePromotionRules({
+      promoType: params.promoType,
+      rules: params.rules,
+      metadata: params.metadata,
+    });
+    if (!rules) {
+      return { valid: false, message: 'No se pudieron resolver las reglas de la promo X por Y.' };
+    }
+    if (rules.buyQuantity < 2) {
+      return { valid: false, message: 'En promo X por Y, X debe ser al menos 2.' };
+    }
+    if (rules.payQuantity < 1) {
+      return { valid: false, message: 'En promo X por Y, Y debe ser al menos 1.' };
+    }
+    if (rules.payQuantity >= rules.buyQuantity) {
+      return { valid: false, message: 'En promo X por Y, Y debe ser menor que X.' };
+    }
+    return {
+      valid: true,
+      normalizedRules: rules,
+    };
+  }
+
+  return { valid: false, message: 'Tipo de promoción no soportado.' };
+}
+
+function getPromotionValueLabel(params: {
+  promoType: string;
+  value: number;
+  metadata?: Prisma.JsonValue | null | undefined;
+}): string {
+  if (params.promoType === 'percentage') {
+    const percentage = Math.max(0, Math.min(100, params.value));
+    return `${percentage}% OFF`;
+  }
+  if (params.promoType === 'fixed_price') {
+    return `Precio fijo`;
+  }
+  if (params.promoType === 'second_unit_percentage') {
+    const percentage = Math.max(0, Math.min(100, params.value));
+    return `${percentage}% en 2da unidad`;
+  }
+  if (params.promoType === 'buy_x_pay_y') {
+    const rules = normalizePromotionRules({
+      promoType: params.promoType,
+      metadata: params.metadata,
+    }) || { buyQuantity: 2, payQuantity: 1 };
+    return `${rules.buyQuantity}x${rules.payQuantity}`;
+  }
+  return `${params.value}`;
+}
+
 function computePromotionComputedStatus(status: string, startsAt: Date, endsAt: Date): string {
   if (status === 'archived' || status === 'paused' || status === 'draft' || status === 'expired') {
     return status;
@@ -726,9 +856,26 @@ export class AdminGetOrderDetailsTool extends BaseTool<typeof AdminOrderDetailsI
     const guard = assertOwnerContext(context);
     if (guard) return guard;
 
-    const baseWhere: Prisma.OrderWhereInput = {
+    const resolved = await resolveOrderReference({
+      prisma: this.prisma,
       workspaceId: context.workspaceId,
       orderNumber: input.orderNumber,
+      includeTrashed: input.includeTrashed,
+      requireNotDeleted: false,
+    });
+    if (resolved && 'ambiguous' in resolved) {
+      return {
+        success: false,
+        error: `Hay más de un pedido que coincide: ${resolved.matches.join(', ')}`,
+      };
+    }
+    if (!resolved) {
+      return { success: false, error: 'Pedido no encontrado' };
+    }
+
+    const baseWhere: Prisma.OrderWhereInput = {
+      workspaceId: context.workspaceId,
+      id: resolved.id,
     };
     const where = input.includeTrashed ? baseWhere : withVisibleOrders(baseWhere);
 
@@ -1072,12 +1219,29 @@ export class AdminUpdateOrderStatusTool extends BaseTool<typeof AdminUpdateOrder
       return { success: false, error: `Estado inválido: ${input.status}` };
     }
 
+    const resolved = await resolveOrderReference({
+      prisma: this.prisma,
+      workspaceId: context.workspaceId,
+      orderId: input.orderId,
+      orderNumber: input.orderNumber,
+      includeTrashed: true,
+      requireNotDeleted: true,
+    });
+    if (resolved && 'ambiguous' in resolved) {
+      return {
+        success: false,
+        error: `Hay más de un pedido que coincide: ${resolved.matches.join(', ')}`,
+      };
+    }
+    if (!resolved) {
+      return { success: false, error: 'Pedido no encontrado' };
+    }
+
     const order = await this.prisma.order.findFirst({
       where: {
         workspaceId: context.workspaceId,
         deletedAt: null,
-        ...(input.orderId ? { id: input.orderId } : {}),
-        ...(input.orderNumber ? { orderNumber: input.orderNumber } : {}),
+        id: resolved.id,
       },
       select: { id: true, orderNumber: true, status: true, metadata: true },
     });
@@ -1212,12 +1376,29 @@ export class AdminCancelOrderTool extends BaseTool<typeof AdminCancelOrderInput>
     const guard = assertOwnerContext(context);
     if (guard) return guard;
 
+    const resolved = await resolveOrderReference({
+      prisma: this.prisma,
+      workspaceId: context.workspaceId,
+      orderId: input.orderId,
+      orderNumber: input.orderNumber,
+      includeTrashed: true,
+      requireNotDeleted: true,
+    });
+    if (resolved && 'ambiguous' in resolved) {
+      return {
+        success: false,
+        error: `Hay más de un pedido que coincide: ${resolved.matches.join(', ')}`,
+      };
+    }
+    if (!resolved) {
+      return { success: false, error: 'Pedido no encontrado' };
+    }
+
     const order = await this.prisma.order.findFirst({
       where: {
         workspaceId: context.workspaceId,
         deletedAt: null,
-        ...(input.orderId ? { id: input.orderId } : {}),
-        ...(input.orderNumber ? { orderNumber: input.orderNumber } : {}),
+        id: resolved.id,
       },
       include: { items: true },
     });
@@ -1671,8 +1852,25 @@ export class AdminSendCustomerMessageTool extends BaseTool<typeof AdminSendCusto
     let phone: string | null = input.phone ? normalizePhoneE164(input.phone) : null;
 
     if (!customerId && input.orderNumber) {
+      const resolved = await resolveOrderReference({
+        prisma: this.prisma,
+        workspaceId: context.workspaceId,
+        orderNumber: input.orderNumber,
+        includeTrashed: true,
+        requireNotDeleted: true,
+      });
+      if (resolved && 'ambiguous' in resolved) {
+        return {
+          success: false,
+          error: `Hay más de un pedido que coincide: ${resolved.matches.join(', ')}`,
+        };
+      }
+      if (!resolved) {
+        return { success: false, error: 'Pedido no encontrado' };
+      }
+
       const order = await this.prisma.order.findFirst({
-        where: { workspaceId: context.workspaceId, deletedAt: null, orderNumber: input.orderNumber },
+        where: { workspaceId: context.workspaceId, deletedAt: null, id: resolved.id },
         select: { customerId: true, customer: { select: { phone: true } } },
       });
       if (!order) {
@@ -1829,8 +2027,25 @@ export class AdminSendDebtReminderTool extends BaseTool<typeof AdminSendDebtRemi
     let phone: string | null = input.phone ? normalizePhoneE164(input.phone) : null;
 
     if (!customerId && input.orderNumber) {
+      const resolved = await resolveOrderReference({
+        prisma: this.prisma,
+        workspaceId: context.workspaceId,
+        orderNumber: input.orderNumber,
+        includeTrashed: true,
+        requireNotDeleted: true,
+      });
+      if (resolved && 'ambiguous' in resolved) {
+        return {
+          success: false,
+          error: `Hay más de un pedido que coincide: ${resolved.matches.join(', ')}`,
+        };
+      }
+      if (!resolved) {
+        return { success: false, error: 'Pedido no encontrado' };
+      }
+
       const order = await this.prisma.order.findFirst({
-        where: { workspaceId: context.workspaceId, deletedAt: null, orderNumber: input.orderNumber },
+        where: { workspaceId: context.workspaceId, deletedAt: null, id: resolved.id },
         select: { customerId: true, customer: { select: { phone: true } } },
       });
       if (!order) {
@@ -2792,7 +3007,7 @@ export class AdminCreatePromotionTool extends BaseTool<typeof AdminCreatePromoti
   constructor(prisma: PrismaClient) {
     super({
       name: 'admin_create_promotion',
-      description: 'Crea una promoción por producto (porcentaje o precio fijo) con duración (solo owner).',
+      description: 'Crea una promoción por producto (porcentaje, precio fijo, 2da unidad o X por Y) con duración (solo owner).',
       category: ToolCategory.MUTATION,
       inputSchema: AdminCreatePromotionInput,
       requiresConfirmation: true,
@@ -2836,8 +3051,13 @@ export class AdminCreatePromotionTool extends BaseTool<typeof AdminCreatePromoti
       return { success: false, error: 'Producto no encontrado en este negocio.' };
     }
 
-    if (input.promoType === 'percentage' && input.value > 100) {
-      return { success: false, error: 'El porcentaje debe estar entre 1 y 100.' };
+    const promoValidation = validatePromotionDefinition({
+      promoType: input.promoType,
+      value: input.value,
+      rules: input.rules,
+    });
+    if (!promoValidation.valid) {
+      return { success: false, error: promoValidation.message };
     }
 
     const startsAt = parseIsoDatetime(input.startsAt) || new Date();
@@ -2862,13 +3082,18 @@ export class AdminCreatePromotionTool extends BaseTool<typeof AdminCreatePromoti
         endsAt,
         status: input.status,
         createdBy: context.userId || null,
-        metadata: {} as Prisma.InputJsonValue,
+        metadata: (promoValidation.normalizedRules
+          ? {
+              promoRules: promoValidation.normalizedRules,
+            }
+          : {}) as Prisma.InputJsonValue,
       },
       select: {
         id: true,
         name: true,
         promoType: true,
         value: true,
+        metadata: true,
         startsAt: true,
         endsAt: true,
         status: true,
@@ -2890,6 +3115,12 @@ export class AdminCreatePromotionTool extends BaseTool<typeof AdminCreatePromoti
         product: { id: product.id, name: product.name, basePriceCents: product.price },
         promoType: promotion.promoType,
         value: promotion.value,
+        valueLabel: getPromotionValueLabel({
+          promoType: promotion.promoType,
+          value: promotion.value,
+          metadata: promotion.metadata,
+        }),
+        rules: getPromotionRulesFromMetadata(promotion.metadata),
         status: promotion.status,
         computedStatus: computePromotionComputedStatus(promotion.status, promotion.startsAt, promotion.endsAt),
         startsAt: promotion.startsAt.toISOString(),
@@ -2957,6 +3188,7 @@ export class AdminListPromotionsTool extends BaseTool<typeof AdminListPromotions
         name: true,
         promoType: true,
         value: true,
+        metadata: true,
         status: true,
         startsAt: true,
         endsAt: true,
@@ -3016,6 +3248,12 @@ export class AdminListPromotionsTool extends BaseTool<typeof AdminListPromotions
             name: promotion.name,
             promoType: promotion.promoType,
             value: promotion.value,
+            valueLabel: getPromotionValueLabel({
+              promoType: promotion.promoType,
+              value: promotion.value,
+              metadata: promotion.metadata,
+            }),
+            rules: getPromotionRulesFromMetadata(promotion.metadata),
             status: promotion.status,
             computedStatus: computePromotionComputedStatus(
               promotion.status,
@@ -3093,10 +3331,23 @@ export class AdminCreateBroadcastCampaignTool extends BaseTool<typeof AdminCreat
           workspaceId: context.workspaceId,
           deletedAt: null,
         },
-        select: { id: true },
+        select: {
+          id: true,
+          status: true,
+          startsAt: true,
+          endsAt: true,
+        },
       });
       if (!promotion) {
         return { success: false, error: 'La promoción indicada no existe.' };
+      }
+      const computedStatus = computePromotionComputedStatus(
+        promotion.status,
+        promotion.startsAt,
+        promotion.endsAt
+      );
+      if (computedStatus !== 'active') {
+        return { success: false, error: 'La promoción indicada debe estar activa para difundirla.' };
       }
     }
 

@@ -9,6 +9,10 @@ import { type MemoryManager } from '../../core/memory-manager.js';
 import { ToolCategory, type ToolContext, type ToolResult, type Cart, type CartItem, AgentState } from '../../types/index.js';
 import { BaseTool } from '../base.js';
 import { buildProductDisplayName } from './product-utils.js';
+import {
+  selectBestPromotion,
+  type PromotionRecord,
+} from './promotion-utils.js';
 
 const resolveOriginalOrderQuantity = async (
   memoryManager: MemoryManager,
@@ -22,6 +26,80 @@ const resolveOriginalOrderQuantity = async (
     (item) => item.productId === productId && (item.variantId || null) === (variantId || null)
   );
   return original?.quantity || 0;
+};
+
+const applyBestPromotionDiscount = async (
+  prisma: PrismaClient,
+  memoryManager: MemoryManager,
+  sessionId: string,
+  workspaceId: string
+): Promise<{
+  cart: Cart | null;
+  appliedPromotion: { id: string; name: string; promoType: string; value: number; discount: number } | null;
+}> => {
+  const cart = await memoryManager.getCart(sessionId);
+  if (!cart) {
+    return { cart, appliedPromotion: null };
+  }
+  if (cart.items.length === 0) {
+    const resetCart = cart.discount !== 0 ? await memoryManager.applyDiscount(sessionId, 0) : cart;
+    return { cart: resetCart, appliedPromotion: null };
+  }
+
+  const now = new Date();
+  const productIds = Array.from(new Set(cart.items.map((item) => item.productId)));
+  if (productIds.length === 0) {
+    const updated = await memoryManager.applyDiscount(sessionId, 0);
+    return { cart: updated, appliedPromotion: null };
+  }
+
+  const promotions = await prisma.promotion.findMany({
+    where: {
+      workspaceId,
+      deletedAt: null,
+      status: 'active',
+      startsAt: { lte: now },
+      endsAt: { gte: now },
+      productId: { in: productIds },
+    },
+    select: {
+      id: true,
+      name: true,
+      promoType: true,
+      value: true,
+      status: true,
+      startsAt: true,
+      endsAt: true,
+      productId: true,
+      metadata: true,
+    },
+  });
+
+  const best = selectBestPromotion({
+    promotions: promotions as PromotionRecord[],
+    items: cart.items.map((item) => ({
+      productId: item.productId,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+    })),
+    now,
+  });
+
+  const nextDiscount = best?.result.discount ?? 0;
+  const updatedCart = await memoryManager.applyDiscount(sessionId, nextDiscount);
+
+  return {
+    cart: updatedCart,
+    appliedPromotion: best
+      ? {
+          id: best.promotion.id,
+          name: best.promotion.name,
+          promoType: best.promotion.promoType,
+          value: best.promotion.value,
+          discount: best.result.discount,
+        }
+      : null,
+  };
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -179,7 +257,14 @@ export class AddToCartTool extends BaseTool<typeof AddToCartInput> {
     };
 
     // Add to cart
-    const cart = await this.memoryManager.addToCart(context.sessionId, cartItem);
+    await this.memoryManager.addToCart(context.sessionId, cartItem);
+    const promoState = await applyBestPromotionDiscount(
+      this.prisma,
+      this.memoryManager,
+      context.sessionId,
+      context.workspaceId
+    );
+    const cart = promoState.cart;
 
     return {
       success: true,
@@ -193,8 +278,10 @@ export class AddToCartTool extends BaseTool<typeof AddToCartInput> {
         cart: {
           itemCount: cart?.items.length || 0,
           subtotal: cart?.subtotal || 0,
+          discount: cart?.discount || 0,
           total: cart?.total || 0,
         },
+        appliedPromotion: promoState.appliedPromotion,
       },
       stateTransition: AgentState.COLLECTING_ORDER,
     };
@@ -287,16 +374,24 @@ export class UpdateCartItemTool extends BaseTool<typeof UpdateCartItemInput> {
       }
     }
 
-    const cart = await this.memoryManager.updateCartItem(
+    const updatedCartBeforePromo = await this.memoryManager.updateCartItem(
       context.sessionId,
       productId,
       quantity,
       variantId
     );
 
-    if (!cart) {
+    if (!updatedCartBeforePromo) {
       return { success: false, error: 'Carrito no encontrado' };
     }
+
+    const promoState = await applyBestPromotionDiscount(
+      this.prisma,
+      this.memoryManager,
+      context.sessionId,
+      context.workspaceId
+    );
+    const cart = promoState.cart || updatedCartBeforePromo;
 
     const item = cart.items.find(
       (i) => i.productId === productId && i.variantId === variantId
@@ -314,8 +409,10 @@ export class UpdateCartItemTool extends BaseTool<typeof UpdateCartItemInput> {
         cart: {
           itemCount: cart.items.length,
           subtotal: cart.subtotal,
+          discount: cart.discount,
           total: cart.total,
         },
+        appliedPromotion: promoState.appliedPromotion,
       },
     };
   }
@@ -331,30 +428,40 @@ const RemoveFromCartInput = z.object({
 });
 
 export class RemoveFromCartTool extends BaseTool<typeof RemoveFromCartInput> {
+  private prisma: PrismaClient;
   private memoryManager: MemoryManager;
 
-  constructor(memoryManager: MemoryManager) {
+  constructor(prisma: PrismaClient, memoryManager: MemoryManager) {
     super({
       name: 'remove_from_cart',
       description: 'Elimina un producto del carrito.',
       category: ToolCategory.MUTATION,
       inputSchema: RemoveFromCartInput,
     });
+    this.prisma = prisma;
     this.memoryManager = memoryManager;
   }
 
   async execute(input: z.infer<typeof RemoveFromCartInput>, context: ToolContext): Promise<ToolResult> {
     const { productId, variantId } = input;
 
-    const cart = await this.memoryManager.removeFromCart(
+    const cartBeforePromo = await this.memoryManager.removeFromCart(
       context.sessionId,
       productId,
       variantId
     );
 
-    if (!cart) {
+    if (!cartBeforePromo) {
       return { success: false, error: 'Carrito no encontrado' };
     }
+
+    const promoState = await applyBestPromotionDiscount(
+      this.prisma,
+      this.memoryManager,
+      context.sessionId,
+      context.workspaceId
+    );
+    const cart = promoState.cart || cartBeforePromo;
 
     return {
       success: true,
@@ -363,8 +470,10 @@ export class RemoveFromCartTool extends BaseTool<typeof RemoveFromCartInput> {
         cart: {
           itemCount: cart.items.length,
           subtotal: cart.subtotal,
+          discount: cart.discount,
           total: cart.total,
         },
+        appliedPromotion: promoState.appliedPromotion,
       },
     };
   }
@@ -446,7 +555,7 @@ export function createCartTools(
     new GetCartTool(memoryManager),
     new AddToCartTool(prisma, memoryManager),
     new UpdateCartItemTool(prisma, memoryManager),
-    new RemoveFromCartTool(memoryManager),
+    new RemoveFromCartTool(prisma, memoryManager),
     new ClearCartTool(memoryManager),
     new SetCartNotesTool(memoryManager),
   ];

@@ -164,6 +164,8 @@ interface PromotionView {
   imageUrl: string | null;
   promoType: string;
   value: number;
+  valueLabel: string;
+  rules: { buyQuantity: number; payQuantity: number } | null;
   status: string;
   computedStatus: string;
   startsAt: string;
@@ -248,6 +250,25 @@ function formatDate(value: string): string {
   });
 }
 
+function promotionTypeLabel(promoType: string): string {
+  if (promoType === 'percentage') return 'Porcentaje';
+  if (promoType === 'fixed_price') return 'Precio fijo';
+  if (promoType === 'second_unit_percentage') return 'Desc. 2da unidad';
+  if (promoType === 'buy_x_pay_y') return 'X por Y';
+  return promoType;
+}
+
+function promotionValueLabel(promotion: PromotionView): string {
+  if (promotion.valueLabel && promotion.promoType !== 'fixed_price') return promotion.valueLabel;
+  if (promotion.promoType === 'percentage') return `${promotion.value}%`;
+  if (promotion.promoType === 'fixed_price') return `Precio fijo ${formatCurrency(promotion.value)}`;
+  if (promotion.promoType === 'second_unit_percentage') return `${promotion.value}% en 2da unidad`;
+  if (promotion.promoType === 'buy_x_pay_y' && promotion.rules) {
+    return `${promotion.rules.buyQuantity}x${promotion.rules.payQuantity}`;
+  }
+  return `${promotion.value}`;
+}
+
 function toLocalDatetimeValue(value?: string): string {
   if (!value) return '';
   const date = new Date(value);
@@ -314,8 +335,10 @@ export default function CommunicationsPage(): JSX.Element {
   const [promoName, setPromoName] = useState('');
   const [promoProductId, setPromoProductId] = useState('');
   const [promoProductSearch, setPromoProductSearch] = useState('');
-  const [promoType, setPromoType] = useState<'percentage' | 'fixed_price'>('percentage');
+  const [promoType, setPromoType] = useState<'percentage' | 'fixed_price' | 'second_unit_percentage' | 'buy_x_pay_y'>('percentage');
   const [promoValue, setPromoValue] = useState('');
+  const [promoBuyQuantity, setPromoBuyQuantity] = useState('2');
+  const [promoPayQuantity, setPromoPayQuantity] = useState('1');
   const [promoStartsAt, setPromoStartsAt] = useState(toLocalDatetimeValue(new Date().toISOString()));
   const [promoEndsAt, setPromoEndsAt] = useState(toLocalDatetimeValue(new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString()));
   const [promoImageFile, setPromoImageFile] = useState<File | null>(null);
@@ -497,12 +520,20 @@ export default function CommunicationsPage(): JSX.Element {
           const parsed = asRecordList(data.promotions).map((item) => {
             const product = readObject(item, 'product');
             const metricsItem = readObject(item, 'metrics');
+            const rulesItem = readObject(item, 'rules');
+            const buyQuantity = readNumber(rulesItem, 'buyQuantity');
+            const payQuantity = readNumber(rulesItem, 'payQuantity');
             return {
               id: readString(item, 'id') || '',
               name: readString(item, 'name') || 'Promo',
               imageUrl: readString(item, 'imageUrl'),
               promoType: readString(item, 'promoType') || 'percentage',
               value: readNumber(item, 'value'),
+              valueLabel: readString(item, 'valueLabel') || '',
+              rules:
+                buyQuantity >= 2 && payQuantity >= 1
+                  ? { buyQuantity: Math.trunc(buyQuantity), payQuantity: Math.trunc(payQuantity) }
+                  : null,
               status: readString(item, 'status') || 'draft',
               computedStatus: readString(item, 'computedStatus') || readString(item, 'status') || 'draft',
               startsAt: readString(item, 'startsAt') || new Date().toISOString(),
@@ -646,15 +677,40 @@ export default function CommunicationsPage(): JSX.Element {
       );
       return;
     }
-    if (!promoName.trim() || !promoProductId || !promoValue || !promoStartsAt || !promoEndsAt) {
+    if (
+      !promoName.trim()
+      || !promoProductId
+      || (promoType !== 'buy_x_pay_y' && !promoValue)
+      || !promoStartsAt
+      || !promoEndsAt
+    ) {
       toastError('Completa todos los campos de la promocion');
       return;
     }
 
-    const value = Number(promoValue);
-    if (!Number.isFinite(value) || value <= 0) {
+    const rawValue = Number(promoValue);
+    const isValueRequired = promoType !== 'buy_x_pay_y';
+    const value = isValueRequired ? rawValue : 0;
+    if (isValueRequired && (!Number.isFinite(value) || value <= 0)) {
       toastError('El valor de la promocion no es valido');
       return;
+    }
+    if ((promoType === 'percentage' || promoType === 'second_unit_percentage') && (value < 1 || value > 100)) {
+      toastError('El porcentaje debe estar entre 1 y 100');
+      return;
+    }
+
+    const buyQuantity = Number(promoBuyQuantity);
+    const payQuantity = Number(promoPayQuantity);
+    if (promoType === 'buy_x_pay_y') {
+      if (!Number.isFinite(buyQuantity) || buyQuantity < 2) {
+        toastError('En promo X por Y, X debe ser al menos 2');
+        return;
+      }
+      if (!Number.isFinite(payQuantity) || payQuantity < 1 || payQuantity >= buyQuantity) {
+        toastError('En promo X por Y, Y debe ser menor que X');
+        return;
+      }
     }
 
     setIsCreatingPromo(true);
@@ -673,6 +729,13 @@ export default function CommunicationsPage(): JSX.Element {
             productId: promoProductId,
             promoType,
             value,
+            rules:
+              promoType === 'buy_x_pay_y'
+                ? {
+                    buyQuantity: Math.trunc(buyQuantity),
+                    payQuantity: Math.trunc(payQuantity),
+                  }
+                : undefined,
             startsAt: new Date(promoStartsAt).toISOString(),
             endsAt: new Date(promoEndsAt).toISOString(),
             imageUrl: uploadedPromoImageUrl,
@@ -692,6 +755,8 @@ export default function CommunicationsPage(): JSX.Element {
       setPromoProductSearch('');
       setPromoType('percentage');
       setPromoValue('');
+      setPromoBuyQuantity('2');
+      setPromoPayQuantity('1');
       setPromoStartsAt(toLocalDatetimeValue(new Date().toISOString()));
       setPromoEndsAt(toLocalDatetimeValue(new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString()));
       setPromoImageFile(null);
@@ -932,9 +997,7 @@ export default function CommunicationsPage(): JSX.Element {
                             <div className="min-w-0">
                               <p className="font-medium text-foreground truncate">{promotion.name}</p>
                               <p className="text-xs text-muted-foreground mt-0.5">
-                                {promotion.promoType === 'percentage'
-                                  ? `${promotion.value}%`
-                                  : `Precio fijo ${formatCurrency(promotion.value)}`}
+                                {promotionValueLabel(promotion)}
                               </p>
                             </div>
                           </div>
@@ -944,7 +1007,7 @@ export default function CommunicationsPage(): JSX.Element {
                           <p className="text-xs text-muted-foreground">Base: {formatCurrency(promotion.productPrice)}</p>
                         </td>
                         <td className="px-5 py-4 text-sm text-muted-foreground">
-                          {promotion.promoType === 'percentage' ? 'Porcentaje' : 'Precio fijo'}
+                          {promotionTypeLabel(promotion.promoType)}
                         </td>
                         <td className="px-5 py-4 text-right text-sm text-foreground">{promotion.orderCount}</td>
                         <td className="px-5 py-4 text-right text-sm text-foreground">{formatCurrency(promotion.revenue)}</td>
@@ -1070,21 +1133,49 @@ export default function CommunicationsPage(): JSX.Element {
               )}
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <Select value={promoType} onValueChange={(value) => setPromoType(value as 'percentage' | 'fixed_price')}>
+              <Select
+                value={promoType}
+                onValueChange={(value) =>
+                  setPromoType(value as 'percentage' | 'fixed_price' | 'second_unit_percentage' | 'buy_x_pay_y')
+                }
+              >
                 <SelectTrigger>
                   <SelectValue placeholder="Tipo" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="percentage">Porcentaje</SelectItem>
                   <SelectItem value="fixed_price">Precio fijo</SelectItem>
+                  <SelectItem value="second_unit_percentage">Descuento 2da unidad</SelectItem>
+                  <SelectItem value="buy_x_pay_y">Promo X por Y</SelectItem>
                 </SelectContent>
               </Select>
               <Input
-                placeholder={promoType === 'percentage' ? 'Valor %' : 'Precio fijo en centavos'}
+                placeholder={
+                  promoType === 'percentage' || promoType === 'second_unit_percentage'
+                    ? 'Valor %'
+                    : promoType === 'fixed_price'
+                      ? 'Precio fijo en centavos'
+                      : 'No aplica (se usa X por Y)'
+                }
                 value={promoValue}
                 onChange={(e) => setPromoValue(e.target.value)}
+                disabled={promoType === 'buy_x_pay_y'}
               />
             </div>
+            {promoType === 'buy_x_pay_y' && (
+              <div className="grid grid-cols-2 gap-3">
+                <Input
+                  placeholder="Lleva X"
+                  value={promoBuyQuantity}
+                  onChange={(e) => setPromoBuyQuantity(e.target.value)}
+                />
+                <Input
+                  placeholder="Paga Y"
+                  value={promoPayQuantity}
+                  onChange={(e) => setPromoPayQuantity(e.target.value)}
+                />
+              </div>
+            )}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
                 <label className="text-xs text-muted-foreground mb-1 block">Inicio</label>

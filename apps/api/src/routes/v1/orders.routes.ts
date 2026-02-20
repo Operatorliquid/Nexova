@@ -24,7 +24,12 @@ import {
   isOrderInvoiceStatus,
   resolveOrderInvoiceStatus,
 } from '../../utils/order-invoice-status.js';
-import { calculatePromotionDiscount, promotionIsUsable } from '../../utils/promotions.js';
+import {
+  calculatePromotionDiscount,
+  getPromotionRules,
+  getPromotionValueLabel,
+  promotionIsUsable,
+} from '../../utils/promotions.js';
 import { extractReceiptAmountWithClaude, parseAmountInputToCents } from '../../utils/receipt-claude.js';
 import { resolveUploadDir, resolveUploadDirCandidates } from '../../utils/upload-dir.js';
 
@@ -90,6 +95,24 @@ const resolveTrashReason = (
   if (trashReason && trashReason.trim().length > 0) return trashReason.trim();
   if (typeof cancelReason === 'string' && cancelReason.trim().length > 0) return cancelReason.trim();
   return null;
+};
+
+const isCustomerInitiatedCancellation = (
+  cancelReason: string | null | undefined,
+  metadata: Prisma.JsonValue | null | undefined
+): boolean => {
+  const record = asOrderMetadataRecord(metadata);
+  const cancellation = record.cancellation;
+  if (cancellation && typeof cancellation === 'object' && !Array.isArray(cancellation)) {
+    const cancellationRecord = cancellation as Record<string, unknown>;
+    if (cancellationRecord.byCustomer === true) return true;
+    const source = typeof cancellationRecord.source === 'string' ? cancellationRecord.source.trim().toLowerCase() : '';
+    if (source === 'whatsapp_customer' || source === 'customer_whatsapp') return true;
+  }
+
+  const normalizedReason = typeof cancelReason === 'string' ? cancelReason.trim().toLowerCase() : '';
+  if (!normalizedReason) return false;
+  return normalizedReason.startsWith('cancelado por cliente');
 };
 
 const buildNotTrashedWhere = (): Prisma.OrderWhereInput => ({
@@ -585,6 +608,7 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
         const fiscal = withFiscalFallback(o.customer);
         const trash = parseOrderTrashMetadata(o.metadata);
         const invoiceStatus = resolveOrderInvoiceStatus(o);
+        const cancelledByCustomer = isCustomerInitiatedCancellation(o.cancelReason, o.metadata);
         return {
           id: o.id,
           orderNumber: o.orderNumber,
@@ -613,6 +637,7 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
           pendingAmount: o.total - paidAmount,
           notes: o.notes,
           cancelReason: o.cancelReason,
+          cancelledByCustomer,
           isTrashed: orderIsInTrash(o.status, o.metadata),
           trashReason: resolveTrashReason(o.cancelReason, o.metadata),
           trash,
@@ -874,6 +899,7 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
         order: {
           ...order,
           invoiceStatus: resolveOrderInvoiceStatus(order),
+          cancelledByCustomer: isCustomerInitiatedCancellation(order.cancelReason, order.metadata),
           customer: {
             ...customerWithoutMetadata,
             dni: customerFiscal.dni,
@@ -1567,6 +1593,7 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
             endsAt: true,
             status: true,
             productId: true,
+            metadata: true,
           },
         });
 
@@ -1607,6 +1634,12 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
           name: promotion.name,
           promoType: promotion.promoType,
           value: promotion.value,
+          valueLabel: getPromotionValueLabel({
+            promoType: promotion.promoType,
+            value: promotion.value,
+            metadata: promotion.metadata,
+          }),
+          rules: getPromotionRules(promotion),
           matchedSubtotal: promotionDiscount.matchedSubtotal,
           discountAmount: promotionDiscount.discount,
           appliedAt: new Date().toISOString(),
@@ -1898,6 +1931,7 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
               endsAt: true,
               status: true,
               productId: true,
+              metadata: true,
             },
           });
 
@@ -1938,6 +1972,12 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
             name: promotion.name,
             promoType: promotion.promoType,
             value: promotion.value,
+            valueLabel: getPromotionValueLabel({
+              promoType: promotion.promoType,
+              value: promotion.value,
+              metadata: promotion.metadata,
+            }),
+            rules: getPromotionRules(promotion),
             matchedSubtotal: promoDiscount.matchedSubtotal,
             discountAmount: promoDiscount.discount,
             appliedAt: new Date().toISOString(),
@@ -1975,10 +2015,13 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
         typeof body.cancelReason === 'string' ? body.cancelReason.trim() : '';
       const cancelReasonInput =
         body.cancelReason !== undefined ? (normalizedCancelReason.length > 0 ? normalizedCancelReason : null) : undefined;
+      const existingCancelledByCustomer = isCustomerInitiatedCancellation(existing.cancelReason, existing.metadata);
       const requestedStatus = body.status ?? null;
       const isTrashAction = requestedStatus === ORDER_TRASH_STATUS;
       const invoiceStatusTarget = requestedStatus && isOrderInvoiceStatus(requestedStatus) ? requestedStatus : null;
       const previousInvoiceStatus = resolveOrderInvoiceStatus(existing);
+      const metadataInvoiceStatusRaw = typeof baseMetadata.invoiceStatus === 'string' ? baseMetadata.invoiceStatus : null;
+      const metadataInvoiceStatus = isOrderInvoiceStatus(metadataInvoiceStatusRaw) ? metadataInvoiceStatusRaw : null;
       const invoiceStatusChanged = !!invoiceStatusTarget && previousInvoiceStatus !== invoiceStatusTarget;
       const statusTarget = requestedStatus && !invoiceStatusTarget
         ? (isTrashAction ? 'cancelled' : requestedStatus)
@@ -1992,12 +2035,24 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
         || body.promotionId !== undefined
         || body.cancelReason !== undefined;
 
+      // Backward-compat: if invoice status was stored in primary `status`, persist it in metadata
+      // when performing a non-invoice update (e.g. pending_invoicing -> accepted).
+      if (!invoiceStatusTarget && previousInvoiceStatus && !metadataInvoiceStatus) {
+        const metadataBase = mergedMetadata || baseMetadata;
+        mergedMetadata = {
+          ...metadataBase,
+          invoiceStatus: previousInvoiceStatus,
+        };
+      }
+
       if (body.cancelReason !== undefined && !isTrashAction) {
         updateData.cancelReason = cancelReasonInput;
       }
 
       if (isTrashAction) {
-        const trashReason = cancelReasonInput;
+        const inferredTrashReason = resolveTrashReason(existing.cancelReason, existing.metadata);
+        const shouldAllowImplicitReason = existing.status === 'cancelled' && existingCancelledByCustomer;
+        const trashReason = cancelReasonInput ?? (shouldAllowImplicitReason ? inferredTrashReason : null);
         if (!trashReason || trashReason.trim().length < 3) {
           return reply.code(400).send({
             error: 'MISSING_TRASH_REASON',
@@ -2104,6 +2159,8 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
       await recalcCustomerFinancials(fastify.prisma, workspaceId, existing.customerId);
 
       const cancelReasonForNotifications = resolveTrashReason(order.cancelReason, order.metadata);
+      const shouldSkipCustomerCancellationNotification =
+        isTrashAction && isCustomerInitiatedCancellation(order.cancelReason, order.metadata);
       const orderWasCancelled = isTrashAction || (statusChanged && statusTarget === 'cancelled');
       let customerNotificationSent = false;
       let customerNotificationError: string | null = null;
@@ -2131,7 +2188,12 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
           request.log.error({ error }, 'Failed to create order cancelled notification');
         }
 
-        if (isTrashAction && order.customer?.phone && cancelReasonForNotifications) {
+        if (
+          isTrashAction
+          && !shouldSkipCustomerCancellationNotification
+          && order.customer?.phone
+          && cancelReasonForNotifications
+        ) {
           try {
             await notifyCustomerOrderCancelled({
               workspaceId,
@@ -2174,6 +2236,7 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
         order: {
           ...order,
           invoiceStatus: resolveOrderInvoiceStatus(order),
+          cancelledByCustomer: isCustomerInitiatedCancellation(order.cancelReason, order.metadata),
           hasPromotion: !!order.promotionId,
           isTrashed: orderIsInTrash(order.status, order.metadata),
           trashReason: resolveTrashReason(order.cancelReason, order.metadata),
@@ -2181,9 +2244,10 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
         },
         customerNotification: isTrashAction
           ? {
-              attempted: true,
+              attempted: !shouldSkipCustomerCancellationNotification,
               sent: customerNotificationSent,
               error: customerNotificationError,
+              skipped: shouldSkipCustomerCancellationNotification,
             }
           : null,
       });
@@ -2252,6 +2316,7 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
         order: {
           ...updated,
           invoiceStatus: resolveOrderInvoiceStatus(updated),
+          cancelledByCustomer: isCustomerInitiatedCancellation(updated.cancelReason, updated.metadata),
           isTrashed: false,
           trashReason: null,
           trash: null,
@@ -2360,6 +2425,7 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
         order: {
           ...order,
           invoiceStatus: resolveOrderInvoiceStatus(order),
+          cancelledByCustomer: isCustomerInitiatedCancellation(order.cancelReason, order.metadata),
           hasPromotion: !!order.promotionId,
           paidAmount,
           pendingAmount: order.total - paidAmount,

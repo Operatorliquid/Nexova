@@ -14,10 +14,16 @@ import { type PrismaClient, Prisma } from '@prisma/client';
 import { z } from 'zod';
 
 import { buildProductDisplayName } from './product-utils.js';
+import {
+  formatPromotionValueLabel,
+  selectBestPromotion,
+  type PromotionRecord,
+} from './promotion-utils.js';
 import { type MemoryManager } from '../../core/memory-manager.js';
 import { ToolCategory, type ToolContext, type ToolResult, AgentState } from '../../types/index.js';
 import { getEffectivePlanLimits, resolveWorkspacePlan } from '../../utils/commerce-plan-limits.js';
 import { createNotificationIfEnabled } from '../../utils/notifications.js';
+import { resolveOrderReference } from '../../utils/order-reference.js';
 import { withVisibleOrders } from '../../utils/orders.js';
 import { BaseTool } from '../base.js';
 
@@ -144,6 +150,58 @@ export class ConfirmOrderTool extends BaseTool<typeof ConfirmOrderInput> {
     this.memoryManager = memoryManager;
   }
 
+  private async resolveBestPromotionForCart(
+    workspaceId: string,
+    cart: { items: Array<{ productId: string; quantity: number; unitPrice: number }> }
+  ): Promise<{
+    promotion: PromotionRecord;
+    discount: number;
+    matchedSubtotal: number;
+  } | null> {
+    const productIds = Array.from(new Set(cart.items.map((item) => item.productId)));
+    if (productIds.length === 0) return null;
+
+    const now = new Date();
+    const promotions = await this.prisma.promotion.findMany({
+      where: {
+        workspaceId,
+        deletedAt: null,
+        status: 'active',
+        startsAt: { lte: now },
+        endsAt: { gte: now },
+        productId: { in: productIds },
+      },
+      select: {
+        id: true,
+        name: true,
+        promoType: true,
+        value: true,
+        status: true,
+        startsAt: true,
+        endsAt: true,
+        productId: true,
+        metadata: true,
+      },
+    });
+
+    const best = selectBestPromotion({
+      promotions: promotions as PromotionRecord[],
+      items: cart.items.map((item) => ({
+        productId: item.productId,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+      })),
+      now,
+    });
+
+    if (!best) return null;
+    return {
+      promotion: best.promotion,
+      discount: best.result.discount,
+      matchedSubtotal: best.result.matchedSubtotal,
+    };
+  }
+
   async execute(
     input: z.infer<typeof ConfirmOrderInput>,
     context: ToolContext
@@ -220,6 +278,17 @@ export class ConfirmOrderTool extends BaseTool<typeof ConfirmOrderInput> {
       };
     }
 
+    const bestPromotion = await this.resolveBestPromotionForCart(context.workspaceId, {
+      items: cart.items.map((item) => ({
+        productId: item.productId,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+      })),
+    });
+    const promotionDiscount = bestPromotion?.discount ?? 0;
+    const finalDiscount = promotionDiscount;
+    const finalTotal = Math.max(0, cart.subtotal + cart.shipping - finalDiscount);
+
     // 5. Generate order number + create order in transaction with stock deduction
     let orderNumber = await this.generateOrderNumber(context.workspaceId);
     let order: { id: string; orderNumber: string; total: number; status: string; customerId: string } | null = null;
@@ -239,8 +308,28 @@ export class ConfirmOrderTool extends BaseTool<typeof ConfirmOrderInput> {
                   status: 'awaiting_acceptance',
                   subtotal: cart.subtotal,
                   shipping: cart.shipping,
-                  discount: cart.discount,
-                  total: cart.total,
+                  discount: finalDiscount,
+                  total: finalTotal,
+                  promotionId: bestPromotion?.promotion.id ?? null,
+                  metadata: bestPromotion
+                    ? ({
+                        promotion: {
+                          id: bestPromotion.promotion.id,
+                          name: bestPromotion.promotion.name,
+                          promoType: bestPromotion.promotion.promoType,
+                          value: bestPromotion.promotion.value,
+                          valueLabel: formatPromotionValueLabel({
+                            promotion: bestPromotion.promotion,
+                            productBasePrice:
+                              cart.items.find((item) => item.productId === bestPromotion.promotion.productId)?.unitPrice
+                              || 0,
+                          }).label,
+                          matchedSubtotal: bestPromotion.matchedSubtotal,
+                          discountAmount: bestPromotion.discount,
+                          appliedAt: new Date().toISOString(),
+                        },
+                      } as Prisma.InputJsonValue)
+                    : Prisma.JsonNull,
                   notes: notes || cart.notes,
                   shippingAddress: cart.shippingAddress
                     ? (cart.shippingAddress as unknown as Prisma.InputJsonValue)
@@ -340,7 +429,7 @@ export class ConfirmOrderTool extends BaseTool<typeof ConfirmOrderInput> {
             where: { id: context.customerId, workspaceId: context.workspaceId },
             data: {
               orderCount: { increment: 1 },
-              totalSpent: { increment: BigInt(cart.total) },
+              totalSpent: { increment: BigInt(newOrder.total) },
               lastOrderAt: new Date(),
             },
           });
@@ -403,7 +492,18 @@ export class ConfirmOrderTool extends BaseTool<typeof ConfirmOrderInput> {
           total: order.total,
           status: order.status,
           itemCount: cart.items.length,
-          message: `¡Pedido ${order.orderNumber} confirmado! Total: $${formatMoneyCents(order.total)}`,
+          promotion: bestPromotion
+            ? {
+                id: bestPromotion.promotion.id,
+                name: bestPromotion.promotion.name,
+                promoType: bestPromotion.promotion.promoType,
+                value: bestPromotion.promotion.value,
+                discount: bestPromotion.discount,
+              }
+            : null,
+          message: bestPromotion
+            ? `¡Pedido ${order.orderNumber} confirmado! Total: $${formatMoneyCents(order.total)} (ahorro promo: $${formatMoneyCents(bestPromotion.discount)})`
+            : `¡Pedido ${order.orderNumber} confirmado! Total: $${formatMoneyCents(order.total)}`,
         },
         stateTransition: AgentState.DONE,
       };
@@ -492,21 +592,31 @@ export class GetOrderDetailsTool extends BaseTool<typeof GetOrderDetailsInput> {
     context: ToolContext
   ): Promise<ToolResult> {
     const { orderNumber, orderId } = input;
-
-    // Policy: always filter by workspace
-    const where: Prisma.OrderWhereInput = {
+    const resolved = await resolveOrderReference({
+      prisma: this.prisma,
       workspaceId: context.workspaceId,
       customerId: context.customerId,
-    };
-
-    if (orderId) {
-      where.id = orderId;
-    } else if (orderNumber) {
-      where.orderNumber = orderNumber;
+      orderId,
+      orderNumber,
+      includeTrashed: false,
+      requireNotDeleted: false,
+    });
+    if (resolved && 'ambiguous' in resolved) {
+      return {
+        success: false,
+        error: `Hay más de un pedido que coincide: ${resolved.matches.join(', ')}`,
+      };
+    }
+    if (!resolved) {
+      return { success: false, error: 'Orden no encontrada' };
     }
 
     const order = await this.prisma.order.findFirst({
-      where: withVisibleOrders(where),
+      where: withVisibleOrders({
+        workspaceId: context.workspaceId,
+        customerId: context.customerId,
+        id: resolved.id,
+      }),
       include: {
         items: true,
         payments: {
@@ -595,21 +705,31 @@ export class CancelOrderIfNotProcessedTool extends BaseTool<typeof CancelOrderIn
     context: ToolContext
   ): Promise<ToolResult> {
     const { orderNumber, orderId, reason } = input;
-
-    // Policy: always filter by workspace
-    const where: Prisma.OrderWhereInput = {
+    const resolved = await resolveOrderReference({
+      prisma: this.prisma,
       workspaceId: context.workspaceId,
       customerId: context.customerId,
-    };
-
-    if (orderId) {
-      where.id = orderId;
-    } else if (orderNumber) {
-      where.orderNumber = orderNumber;
+      orderId,
+      orderNumber,
+      includeTrashed: false,
+      requireNotDeleted: false,
+    });
+    if (resolved && 'ambiguous' in resolved) {
+      return {
+        success: false,
+        error: `Hay más de un pedido que coincide: ${resolved.matches.join(', ')}`,
+      };
+    }
+    if (!resolved) {
+      return { success: false, error: 'Orden no encontrada' };
     }
 
     const order = await this.prisma.order.findFirst({
-      where: withVisibleOrders(where),
+      where: withVisibleOrders({
+        workspaceId: context.workspaceId,
+        customerId: context.customerId,
+        id: resolved.id,
+      }),
       include: { items: true },
     });
 
@@ -639,17 +759,38 @@ export class CancelOrderIfNotProcessedTool extends BaseTool<typeof CancelOrderIn
       };
     }
 
+    const cancelledAt = new Date();
+    const orderMetadata =
+      order.metadata && typeof order.metadata === 'object' && !Array.isArray(order.metadata)
+        ? (order.metadata as Record<string, unknown>)
+        : {};
+    const currentCancellation =
+      orderMetadata.cancellation && typeof orderMetadata.cancellation === 'object' && !Array.isArray(orderMetadata.cancellation)
+        ? (orderMetadata.cancellation as Record<string, unknown>)
+        : {};
+    const nextMetadata = {
+      ...orderMetadata,
+      cancellation: {
+        ...currentCancellation,
+        byCustomer: true,
+        source: 'whatsapp_customer',
+        reason,
+        cancelledAt: cancelledAt.toISOString(),
+      },
+    } as Prisma.InputJsonValue;
+
     // Cancel in transaction with stock reversal
     try {
       await this.prisma.$transaction(
         async (tx) => {
           // Update order status
-          await tx.order.updateMany({
-            where: { id: order.id, workspaceId: context.workspaceId },
+          await tx.order.update({
+            where: { id: order.id },
             data: {
               status: 'cancelled',
-              cancelledAt: new Date(),
+              cancelledAt,
               cancelReason: reason,
+              metadata: nextMetadata,
             },
           });
 
@@ -803,14 +944,31 @@ export class ModifyOrderIfNotProcessedTool extends BaseTool<typeof ModifyOrderIn
     context: ToolContext
   ): Promise<ToolResult> {
     const { orderNumber, orderId, action, productId, variantId, quantity } = input;
-
-    // Policy: always filter by workspace
-    const where: Prisma.OrderWhereInput = { workspaceId: context.workspaceId };
-    if (orderId) where.id = orderId;
-    else if (orderNumber) where.orderNumber = orderNumber;
+    const resolved = await resolveOrderReference({
+      prisma: this.prisma,
+      workspaceId: context.workspaceId,
+      customerId: context.customerId,
+      orderId,
+      orderNumber,
+      includeTrashed: false,
+      requireNotDeleted: false,
+    });
+    if (resolved && 'ambiguous' in resolved) {
+      return {
+        success: false,
+        error: `Hay más de un pedido que coincide: ${resolved.matches.join(', ')}`,
+      };
+    }
+    if (!resolved) {
+      return { success: false, error: 'Orden no encontrada' };
+    }
 
     const order = await this.prisma.order.findFirst({
-      where: withVisibleOrders(where),
+      where: withVisibleOrders({
+        workspaceId: context.workspaceId,
+        customerId: context.customerId,
+        id: resolved.id,
+      }),
       include: { items: true },
     });
 

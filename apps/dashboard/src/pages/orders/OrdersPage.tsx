@@ -42,6 +42,10 @@ function readRecord(record: JsonRecord | null, key: string): JsonRecord | null {
   return asRecord(record?.[key]);
 }
 
+function readBoolean(record: JsonRecord | null, key: string): boolean {
+  return record?.[key] === true;
+}
+
 function readErrorMessage(record: JsonRecord, fallback: string): string {
   return readString(record, 'message') ?? readString(record, 'error') ?? fallback;
 }
@@ -82,6 +86,7 @@ interface Order {
   orderNumber: string;
   status: string;
   invoiceStatus?: 'pending_invoicing' | 'invoiced' | 'invoice_cancelled' | null;
+  cancelledByCustomer?: boolean;
   cancelReason?: string | null;
   isTrashed?: boolean;
   trashReason?: string | null;
@@ -245,6 +250,9 @@ const resolvePaymentStatus = (order: Order): keyof typeof PAYMENT_STATUS_CONFIG 
   return 'pending_payment';
 };
 
+const shouldTrashWithoutReason = (order: Order): boolean =>
+  order.status === 'cancelled' && order.cancelledByCustomer === true;
+
 const resolveDateRange = (filter: string): { from?: string; to?: string } => {
   if (filter === 'all') {
     return {};
@@ -277,6 +285,29 @@ const resolveDateRange = (filter: string): { from?: string; to?: string } => {
   }
 
   return {};
+};
+
+const detectDecimalSeparator = (token: string): { separator: '.' | ','; index: number } | null => {
+  const lastDot = token.lastIndexOf('.');
+  const lastComma = token.lastIndexOf(',');
+
+  if (lastDot >= 0 && lastComma >= 0) {
+    const index = Math.max(lastDot, lastComma);
+    const separator = token[index] as '.' | ',';
+    const fractionLength = token.length - index - 1;
+    return fractionLength >= 1 && fractionLength <= 2 ? { separator, index } : null;
+  }
+
+  if (lastDot >= 0 || lastComma >= 0) {
+    const separator = (lastDot >= 0 ? '.' : ',') as '.' | ',';
+    const index = token.lastIndexOf(separator);
+    const occurrences = token.split(separator).length - 1;
+    if (occurrences !== 1) return null;
+    const fractionLength = token.length - index - 1;
+    return fractionLength >= 1 && fractionLength <= 2 ? { separator, index } : null;
+  }
+
+  return null;
 };
 
 export default function OrdersPage(): JSX.Element {
@@ -591,26 +622,35 @@ export default function OrdersPage(): JSX.Element {
   };
 
   const parseMoneyInputToCents = (raw: string): number | null => {
-    const value = raw.trim();
-    if (!value) return null;
-    const match = value.match(/([0-9][0-9.,]*)/);
+    const compact = raw.replace(/\s+/g, '').trim();
+    if (!compact) return null;
+    const match = compact.match(/[0-9][0-9.,]*/);
     if (!match) return null;
-    let normalized = match[1];
-    if (normalized.includes('.') && normalized.includes(',')) {
-      normalized = normalized.replace(/\./g, '').replace(',', '.');
-    } else if (normalized.includes(',')) {
-      const parts = normalized.split(',');
-      if (parts[1] && parts[1].length === 2) {
-        normalized = `${parts[0].replace(/\./g, '')}.${parts[1]}`;
-      } else {
-        normalized = normalized.replace(/,/g, '');
-      }
+
+    const token = match[0];
+    const decimal = detectDecimalSeparator(token);
+
+    let cents = 0;
+    if (decimal) {
+      const integerDigits = token.slice(0, decimal.index).replace(/[.,]/g, '');
+      const fractionDigits = token.slice(decimal.index + 1).replace(/[.,]/g, '');
+      if (!fractionDigits || fractionDigits.length > 2) return null;
+
+      const integerPart = Number(integerDigits || '0');
+      const fractionPart = Number(fractionDigits.padEnd(2, '0'));
+      if (!Number.isFinite(integerPart) || !Number.isFinite(fractionPart)) return null;
+
+      cents = integerPart * 100 + fractionPart;
     } else {
-      normalized = normalized.replace(/,/g, '');
+      const integerDigits = token.replace(/[.,]/g, '');
+      if (!integerDigits) return null;
+      const integerPart = Number(integerDigits);
+      if (!Number.isFinite(integerPart)) return null;
+      cents = integerPart * 100;
     }
-    const amount = Number(normalized);
-    if (Number.isNaN(amount) || amount <= 0) return null;
-    return Math.round(amount * 100);
+
+    if (!Number.isFinite(cents) || cents <= 0) return null;
+    return cents;
   };
 
   const clearReceiptAttachment = useCallback(() => {
@@ -1291,21 +1331,25 @@ export default function OrdersPage(): JSX.Element {
     }
   };
 
-  const handleMoveToTrash = async (): Promise<void> => {
-    const candidate = trashCandidate;
+  const handleMoveToTrash = async (candidateOverride?: Order, skipReasonValidation = false): Promise<void> => {
+    const candidate = candidateOverride ?? trashCandidate;
     if (!workspace?.id || !candidate) return;
-    const reason = trashReasonDraft.trim();
-    if (reason.length < 3) {
+    const reason = skipReasonValidation ? '' : trashReasonDraft.trim();
+    if (!skipReasonValidation && reason.length < 3) {
       toast.error('Indicá un motivo de al menos 3 caracteres');
       return;
     }
     setIsTrashing(true);
     try {
+      const requestPayload: Record<string, unknown> = { status: 'trashed' };
+      if (reason.length > 0) {
+        requestPayload.cancelReason = reason;
+      }
       const res = await apiFetch(
         `/api/v1/orders/${candidate.id}`,
         {
           method: 'PATCH',
-          body: JSON.stringify({ status: 'trashed', cancelReason: reason }),
+          body: JSON.stringify(requestPayload),
         },
         workspace.id
       );
@@ -1324,10 +1368,16 @@ export default function OrdersPage(): JSX.Element {
       setTrashCandidate(null);
       setTrashReasonDraft('');
       await fetchOrdersAndStats();
-      toast.success('Pedido cancelado y enviado a la papelera');
+      toast.success(
+        shouldTrashWithoutReason(candidate)
+          ? 'Pedido enviado a la papelera'
+          : 'Pedido cancelado y enviado a la papelera'
+      );
+      const notificationSkipped = readBoolean(customerNotification, 'skipped');
       if (
         customerNotification?.attempted === true &&
-        customerNotification?.sent !== true
+        customerNotification?.sent !== true &&
+        !notificationSkipped
       ) {
         const reasonText = readString(customerNotification, 'error');
         toast.warning(
@@ -1342,6 +1392,15 @@ export default function OrdersPage(): JSX.Element {
     } finally {
       setIsTrashing(false);
     }
+  };
+
+  const requestMoveToTrash = (order: Order): void => {
+    if (shouldTrashWithoutReason(order)) {
+      void handleMoveToTrash(order, true);
+      return;
+    }
+    setTrashCandidate(order);
+    setTrashReasonDraft('');
   };
 
   const handleRestoreFromTrash = async (): Promise<void> => {
@@ -1472,16 +1531,16 @@ export default function OrdersPage(): JSX.Element {
           <StatCard label="Total pedidos" value={(stats?.totalOrders ?? 0).toString()} icon={ShoppingCart} color="primary" isLoading={isLoading} />
           <StatCard label="Pendientes de aprobación" value={(stats?.pendingOrders ?? 0).toString()} icon={Clock} color="amber" isLoading={isLoading} />
           <StatCard label="Ingresos" value={formatCurrency(stats?.totalRevenue ?? 0)} icon={DollarSign} color="emerald" isLoading={isLoading} />
-          <StatCard label="Ticket promedio" value={formatCurrency(stats?.avgOrderValue ?? 0)} icon={TrendingUp} color="cyan" isLoading={isLoading} />
+          <StatCard label="Por cobrar" value={formatCurrency(stats?.pendingRevenue ?? 0)} icon={TrendingUp} color="cyan" isLoading={isLoading} />
         </AnimatedStagger>
 
         {/* Orders table */}
         <div className="glass-card rounded-2xl overflow-hidden">
           <div className="p-5 border-b border-border flex items-center justify-between">
             <h3 className="font-semibold text-foreground">Todos los pedidos</h3>
-            {stats && stats.pendingRevenue > 0 && (
+            {stats && stats.avgOrderValue > 0 && (
               <Badge variant="warning" className="text-white">
-                Por cobrar: {formatCurrency(stats.pendingRevenue)}
+                Ticket promedio: {formatCurrency(stats.avgOrderValue)}
               </Badge>
             )}
           </div>
@@ -1605,8 +1664,7 @@ export default function OrdersPage(): JSX.Element {
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            setTrashCandidate(order);
-                            setTrashReasonDraft('');
+                            requestMoveToTrash(order);
                           }}
                           className="absolute right-0 translate-x-2 opacity-0 group-hover:opacity-100 p-1.5 hover:bg-red-500/20 rounded-lg text-red-400 hover:text-red-300 transition-all"
                           title="Cancelar y enviar a papelera"
@@ -1852,8 +1910,7 @@ export default function OrdersPage(): JSX.Element {
                         variant="secondary"
                         className="w-full text-red-400 hover:text-red-300 hover:bg-red-500/10"
                         onClick={() => {
-                          setTrashCandidate(selectedOrder);
-                          setTrashReasonDraft('');
+                          requestMoveToTrash(selectedOrder);
                         }}
                       >
                         <Trash2 className="w-4 h-4 mr-2" />

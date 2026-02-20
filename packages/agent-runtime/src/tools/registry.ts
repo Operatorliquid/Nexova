@@ -14,6 +14,225 @@ const SENSITIVE_KEY_PATTERN =
 const MAX_STRING_LENGTH = 500;
 const MAX_ARRAY_LENGTH = 20;
 const MAX_DEPTH = 4;
+const MAX_INPUT_NORMALIZATION_DEPTH = 6;
+const DEFAULT_TOOL_TIMEOUT_MS = 25000;
+
+const NUMERIC_INPUT_KEYS = new Set([
+  'amount',
+  'quantity',
+  'percent',
+  'price',
+  'unitprice',
+  'subtotal',
+  'total',
+  'discount',
+  'shipping',
+  'pendingamount',
+  'limit',
+  'offset',
+  'page',
+  'stock',
+  'available',
+  'requested',
+  'days',
+  'hours',
+  'minutes',
+  'seconds',
+  'ttlseconds',
+  'durationdays',
+]);
+
+const BOOLEAN_INPUT_KEYS = new Set([
+  'active',
+  'enabled',
+  'notifycustomer',
+  'includeoutofstock',
+  'onlyinstock',
+  'strict',
+  'confirmed',
+  'approved',
+  'mp',
+  'mplink',
+  'transfer',
+  'cash',
+]);
+
+const ARRAY_INPUT_KEYS = new Set([
+  'productnames',
+  'orderids',
+  'customerids',
+  'tags',
+  'keywords',
+  'phones',
+  'ids',
+]);
+
+const PHONE_INPUT_KEYS = new Set([
+  'phone',
+  'customerphone',
+  'senderphone',
+  'whatsappcontact',
+  'contactphone',
+]);
+
+class ToolTimeoutError extends Error {
+  code = 'TOOL_TIMEOUT';
+
+  constructor(toolName: string, timeoutMs: number) {
+    super(`Tool '${toolName}' timed out after ${timeoutMs}ms`);
+    this.name = 'ToolTimeoutError';
+  }
+}
+
+function resolveToolTimeoutMs(): number {
+  const raw = Number.parseInt(process.env.AGENT_TOOL_TIMEOUT_MS || `${DEFAULT_TOOL_TIMEOUT_MS}`, 10);
+  if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_TOOL_TIMEOUT_MS;
+  return raw;
+}
+
+function normalizePhoneValue(value: string): string {
+  const digits = value.replace(/\D/g, '');
+  if (digits.length < 8) return value;
+  return `+${digits}`;
+}
+
+function normalizeOrderNumberValue(value: string): string {
+  const normalized = value.trim().toUpperCase();
+  const match = normalized.match(/^ORD[\s-]*(\d{1,20})$/);
+  if (!match?.[1]) return normalized;
+  return `ORD-${match[1]}`;
+}
+
+function parseBooleanValue(value: string): boolean | null {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return null;
+  if (['true', '1', 'yes', 'si', 'sí', 'ok'].includes(normalized)) return true;
+  if (['false', '0', 'no'].includes(normalized)) return false;
+  return null;
+}
+
+function parseLocaleNumber(value: string): number | null {
+  const compact = value.replace(/\s+/g, '');
+  if (!compact || !/^[+-]?\d[\d.,]*$/.test(compact)) return null;
+
+  const sign = compact.startsWith('-') ? -1 : 1;
+  const unsigned = compact.replace(/^[+-]/, '');
+  const commaCount = (unsigned.match(/,/g) || []).length;
+  const dotCount = (unsigned.match(/\./g) || []).length;
+
+  let normalized = unsigned;
+  if (commaCount > 0 && dotCount > 0) {
+    const lastComma = unsigned.lastIndexOf(',');
+    const lastDot = unsigned.lastIndexOf('.');
+    const decimalSep = lastComma > lastDot ? ',' : '.';
+    const thousandsSep = decimalSep === ',' ? '.' : ',';
+    const parts = unsigned.split(decimalSep);
+    const fractional = parts[parts.length - 1] || '';
+    if (fractional.length > 0 && fractional.length <= 2) {
+      normalized = unsigned.split(thousandsSep).join('').replace(decimalSep, '.');
+    } else {
+      normalized = unsigned.replace(/[.,]/g, '');
+    }
+  } else if (commaCount > 0) {
+    const parts = unsigned.split(',');
+    const fractional = parts[parts.length - 1] || '';
+    if (parts.length === 2 && fractional.length > 0 && fractional.length <= 2) {
+      normalized = `${parts[0]}.${fractional}`;
+    } else {
+      normalized = unsigned.replace(/,/g, '');
+    }
+  } else if (dotCount > 0) {
+    const parts = unsigned.split('.');
+    const fractional = parts[parts.length - 1] || '';
+    if (!(parts.length === 2 && fractional.length > 0 && fractional.length <= 2)) {
+      normalized = unsigned.replace(/\./g, '');
+    }
+  }
+
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed)) return null;
+  return sign * parsed;
+}
+
+function shouldTreatAsNumericKey(key: string): boolean {
+  if (NUMERIC_INPUT_KEYS.has(key)) return true;
+  return /(amount|price|quantity|percent|subtotal|total|discount|shipping|stock|limit|offset|page|days|hours|minutes|seconds)$/.test(
+    key
+  );
+}
+
+function shouldTreatAsBooleanKey(key: string): boolean {
+  if (BOOLEAN_INPUT_KEYS.has(key)) return true;
+  return /^(is|has|should|can|allow|enable|enabled)/.test(key);
+}
+
+function shouldTreatAsArrayKey(key: string): boolean {
+  return ARRAY_INPUT_KEYS.has(key) || /(ids|names|tags|keywords)$/.test(key);
+}
+
+function normalizeScalarByKey(value: string, key?: string): unknown {
+  const trimmed = value.trim();
+  if (!key) return trimmed;
+
+  if (key === 'ordernumber') {
+    return normalizeOrderNumberValue(trimmed);
+  }
+
+  if (PHONE_INPUT_KEYS.has(key)) {
+    return normalizePhoneValue(trimmed);
+  }
+
+  if (shouldTreatAsBooleanKey(key)) {
+    const boolValue = parseBooleanValue(trimmed);
+    if (boolValue !== null) return boolValue;
+  }
+
+  if (shouldTreatAsNumericKey(key)) {
+    const numberValue = parseLocaleNumber(trimmed);
+    if (numberValue !== null) return numberValue;
+  }
+
+  if (shouldTreatAsArrayKey(key) && trimmed.includes(',')) {
+    return trimmed
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0);
+  }
+
+  return trimmed;
+}
+
+function normalizeToolInputValue(value: unknown, key?: string, depth = 0): unknown {
+  if (depth >= MAX_INPUT_NORMALIZATION_DEPTH) return value;
+  if (value === null || value === undefined) return value;
+
+  if (typeof value === 'string') {
+    return normalizeScalarByKey(value, key);
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeToolInputValue(item, key, depth + 1));
+  }
+
+  if (typeof value === 'object') {
+    const normalized: Record<string, unknown> = {};
+    for (const [childKey, childValue] of Object.entries(value as Record<string, unknown>)) {
+      const keyNormalized = childKey.trim().toLowerCase();
+      normalized[childKey] = normalizeToolInputValue(childValue, keyNormalized, depth + 1);
+    }
+    return normalized;
+  }
+
+  return value;
+}
+
+function normalizeToolInput(input: Record<string, unknown>): Record<string, unknown> {
+  const normalized = normalizeToolInputValue(input, undefined, 0);
+  if (normalized && typeof normalized === 'object' && !Array.isArray(normalized)) {
+    return normalized as Record<string, unknown>;
+  }
+  return input;
+}
 
 function truncateString(value: string, maxLength = MAX_STRING_LENGTH): string {
   if (value.length <= maxLength) return value;
@@ -118,6 +337,28 @@ export class ToolRegistry {
    */
   setPrisma(prisma: PrismaClient): void {
     this.prisma = prisma;
+  }
+
+  private async executeWithTimeout<T>(
+    toolName: string,
+    executor: () => Promise<T>
+  ): Promise<T> {
+    const timeoutMs = resolveToolTimeoutMs();
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      return executor();
+    }
+
+    let timer: NodeJS.Timeout | null = null;
+    try {
+      return await new Promise<T>((resolve, reject) => {
+        timer = setTimeout(() => reject(new ToolTimeoutError(toolName, timeoutMs)), timeoutMs);
+        void executor().then(resolve).catch(reject);
+      });
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    }
   }
 
   private async recordToolExecution(params: {
@@ -270,17 +511,30 @@ export class ToolRegistry {
       return execution;
     }
 
-    // Validate input
-    const validation = tool.validate(input);
+    const normalizedInput = normalizeToolInput(input);
+
+    // Validate input (normalized first, raw fallback)
+    const normalizedValidation = tool.validate(normalizedInput);
+    const rawValidation = normalizedValidation.success ? null : tool.validate(input);
+    const validation = normalizedValidation.success
+      ? normalizedValidation
+      : rawValidation && rawValidation.success
+        ? rawValidation
+        : normalizedValidation;
+    const inputForValidation = normalizedValidation.success ? normalizedInput : input;
+
     if (!validation.success) {
       const execution: ToolExecution = {
         correlationId: context.correlationId,
         toolName: name,
         category: tool.category,
-        input,
+        input: inputForValidation,
         result: {
           success: false,
-          error: `Validation failed: ${validation.error}`,
+          error:
+            rawValidation && !rawValidation.success && rawValidation.error !== validation.error
+              ? `Validation failed: ${validation.error} (raw: ${rawValidation.error})`
+              : `Validation failed: ${validation.error}`,
         },
         durationMs: Date.now() - startTime,
         validationPassed: false,
@@ -290,9 +544,12 @@ export class ToolRegistry {
         context,
         toolName: name,
         toolCategory: tool.category,
-        inputParams: input,
+        inputParams: inputForValidation,
         validationStatus: 'failed',
-        validationErrors: { message: validation.error },
+        validationErrors: {
+          normalizedError: validation.error,
+          ...(rawValidation && !rawValidation.success ? { rawError: rawValidation.error } : {}),
+        },
         confirmationRequired: tool.requiresConfirmation,
         resultStatus: 'error',
         result: execution.result,
@@ -339,7 +596,9 @@ export class ToolRegistry {
 
     // Execute tool
     try {
-      const result = await tool.execute(validation.data, context);
+      const result = await this.executeWithTimeout(name, () =>
+        tool.execute(validation.data, context)
+      );
 
       // Mark as executed for idempotency
       if (idempotencyKey && this.memoryManager && result.success) {
@@ -370,6 +629,13 @@ export class ToolRegistry {
 
       return execution;
     } catch (error) {
+      const isTimeout =
+        error instanceof ToolTimeoutError ||
+        (error &&
+          typeof error === 'object' &&
+          'code' in error &&
+          (error as { code?: unknown }).code === 'TOOL_TIMEOUT');
+
       console.error(`[ToolRegistry] Tool execution failed: ${name}`, error);
       const execution: ToolExecution = {
         correlationId: context.correlationId,
@@ -378,7 +644,11 @@ export class ToolRegistry {
         input: validatedInput,
         result: {
           success: false,
-          error: error instanceof Error ? error.message : 'Unknown error',
+          error: isTimeout
+            ? `Tool '${name}' exceeded execution timeout`
+            : error instanceof Error
+              ? error.message
+              : 'Unknown error',
         },
         durationMs: Date.now() - startTime,
         validationPassed: true,
@@ -391,12 +661,17 @@ export class ToolRegistry {
         inputParams: validatedInput,
         validationStatus: 'passed',
         confirmationRequired: tool.requiresConfirmation,
-        resultStatus: 'error',
+        resultStatus: isTimeout ? 'timeout' : 'error',
         result: execution.result,
         durationMs: execution.durationMs,
-        errorCode: error && typeof error === 'object' && 'code' in error && typeof (error as { code?: unknown }).code === 'string'
-          ? (error as { code?: string }).code
-          : undefined,
+        errorCode: isTimeout
+          ? 'TOOL_TIMEOUT'
+          : error &&
+              typeof error === 'object' &&
+              'code' in error &&
+              typeof (error as { code?: unknown }).code === 'string'
+            ? (error as { code?: string }).code
+            : undefined,
       });
 
       return execution;

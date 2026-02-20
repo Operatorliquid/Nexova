@@ -163,6 +163,13 @@ export const TOOL_POLICIES: Record<string, ToolPolicy> = {
     allowedRoles: ['owner', 'admin', 'staff'],
     description: 'Listar categorías de productos',
   },
+  list_active_promotions: {
+    name: 'list_active_promotions',
+    riskLevel: 'safe',
+    requiresConfirmation: false,
+    allowedRoles: ['owner', 'admin', 'staff'],
+    description: 'Listar promociones activas con detalle de valor y vencimiento',
+  },
   get_order_details: {
     name: 'get_order_details',
     riskLevel: 'safe',

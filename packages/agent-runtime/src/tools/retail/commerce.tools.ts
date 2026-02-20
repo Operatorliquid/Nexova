@@ -16,10 +16,20 @@ import {
 } from '@nexova/integrations';
 import { getCommercePlanCapabilities, resolveCommercePlan } from '@nexova/shared';
 
+import { buildProductDisplayName } from './product-utils.js';
+import {
+  computePromotionStatus,
+  formatPromotionRemainingTime,
+  formatPromotionValueLabel,
+} from './promotion-utils.js';
 import { ToolCategory, type ToolContext, type ToolResult, type CommerceProfile } from '../../types/index.js';
 import { LocalFileUploader } from '../../utils/file-uploader.js';
 import { withVisibleOrders } from '../../utils/orders.js';
 import { BaseTool } from '../base.js';
+
+function formatMoneyCents(value: number): string {
+  return Math.round(value / 100).toLocaleString('es-AR');
+}
 
 
 
@@ -420,6 +430,126 @@ export class ProcessPaymentReceiptTool extends BaseTool<typeof ProcessPaymentRec
         orderTotal: order.total,
         previouslyPaid: paidAmount,
         remainingAfterPayment: remainingAfterPayment > 0 ? remainingAfterPayment : 0,
+      },
+    };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// LIST ACTIVE PROMOTIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const ListActivePromotionsInput = z.object({
+  limit: z.number().int().min(1).max(20).default(10).describe('Cantidad máxima de promociones a listar'),
+});
+
+export class ListActivePromotionsTool extends BaseTool<typeof ListActivePromotionsInput> {
+  private prisma: PrismaClient;
+
+  constructor(prisma: PrismaClient) {
+    super({
+      name: 'list_active_promotions',
+      description:
+        'Lista promociones activas con producto incluido, tipo/valor de promo, precio final y fecha de finalización.',
+      category: ToolCategory.QUERY,
+      inputSchema: ListActivePromotionsInput,
+    });
+    this.prisma = prisma;
+  }
+
+  async execute(input: z.infer<typeof ListActivePromotionsInput>, context: ToolContext): Promise<ToolResult> {
+    const now = new Date();
+    const promotions = await this.prisma.promotion.findMany({
+      where: {
+        workspaceId: context.workspaceId,
+        deletedAt: null,
+        status: 'active',
+        startsAt: { lte: now },
+        endsAt: { gte: now },
+      },
+      orderBy: [{ endsAt: 'asc' }, { createdAt: 'desc' }],
+      take: input.limit,
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        promoType: true,
+        value: true,
+        status: true,
+        startsAt: true,
+        endsAt: true,
+        metadata: true,
+        product: {
+          select: {
+            id: true,
+            name: true,
+            price: true,
+            unit: true,
+            unitValue: true,
+            secondaryUnit: true,
+            secondaryUnitValue: true,
+          },
+        },
+      },
+    });
+
+    if (promotions.length === 0) {
+      return {
+        success: true,
+        data: {
+          total: 0,
+          promotions: [],
+          message: 'No hay promociones activas en este momento.',
+        },
+      };
+    }
+
+    const normalized = promotions.map((promotion) => {
+      const displayName = buildProductDisplayName(promotion.product);
+      const valueInfo = formatPromotionValueLabel({
+        promotion: {
+          promoType: promotion.promoType,
+          value: promotion.value,
+          metadata: promotion.metadata,
+        },
+        productBasePrice: promotion.product.price,
+      });
+      return {
+        id: promotion.id,
+        name: promotion.name,
+        description: promotion.description,
+        promoType: promotion.promoType,
+        value: promotion.value,
+        valueLabel: valueInfo.label,
+        status: promotion.status,
+        computedStatus: computePromotionStatus(promotion.status, promotion.startsAt, promotion.endsAt, now),
+        startsAt: promotion.startsAt.toISOString(),
+        endsAt: promotion.endsAt.toISOString(),
+        endsIn: formatPromotionRemainingTime(now, promotion.endsAt),
+        product: {
+          id: promotion.product.id,
+          name: displayName,
+          baseName: promotion.product.name,
+          price: promotion.product.price,
+          promoPrice: valueInfo.promoPrice,
+          savings: valueInfo.savings,
+        },
+      };
+    });
+
+    const preview = normalized.slice(0, 5).map((promotion) => {
+      const savings =
+        promotion.product.savings > 0 ? ` (ahorro $${formatMoneyCents(promotion.product.savings)})` : '';
+      return `• ${promotion.name}: ${promotion.product.name} | ${promotion.valueLabel} | $${formatMoneyCents(promotion.product.promoPrice)}${savings} | vence en ${promotion.endsIn}`;
+    });
+    const extra = normalized.length > preview.length ? `\nY ${normalized.length - preview.length} promo(s) más.` : '';
+
+    return {
+      success: true,
+      data: {
+        total: normalized.length,
+        promotions: normalized,
+        message: `Hay ${normalized.length} promoción(es) activa(s).\n${preview.join('\n')}${extra}`,
       },
     };
   }
@@ -1083,6 +1213,7 @@ export function createCommerceTools(
     new GetCommerceProfileTool(prisma),
     new CreatePaymentLinkTool(prisma, mpService),
     new ProcessPaymentReceiptTool(prisma),
+    new ListActivePromotionsTool(prisma),
     new SendCatalogPdfTool(prisma),
     new SendOrderPdfTool(prisma),
   ];

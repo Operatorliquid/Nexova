@@ -67,6 +67,11 @@ function readString(record: JsonRecord | null, key: string): string | undefined 
   return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
 }
 
+function readNumber(record: JsonRecord | null, key: string): number | undefined {
+  const value = record?.[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
 function readErrorMessage(data: JsonRecord, fallback: string): string {
   return readString(data, 'message') ?? readString(data, 'error') ?? fallback;
 }
@@ -200,6 +205,20 @@ const VAT_CONDITION_LOOKUP = VAT_CONDITIONS.reduce<Record<string, string>>((acc,
 }, {});
 
 const VAT_CONDITION_VALUES = new Set(VAT_CONDITIONS.map((item) => item.value));
+
+const CUSTOMER_DELETE_PENDING_ORDER_STATUSES = new Set<string>([
+  'draft',
+  'awaiting_acceptance',
+  'accepted',
+  'pending_payment',
+  'partial_payment',
+  'processing',
+  'confirmed',
+  'preparing',
+  'ready',
+  'shipped',
+  'pending_invoicing',
+]);
 
 type EditableField =
   | 'dni'
@@ -695,6 +714,14 @@ export default function CustomersPage(): JSX.Element {
     return 'Riesgoso';
   };
 
+  const knownPendingOrdersCount = orders.reduce((count, order) => (
+    CUSTOMER_DELETE_PENDING_ORDER_STATUSES.has(order.status) ? count + 1 : count
+  ), 0);
+
+  const hasKnownDeleteBlocker = Boolean(
+    selectedCustomer && (selectedCustomer.currentBalance > 0 || knownPendingOrdersCount > 0)
+  );
+
   // Get order status badges
   const resolveAcceptanceStatus = (order: CustomerOrder): 'awaiting_acceptance' | 'accepted' | 'cancelled' => {
     if (order.status === 'cancelled' || order.status === 'returned') return 'cancelled';
@@ -796,11 +823,38 @@ export default function CustomersPage(): JSX.Element {
         setShowDeleteConfirm(false);
         toast.success('Cliente eliminado correctamente');
       } else {
-        toast.error('Error al eliminar el cliente');
+        const data = await readJsonRecord(response);
+        const errorCode = readString(data, 'error');
+
+        if (errorCode === 'CUSTOMER_DELETE_BLOCKED') {
+          const blockers = asRecord(data.blockers);
+          const debt = readNumber(blockers, 'debt') ?? 0;
+          const pendingOrders = readNumber(blockers, 'pendingOrders') ?? 0;
+          const detailParts: string[] = [];
+          if (debt > 0) {
+            detailParts.push(`deuda de ${formatCurrency(debt)}`);
+          }
+          if (pendingOrders > 0) {
+            detailParts.push(`${pendingOrders} pedido${pendingOrders === 1 ? '' : 's'} pendiente${pendingOrders === 1 ? '' : 's'}`);
+          }
+
+          const baseMessage = readString(data, 'message') ?? 'No se puede eliminar el cliente.';
+          const details = detailParts.length > 0 ? ` (${detailParts.join(' y ')})` : '';
+          toast.warning(`${baseMessage}${details}`);
+
+          const refreshed = await fetchCustomerById(customerId);
+          if (refreshed) {
+            setSelectedCustomer(refreshed);
+            setCustomers((prev) => prev.map((c) => (c.id === refreshed.id ? { ...c, ...refreshed } : c)));
+          }
+          return;
+        }
+
+        throw new Error(readErrorMessage(data, 'Error al eliminar el cliente'));
       }
     } catch (error) {
       console.error('Failed to delete customer:', error);
-      toast.error('Error al eliminar el cliente');
+      toast.error(error instanceof Error ? error.message : 'Error al eliminar el cliente');
     } finally {
       setIsDeleting(false);
     }
@@ -1916,6 +1970,23 @@ export default function CustomersPage(): JSX.Element {
                 </div>
               )}
 
+              {knownPendingOrdersCount > 0 && (
+                <div className="p-3 rounded-lg bg-primary/10 border border-primary/20">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 text-primary" />
+                    <p className="text-sm text-primary">
+                      Este cliente tiene {knownPendingOrdersCount} pedido{knownPendingOrdersCount === 1 ? '' : 's'} pendiente{knownPendingOrdersCount === 1 ? '' : 's'}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {hasKnownDeleteBlocker && (
+                <p className="text-xs text-muted-foreground">
+                  No se puede eliminar hasta resolver la deuda y/o los pedidos pendientes.
+                </p>
+              )}
+
               <div className="flex gap-3 pt-2">
                 <Button
                   variant="secondary"
@@ -1928,7 +1999,7 @@ export default function CustomersPage(): JSX.Element {
                 <Button
                   className="flex-1 bg-red-500 hover:bg-red-600"
                   onClick={() => { void deleteCustomer(selectedCustomer.id); }}
-                  disabled={isDeleting}
+                  disabled={isDeleting || hasKnownDeleteBlocker}
                 >
                   {isDeleting ? (
                     <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />

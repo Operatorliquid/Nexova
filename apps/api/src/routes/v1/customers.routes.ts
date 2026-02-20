@@ -38,6 +38,20 @@ type PaymentStatusFilter = 'pending_payment' | 'partial_payment' | 'paid';
 const isPaymentStatusFilter = (value: unknown): value is PaymentStatusFilter =>
   value === 'pending_payment' || value === 'partial_payment' || value === 'paid';
 
+const CUSTOMER_DELETE_PENDING_ORDER_STATUSES = [
+  'draft',
+  'awaiting_acceptance',
+  'accepted',
+  'pending_payment',
+  'partial_payment',
+  'processing',
+  'confirmed',
+  'preparing',
+  'ready',
+  'shipped',
+  'pending_invoicing',
+] as const;
+
 const getErrorCode = (error: unknown): string | undefined => {
   if (!error || typeof error !== 'object') {
     return undefined;
@@ -1070,6 +1084,48 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
 
       if (!existing) {
         return reply.code(404).send({ error: 'NOT_FOUND', message: 'Customer not found' });
+      }
+
+      const recalculated = await recalcCustomerFinancials(fastify.prisma, workspaceId, id);
+
+      const pendingOrders = await fastify.prisma.order.count({
+        where: {
+          workspaceId,
+          customerId: id,
+          deletedAt: null,
+          status: { in: [...CUSTOMER_DELETE_PENDING_ORDER_STATUSES] },
+          OR: [
+            { metadata: { equals: Prisma.AnyNull } },
+            { metadata: { path: ['trash'], equals: Prisma.AnyNull } },
+            { metadata: { path: ['trash', 'isTrashed'], equals: Prisma.AnyNull } },
+            { metadata: { path: ['trash', 'isTrashed'], equals: false } },
+            { metadata: { path: ['trash', 'isTrashed'], equals: 'false' } },
+          ],
+        },
+      });
+
+      const hasDebt = recalculated.debt > 0;
+      const hasPendingOrders = pendingOrders > 0;
+      if (hasDebt || hasPendingOrders) {
+        let message = 'No se puede eliminar el cliente.';
+        if (hasDebt && hasPendingOrders) {
+          message = 'No se puede eliminar el cliente porque tiene deuda pendiente y pedidos pendientes.';
+        } else if (hasDebt) {
+          message = 'No se puede eliminar el cliente porque tiene deuda pendiente.';
+        } else if (hasPendingOrders) {
+          message = 'No se puede eliminar el cliente porque tiene pedidos pendientes.';
+        }
+
+        return reply.code(409).send({
+          error: 'CUSTOMER_DELETE_BLOCKED',
+          message,
+          blockers: {
+            debt: recalculated.debt,
+            pendingOrders,
+            hasDebt,
+            hasPendingOrders,
+          },
+        });
       }
 
       await fastify.prisma.customer.updateMany({

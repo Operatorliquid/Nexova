@@ -32,6 +32,7 @@ import {
   isAwaitingAudioTranscriptionPayload,
 } from './payload-audio.utils.js';
 import { type RetailAgent, createRetailAgent } from '../core/agent.js';
+import { extractSelectionIndex } from '../core/intent-router.js';
 import { MemoryService } from '../core/memory-service.js';
 import { LocalFileUploader } from '../utils/file-uploader.js';
 
@@ -1365,6 +1366,10 @@ export class AgentWorker {
     return `agent:interactive:${workspaceId}:${this.normalizePhone(phone)}`;
   }
 
+  private extractInteractiveSelectionIndex(text: string): number | null {
+    return extractSelectionIndex(text);
+  }
+
   private async storeInteractiveReplyMap(
     workspaceId: string,
     phone: string,
@@ -1400,10 +1405,8 @@ export class AgentWorker {
   ): Promise<string> {
     const normalized = (text || '').trim();
     if (!normalized) return text;
-    if (!/^\d{1,2}$/.test(normalized)) return text;
-
-    const selectedIndex = Number.parseInt(normalized, 10);
-    if (!Number.isFinite(selectedIndex) || selectedIndex < 1) return text;
+    const selectedIndex = this.extractInteractiveSelectionIndex(normalized);
+    if (!selectedIndex) return text;
 
     const key = this.buildInteractiveReplyKey(workspaceId, phone);
     try {

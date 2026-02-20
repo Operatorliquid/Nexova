@@ -30,6 +30,18 @@ export const buildOrderInvoiceStatusWhere = (invoiceStatus: OrderInvoiceStatus):
   OR: [
     { status: invoiceStatus },
     { metadata: { path: ['invoiceStatus'], equals: invoiceStatus } },
+    ...(invoiceStatus === 'pending_invoicing'
+      ? [
+          {
+            AND: [
+              { statusHistory: { some: { newStatus: 'pending_invoicing' } } },
+              { statusHistory: { none: { newStatus: { in: ['invoiced', 'invoice_cancelled'] } } } },
+            ],
+          } satisfies Prisma.OrderWhereInput,
+        ]
+      : invoiceStatus === 'invoiced'
+        ? [{ statusHistory: { some: { newStatus: 'invoiced' } } } satisfies Prisma.OrderWhereInput]
+        : [{ statusHistory: { some: { newStatus: 'invoice_cancelled' } } } satisfies Prisma.OrderWhereInput]),
   ],
 });
 

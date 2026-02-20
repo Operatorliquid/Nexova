@@ -20,6 +20,7 @@ import { getCommercePlanCapabilities, resolveCommercePlan } from '@nexova/shared
 
 import { ToolCategory, type ToolContext, type ToolResult } from '../../types/index.js';
 import { createNotificationIfEnabled } from '../../utils/notifications.js';
+import { resolveOrderReference } from '../../utils/order-reference.js';
 import { withVisibleOrders } from '../../utils/orders.js';
 import { fetchBinaryWithGuards } from '../../utils/remote-fetch-guard.js';
 import { BaseTool } from '../base.js';
@@ -365,6 +366,10 @@ const CreateMPPaymentLinkInput = z.object({
     .uuid()
     .optional()
     .describe('ID de la orden a pagar. Si no se especifica, es pago a cuenta.'),
+  orderNumber: z
+    .string()
+    .optional()
+    .describe('Número de la orden a pagar (ej: ORD-00005 o 5).'),
   amount: z
     .number()
     .int()
@@ -398,7 +403,7 @@ export class CreateMPPaymentLinkTool extends BaseTool<typeof CreateMPPaymentLink
     input: z.infer<typeof CreateMPPaymentLinkInput>,
     context: ToolContext
   ): Promise<ToolResult<PaymentLinkResult>> {
-    const { orderId, amount, description } = input;
+    const { orderId, orderNumber, amount, description } = input;
     const workspacePlan = await this.prisma.workspace.findUnique({
       where: { id: context.workspaceId },
       select: { plan: true, settings: true },
@@ -416,21 +421,46 @@ export class CreateMPPaymentLinkTool extends BaseTool<typeof CreateMPPaymentLink
       };
     }
 
-    if (!orderId && !amount) {
+    if (!orderId && !orderNumber && !amount) {
       return {
         success: false,
-        error: 'Necesito el ID de la orden o el monto a pagar',
+        error: 'Necesito el ID/número de la orden o el monto a pagar',
       };
     }
 
     let paymentAmount = amount;
     let paymentDescription = description || 'Pago a cuenta';
-    let orderNumber: string | undefined;
+    let resolvedOrderNumber: string | undefined;
+    let resolvedOrderId: string | undefined;
 
-    if (orderId) {
+    if (orderId || orderNumber) {
+      const resolved = await resolveOrderReference({
+        prisma: this.prisma,
+        workspaceId: context.workspaceId,
+        customerId: context.customerId,
+        orderId,
+        orderNumber,
+        includeTrashed: false,
+        requireNotDeleted: false,
+      });
+      if (resolved && 'ambiguous' in resolved) {
+        return {
+          success: false,
+          error: `Hay más de un pedido que coincide: ${resolved.matches.join(', ')}`,
+        };
+      }
+      if (!resolved) {
+        return {
+          success: false,
+          error: 'No encontré esa orden',
+        };
+      }
+
+      resolvedOrderId = resolved.id;
+
       const order = await this.prisma.order.findFirst({
         where: withVisibleOrders({
-          id: orderId,
+          id: resolved.id,
           workspaceId: context.workspaceId,
           customerId: context.customerId,
         }),
@@ -459,10 +489,10 @@ export class CreateMPPaymentLinkTool extends BaseTool<typeof CreateMPPaymentLink
 
       paymentAmount = amount || pendingAmount;
       paymentDescription = description || `Pago pedido #${order.orderNumber}`;
-      orderNumber = order.orderNumber;
+      resolvedOrderNumber = order.orderNumber;
     }
 
-    const externalReference = `${context.workspaceId}:${orderId || 'account'}:${Date.now()}`;
+    const externalReference = `${context.workspaceId}:${resolvedOrderId || 'account'}:${Date.now()}`;
 
     try {
       const result = await this.mpService.createPaymentLink(context.workspaceId, {
@@ -475,15 +505,15 @@ export class CreateMPPaymentLinkTool extends BaseTool<typeof CreateMPPaymentLink
         metadata: {
           workspaceId: context.workspaceId,
           customerId: context.customerId,
-          orderId,
+          orderId: resolvedOrderId,
           sessionId: context.sessionId,
         },
       });
 
-      if (orderId) {
+      if (resolvedOrderId) {
         await this.prisma.payment.create({
           data: {
-            orderId,
+            orderId: resolvedOrderId,
             provider: 'mercadopago',
             externalId: result.preferenceId,
             status: 'pending',
@@ -499,8 +529,8 @@ export class CreateMPPaymentLinkTool extends BaseTool<typeof CreateMPPaymentLink
       }
 
       const formattedAmount = formatMoney(paymentAmount!);
-      const message = orderNumber
-        ? `Acá tenés el link de pago por $${formattedAmount} para el pedido #${orderNumber}: ${result.paymentUrl}`
+      const message = resolvedOrderNumber
+        ? `Acá tenés el link de pago por $${formattedAmount} para el pedido #${resolvedOrderNumber}: ${result.paymentUrl}`
         : `Acá tenés el link de pago por $${formattedAmount}: ${result.paymentUrl}`;
 
       return {
@@ -877,11 +907,16 @@ export class UpdateReceiptAmountTool extends BaseTool<typeof UpdateReceiptAmount
 // APPLY RECEIPT TO ORDER
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const ApplyReceiptToOrderInput = z.object({
-  receiptId: z.string().uuid().describe('ID del comprobante a aplicar'),
-  orderId: z.string().uuid().describe('ID de la orden destino'),
-  amount: z.number().int().positive().describe('Monto a aplicar en centavos'),
-});
+const ApplyReceiptToOrderInput = z
+  .object({
+    receiptId: z.string().uuid().describe('ID del comprobante a aplicar'),
+    orderId: z.string().uuid().optional().describe('ID de la orden destino'),
+    orderNumber: z.string().optional().describe('Número de la orden destino (ej: ORD-00005 o 5)'),
+    amount: z.number().int().positive().describe('Monto a aplicar en centavos'),
+  })
+  .refine((data) => data.orderId || data.orderNumber, {
+    message: 'Debe proporcionar orderId u orderNumber',
+  });
 
 export class ApplyReceiptToOrderTool extends BaseTool<typeof ApplyReceiptToOrderInput> {
   private prisma: PrismaClient;
@@ -903,7 +938,7 @@ export class ApplyReceiptToOrderTool extends BaseTool<typeof ApplyReceiptToOrder
     input: z.infer<typeof ApplyReceiptToOrderInput>,
     context: ToolContext
   ): Promise<ToolResult<ApplyReceiptResult>> {
-    const { receiptId, orderId, amount } = input;
+    const { receiptId, orderId, orderNumber, amount } = input;
 
     const receipt = await this.prisma.receipt.findFirst({
       where: { id: receiptId, workspaceId: context.workspaceId, customerId: context.customerId },
@@ -921,8 +956,31 @@ export class ApplyReceiptToOrderTool extends BaseTool<typeof ApplyReceiptToOrder
       return { success: false, error: 'Ese comprobante fue rechazado' };
     }
 
+    const resolvedOrder = await resolveOrderReference({
+      prisma: this.prisma,
+      workspaceId: context.workspaceId,
+      customerId: context.customerId,
+      orderId,
+      orderNumber,
+      includeTrashed: false,
+      requireNotDeleted: false,
+    });
+    if (resolvedOrder && 'ambiguous' in resolvedOrder) {
+      return {
+        success: false,
+        error: `Hay más de un pedido que coincide: ${resolvedOrder.matches.join(', ')}`,
+      };
+    }
+    if (!resolvedOrder) {
+      return { success: false, error: 'No encontré esa orden' };
+    }
+
     const order = await this.prisma.order.findFirst({
-      where: withVisibleOrders({ id: orderId, workspaceId: context.workspaceId, customerId: context.customerId }),
+      where: withVisibleOrders({
+        id: resolvedOrder.id,
+        workspaceId: context.workspaceId,
+        customerId: context.customerId,
+      }),
       select: { id: true, orderNumber: true, total: true, paidAmount: true, currency: true },
     });
 
@@ -933,7 +991,7 @@ export class ApplyReceiptToOrderTool extends BaseTool<typeof ApplyReceiptToOrder
     const result = await this.ledgerService.applyPaymentToOrder(
       context.workspaceId,
       context.customerId,
-      orderId,
+      resolvedOrder.id,
       amount,
       'Receipt',
       receiptId,
@@ -945,7 +1003,7 @@ export class ApplyReceiptToOrderTool extends BaseTool<typeof ApplyReceiptToOrder
       data: {
         status: 'applied',
         appliedAmount: amount,
-        orderId,
+        orderId: resolvedOrder.id,
         appliedAt: new Date(),
         appliedBy: 'agent',
       },
@@ -953,7 +1011,7 @@ export class ApplyReceiptToOrderTool extends BaseTool<typeof ApplyReceiptToOrder
 
     await this.prisma.payment.create({
       data: {
-        orderId,
+        orderId: resolvedOrder.id,
         provider: 'receipt',
         externalId: receiptId,
         method: receipt.paymentMethod || 'transfer',

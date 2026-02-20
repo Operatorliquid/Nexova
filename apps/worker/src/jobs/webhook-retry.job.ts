@@ -22,6 +22,21 @@ function asObject(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
+function toPhoneDigits(value: string): string {
+  return (value || '').trim().replace(/\D/g, '');
+}
+
+function normalizeToE164(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const base = trimmed.includes('@') ? (trimmed.split('@')[0] || '') : trimmed;
+  let digits = toPhoneDigits(base);
+  if (!digits) return null;
+  if (digits.startsWith('00')) digits = digits.slice(2);
+  return `+${digits}`;
+}
+
 function extractSenderPhone(payload: unknown): string {
   const payloadObject = asObject(payload);
   const firstResult = Array.isArray(payloadObject?.['results'])
@@ -30,8 +45,36 @@ function extractSenderPhone(payload: unknown): string {
   const fromResult = typeof firstResult?.['from'] === 'string' ? firstResult['from'] : null;
   const senderResult = typeof firstResult?.['sender'] === 'string' ? firstResult['sender'] : null;
   const fromPayload = typeof payloadObject?.['from'] === 'string' ? payloadObject['from'] : null;
+  const infobipSender = fromResult || senderResult || fromPayload;
+  if (infobipSender) {
+    return infobipSender;
+  }
 
-  return fromResult || senderResult || fromPayload || 'unknown';
+  // Evolution payload fallback (Baileys-style)
+  const payloadData = asObject(payloadObject?.['data']);
+  const payloadDataKey = asObject(payloadData?.['key']);
+  const payloadKey = asObject(payloadObject?.['key']);
+  const candidates = [
+    payloadDataKey?.['remoteJid'],
+    payloadDataKey?.['remoteJidAlt'],
+    payloadDataKey?.['senderPn'],
+    payloadDataKey?.['cleanedSenderPn'],
+    payloadDataKey?.['participant'],
+    payloadData?.['remoteJid'],
+    payloadKey?.['remoteJid'],
+    payloadKey?.['remoteJidAlt'],
+    payloadKey?.['senderPn'],
+    payloadKey?.['cleanedSenderPn'],
+    payloadKey?.['participant'],
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'string') continue;
+    const normalized = normalizeToE164(candidate);
+    if (normalized) return normalized;
+  }
+
+  return 'unknown';
 }
 
 export function createWebhookRetryProcessor(

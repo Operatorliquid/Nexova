@@ -16,6 +16,7 @@ import { getMonthlyUsage, recordMonthlyUsage } from '../../utils/monthly-usage.j
 
 const metricsQuerySchema = z.object({
   range: z.enum(['today', 'week', 'month', '30d', '90d', '12m', 'all']).optional(),
+  year: z.coerce.number().int().min(2000).max(2100).optional(),
 });
 
 export const analyticsRoutes: FastifyPluginAsync = async (fastify) => {
@@ -29,7 +30,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const query = metricsQuerySchema.parse(request.query);
-      const metrics = await buildMetrics(fastify.prisma, workspaceId, query.range);
+      const metrics = await buildMetrics(fastify.prisma, workspaceId, query.range, query.year);
       return reply.send(metrics);
     }
   );
@@ -80,7 +81,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (fastify) => {
           }
         }
 
-        const result = await generateBusinessInsights(fastify.prisma, workspaceId, query.range);
+        const result = await generateBusinessInsights(fastify.prisma, workspaceId, query.range, query.year);
         await recordMonthlyUsage(fastify.prisma, {
           workspaceId,
           metric: COMMERCE_USAGE_METRICS.aiMetricsInsights,

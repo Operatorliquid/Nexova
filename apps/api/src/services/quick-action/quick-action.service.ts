@@ -25,6 +25,7 @@ import {
 } from './types.js';
 import { createNotificationIfEnabled } from '../../utils/notifications.js';
 import { buildOrderInvoiceStatusWhere, isOrderInvoiceStatus } from '../../utils/order-invoice-status.js';
+import { getPromotionValueLabel } from '../../utils/promotions.js';
 import { buildSignedUploadPath, resolveSignedUploadTtlSeconds } from '../../utils/upload-access.js';
 import { resolveUploadDir } from '../../utils/upload-dir.js';
 import { generateBusinessInsights } from '../analytics/insights.service.js';
@@ -254,6 +255,7 @@ HERRAMIENTAS DISPONIBLES:
 - list_products(query?: string, category?: string, status?: string, limit?: number): Listar productos
 - get_product_details(productId?: string, sku?: string, name?: string): Ver detalle de producto
 - list_categories(limit?: number): Listar categorías de productos
+- list_active_promotions(limit?: number): Listar promociones activas con producto, valor y vencimiento
 - get_order_details(orderId?: string, orderNumber?: string): Ver detalles de pedido
 - list_orders(status?: string, customerId?: string, phone?: string, name?: string, email?: string, date?: 'today'|'week'|'month', limit?: number): Listar pedidos
 - update_customer(customerId?: string, phone?: string, name?: string, data: object): Actualizar datos de cliente
@@ -861,6 +863,8 @@ export class QuickActionService {
         return this.toolGetProductDetails(input, workspaceId);
       case 'list_categories':
         return this.toolListCategories(input, workspaceId);
+      case 'list_active_promotions':
+        return this.toolListActivePromotions(input, workspaceId);
       case 'get_order_details':
         return this.toolGetOrderDetails(input, workspaceId);
       case 'list_orders':
@@ -1572,6 +1576,126 @@ export class QuickActionService {
         sortOrder: category.sortOrder,
         productCount: category._count.products,
       })),
+    };
+  }
+
+  private async toolListActivePromotions(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
+    const limitRaw = Number(input.limit);
+    const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(Math.floor(limitRaw), 20) : 10;
+    const now = new Date();
+
+    const promotions = await this.prisma.promotion.findMany({
+      where: {
+        workspaceId,
+        deletedAt: null,
+        status: 'active',
+        startsAt: { lte: now },
+        endsAt: { gte: now },
+      },
+      orderBy: [{ endsAt: 'asc' }, { createdAt: 'desc' }],
+      take: limit,
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        promoType: true,
+        value: true,
+        status: true,
+        startsAt: true,
+        endsAt: true,
+        metadata: true,
+        product: {
+          select: {
+            id: true,
+            name: true,
+            price: true,
+            unit: true,
+            unitValue: true,
+            secondaryUnit: true,
+            secondaryUnitValue: true,
+          },
+        },
+      },
+    });
+
+    const toComputedStatus = (status: string, startsAt: Date, endsAt: Date): string => {
+      if (status === 'archived' || status === 'paused' || status === 'draft' || status === 'expired') {
+        return status;
+      }
+      if (now > endsAt) return 'expired';
+      if (now < startsAt) return 'draft';
+      return status;
+    };
+
+    const toRemaining = (endsAt: Date): string => {
+      const remainingMs = Math.max(0, endsAt.getTime() - now.getTime());
+      if (remainingMs === 0) return 'ahora';
+      const minutes = Math.floor(remainingMs / 60_000);
+      if (minutes < 60) return minutes === 1 ? '1 minuto' : `${minutes} minutos`;
+      const hours = Math.floor(minutes / 60);
+      if (hours < 24) return hours === 1 ? '1 hora' : `${hours} horas`;
+      const days = Math.floor(hours / 24);
+      return days === 1 ? '1 día' : `${days} días`;
+    };
+
+    const normalized = promotions.map((promotion) => {
+      const productDisplayName = this.buildProductDisplayName(promotion.product);
+      const productPrice = promotion.product.price;
+      let promoPrice = productPrice;
+      let savings = 0;
+      const valueLabel = getPromotionValueLabel({
+        promoType: promotion.promoType,
+        value: promotion.value,
+        metadata: promotion.metadata,
+      });
+
+      if (promotion.promoType === 'percentage') {
+        const percentage = Math.max(0, Math.min(100, promotion.value));
+        promoPrice = Math.max(0, Math.round((productPrice * (100 - percentage)) / 100));
+      } else if (promotion.promoType === 'fixed_price') {
+        promoPrice = Math.max(0, promotion.value);
+      } else if (promotion.promoType === 'second_unit_percentage') {
+        const percentage = Math.max(0, Math.min(100, promotion.value));
+        promoPrice = Math.max(0, Math.round(productPrice * (1 - percentage / 200)));
+      } else if (promotion.promoType === 'buy_x_pay_y') {
+        const metadata = toRecord(promotion.metadata);
+        const rules = toRecord(metadata?.promoRules) || toRecord(metadata?.rules);
+        const buyRaw = readNumber(rules, 'buyQuantity');
+        const payRaw = readNumber(rules, 'payQuantity');
+        const buyQuantity = buyRaw && buyRaw >= 2 ? Math.trunc(buyRaw) : 2;
+        const payQuantity = payRaw && payRaw >= 1 ? Math.min(Math.trunc(payRaw), buyQuantity - 1) : 1;
+        promoPrice = Math.max(0, Math.round((productPrice * payQuantity) / buyQuantity));
+      }
+      savings = Math.max(productPrice - promoPrice, 0);
+
+      return {
+        id: promotion.id,
+        name: promotion.name,
+        description: promotion.description,
+        promoType: promotion.promoType,
+        value: promotion.value,
+        valueLabel,
+        status: promotion.status,
+        computedStatus: toComputedStatus(promotion.status, promotion.startsAt, promotion.endsAt),
+        startsAt: promotion.startsAt.toISOString(),
+        endsAt: promotion.endsAt.toISOString(),
+        endsIn: toRemaining(promotion.endsAt),
+        product: {
+          id: promotion.product.id,
+          name: productDisplayName,
+          baseName: promotion.product.name,
+          price: productPrice,
+          promoPrice,
+          savings,
+        },
+      };
+    });
+
+    return {
+      data: {
+        total: normalized.length,
+        promotions: normalized,
+      },
     };
   }
 
@@ -3627,6 +3751,7 @@ export class QuickActionService {
     const wantsTopProduct = this.commandWantsTopProduct(normalized);
     const wantsTopCustomer = this.commandWantsTopCustomer(normalized);
     const wantsLowStock = this.commandWantsLowStock(normalized);
+    const wantsPromotions = this.commandWantsPromotions(normalized);
     const wantsInsights = this.commandWantsInsights(normalized);
     const wantsProductStock = this.commandWantsProductStock(normalized);
     const inferredOrderStatus = this.inferOrderStatusFromCommand(normalized);
@@ -3781,6 +3906,10 @@ export class QuickActionService {
       tools = [...tools, this.buildParsedToolCall('get_low_stock_products', input)];
     }
 
+    if (wantsPromotions && !hasTool('list_active_promotions')) {
+      tools = [...tools, this.buildParsedToolCall('list_active_promotions', { limit: 10 })];
+    }
+
     if (wantsProductStock && !wantsLowStock) {
       const toolQuery = this.extractProductQueryFromTools(tools);
       const inferredName =
@@ -3885,6 +4014,10 @@ export class QuickActionService {
       return [this.buildParsedToolCall('get_sales_summary', input)];
     }
 
+    if (this.commandWantsPromotions(normalized)) {
+      return [this.buildParsedToolCall('list_active_promotions', { limit: 10 })];
+    }
+
     if (this.commandWantsLowStock(normalized)) {
       const threshold = this.extractStockThreshold(normalized);
       return [this.buildParsedToolCall('get_low_stock_products', threshold !== null ? { threshold } : {})];
@@ -3971,11 +4104,30 @@ export class QuickActionService {
   }
 
   private commandWantsTopProduct(normalized: string): boolean {
+    const patterns = [
+      /\bproducto(s)?\s+mas\s+vendid(o|a|os|as)\b/,
+      /\bmas\s+vendid(o|a|os|as)\b/,
+      /\btop\s+producto(s)?\b/,
+      /\bproducto(s)?\s+top\b/,
+      /\bproducto(s)?\s+estrella\b/,
+      /\bproducto(s)?\s+destacado(s)?\b/,
+      /\bbest\s+seller(s)?\b/,
+      /\btop\s+ventas\b/,
+    ];
+
+    return patterns.some((pattern) => pattern.test(normalized));
+  }
+
+  private commandWantsPromotions(normalized: string): boolean {
     return (
-      normalized.includes('producto mas') ||
-      normalized.includes('mas vendido') ||
-      normalized.includes('top producto') ||
-      normalized.includes('producto top')
+      normalized.includes('promocion') ||
+      normalized.includes('promociones') ||
+      normalized.includes('promo') ||
+      normalized.includes('promos') ||
+      normalized.includes('oferta') ||
+      normalized.includes('ofertas') ||
+      normalized.includes('descuento') ||
+      normalized.includes('descuentos')
     );
   }
 
@@ -6108,6 +6260,29 @@ export class QuickActionService {
       const categories = toRecordArray(categoriesResult.data);
       summaryLines.push(`Encontré ${categories.length} categoría(s).`);
       addNavigate('Ver stock', '/stock', undefined, false);
+    }
+
+    const promotionsResult = resultMap.get('list_active_promotions');
+    if (promotionsResult?.success) {
+      const data = toRecord(promotionsResult.data);
+      const promotions = readRecordArray(data, 'promotions');
+      if (promotions.length === 0) {
+        summaryLines.push('No hay promociones activas ahora.');
+      } else {
+        summaryLines.push(`Promociones activas: ${promotions.length}.`);
+        promotions.slice(0, 5).forEach((promotion) => {
+          const promoName = readTrimmedString(promotion, 'name') || 'Promoción';
+          const product = readRecord(promotion, 'product');
+          const productName = readTrimmedString(product, 'name') || 'producto';
+          const valueLabel = readTrimmedString(promotion, 'valueLabel') || 'promo activa';
+          const endsIn = readTrimmedString(promotion, 'endsIn');
+          const promoPrice = readNumber(product, 'promoPrice');
+          const priceLabel = typeof promoPrice === 'number' ? ` · $${this.formatMoney(promoPrice)}` : '';
+          const endsLabel = endsIn ? ` · vence en ${endsIn}` : '';
+          summaryLines.push(`• ${promoName}: ${productName} · ${valueLabel}${priceLabel}${endsLabel}`);
+        });
+      }
+      addNavigate('Ver comunicación', '/communications', undefined, true);
     }
 
     const updateCustomerResult = resultMap.get('update_customer');

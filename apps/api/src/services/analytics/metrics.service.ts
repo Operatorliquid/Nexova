@@ -80,6 +80,9 @@ export interface MetricsResponse {
 
 const EXCLUDED_STATUSES = ['cancelled', 'returned', 'draft', 'trashed'];
 
+const ANALYTICS_YEAR_MIN = 2000;
+const ANALYTICS_YEAR_MAX = 2100;
+
 export function normalizeRange(range?: string): MetricsRange {
   if (
     range === 'today' ||
@@ -93,6 +96,12 @@ export function normalizeRange(range?: string): MetricsRange {
     return range;
   }
   return '90d';
+}
+
+function normalizeYear(year?: number | null): number | null {
+  if (typeof year !== 'number' || !Number.isInteger(year)) return null;
+  if (year < ANALYTICS_YEAR_MIN || year > ANALYTICS_YEAR_MAX) return null;
+  return year;
 }
 
 function startOfDay(date: Date): Date {
@@ -146,9 +155,20 @@ function buildMonthlySeries(start: Date, end: Date): Date[] {
 export async function buildMetrics(
   prisma: PrismaClient,
   workspaceId: string,
-  rangeInput?: MetricsRangeInput
+  rangeInput?: MetricsRangeInput,
+  selectedYearInput?: number
 ): Promise<MetricsResponse> {
-  const now = new Date();
+  const realNow = new Date();
+  const currentYear = realNow.getFullYear();
+  const selectedYear = normalizeYear(selectedYearInput);
+  const isCurrentYearSelection = selectedYear === null || selectedYear === currentYear;
+  const now = isCurrentYearSelection
+    ? realNow
+    : endOfDay(new Date(selectedYear, 11, 31));
+  const selectedYearStart = selectedYear !== null ? new Date(selectedYear, 0, 1, 0, 0, 0, 0) : null;
+  const selectedYearEnd = selectedYear !== null
+    ? (selectedYear === currentYear ? endOfDay(realNow) : new Date(selectedYear, 11, 31, 23, 59, 59, 999))
+    : null;
   const labelMap: Record<MetricsRange, string> = {
     today: 'Hoy',
     week: 'Esta semana',
@@ -202,7 +222,7 @@ export async function buildMetrics(
     status: { notIn: EXCLUDED_STATUSES },
   } as const;
 
-  if (range === 'all') {
+  if (range === 'all' && selectedYear === null) {
     const earliest = await prisma.order.findFirst({
       where: baseWhere,
       orderBy: { createdAt: 'asc' },
@@ -210,10 +230,28 @@ export async function buildMetrics(
     });
     from = earliest ? startOfDay(earliest.createdAt) : null;
     rangeLabel = labelMap.all;
+  } else if (range === 'all' && selectedYearStart && selectedYearEnd) {
+    from = selectedYearStart;
+    to = selectedYearEnd;
+    rangeLabel = `Año ${selectedYear}`;
   }
 
   if (!rangeLabel && range) {
     rangeLabel = labelMap[range];
+  }
+
+  if (selectedYearStart && selectedYearEnd) {
+    from = from ? new Date(Math.max(from.getTime(), selectedYearStart.getTime())) : selectedYearStart;
+    to = new Date(Math.min(to.getTime(), selectedYearEnd.getTime()));
+
+    if (from.getTime() > to.getTime()) {
+      from = selectedYearStart;
+      to = selectedYearEnd;
+    }
+
+    if (range !== 'all') {
+      rangeLabel = `${rangeLabel || 'Rango'} · ${selectedYear}`;
+    }
   }
 
   const createdAtFilter = {

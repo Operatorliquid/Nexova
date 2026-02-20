@@ -303,6 +303,12 @@ export interface ConversationContext {
   }>;
   commerceProfile?: CommerceProfile;
   interruptedTopic?: string;
+  activeFlow?: 'menu' | 'order' | 'payment' | 'active_orders' | 'invoice' | 'catalog' | 'other';
+  flowStack?: Array<{
+    flow: 'menu' | 'order' | 'payment' | 'active_orders' | 'invoice' | 'catalog' | 'other';
+    at: string;
+    reason?: string;
+  }>;
   lastMenu?: 'primary' | 'secondary';
   lastProductInquiry?: {
     name: string;

@@ -156,6 +156,7 @@ export default function MetricsPage(): JSX.Element {
   const { workspace } = useAuth();
   const capabilities = getWorkspaceCommerceCapabilities(workspace);
   const [range, setRange] = useState('90d');
+  const [year, setYear] = useState(() => String(new Date().getFullYear()));
   const [metrics, setMetrics] = useState<MetricsResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isInsightsOpen, setIsInsightsOpen] = useState(false);
@@ -163,12 +164,21 @@ export default function MetricsPage(): JSX.Element {
   const [isInsightsLoading, setIsInsightsLoading] = useState(false);
   const [insightsError, setInsightsError] = useState('');
 
+  const yearOptions = useMemo(() => {
+    const currentYear = new Date().getFullYear();
+    return Array.from({ length: 6 }, (_, index) => {
+      const value = String(currentYear - index);
+      return { value, label: value };
+    });
+  }, []);
+
   useEffect(() => {
     if (!workspace?.id) return;
     const loadMetrics = async (): Promise<void> => {
       setIsLoading(true);
       try {
-        const response = await apiFetch(`/api/v1/analytics/metrics?range=${range}`, {}, workspace.id);
+        const queryParams = new URLSearchParams({ range, year });
+        const response = await apiFetch(`/api/v1/analytics/metrics?${queryParams.toString()}`, {}, workspace.id);
         if (response.ok) {
           const data = (await response.json()) as unknown as MetricsResponse;
           setMetrics(data);
@@ -181,7 +191,7 @@ export default function MetricsPage(): JSX.Element {
     };
 
     void loadMetrics();
-  }, [workspace?.id, range]);
+  }, [workspace?.id, range, year]);
 
   const pendingRevenue = metrics?.summary.pendingRevenue ?? 0;
   const paidRate = metrics?.summary.paidRate ?? 0;
@@ -248,7 +258,8 @@ export default function MetricsPage(): JSX.Element {
       setInsightsError('');
       setIsInsightsLoading(true);
       try {
-        const response = await apiFetch(`/api/v1/analytics/insights?range=${range}`, {}, workspace.id);
+        const queryParams = new URLSearchParams({ range, year });
+        const response = await apiFetch(`/api/v1/analytics/insights?${queryParams.toString()}`, {}, workspace.id);
         if (!response.ok) {
           throw new Error('No se pudo generar el resumen');
         }
@@ -263,7 +274,7 @@ export default function MetricsPage(): JSX.Element {
     };
 
     void loadInsights();
-  }, [capabilities.showMetricsAiInsights, isInsightsOpen, range, workspace?.id]);
+  }, [capabilities.showMetricsAiInsights, isInsightsOpen, range, workspace?.id, year]);
 
   return (
     <div className="h-full overflow-y-auto scrollbar-hide p-4 md:p-6">
@@ -283,6 +294,20 @@ export default function MetricsPage(): JSX.Element {
                 </SelectTrigger>
                 <SelectContent>
                   {RANGE_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="w-full md:w-36">
+              <Select value={year} onValueChange={setYear}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Año" />
+                </SelectTrigger>
+                <SelectContent>
+                  {yearOptions.map((option) => (
                     <SelectItem key={option.value} value={option.value}>
                       {option.label}
                     </SelectItem>

@@ -17,6 +17,7 @@ import {
 } from '@nexova/shared';
 
 import { classifyMessage } from './conversation-router.js';
+import { extractSelectionIndex, parseGlobalFlowIntent } from './intent-router.js';
 import { type MemoryManager, createMemoryManager } from './memory-manager.js';
 import { MemoryService } from './memory-service.js';
 import { StateMachine } from './state-machine.js';
@@ -141,6 +142,7 @@ const CATALOG_TOOL_NAMES = new Set([
 const ORDER_INVOICE_STATUS_VALUES = ['pending_invoicing', 'invoiced', 'invoice_cancelled'] as const;
 type OrderInvoiceStatus = (typeof ORDER_INVOICE_STATUS_VALUES)[number];
 const ORDER_INVOICE_STATUS_SET = new Set<string>(ORDER_INVOICE_STATUS_VALUES);
+const AWAITING_EDITABLE_ORDER_STATUSES = ['awaiting_acceptance', 'pending_invoicing'] as const;
 
 const asMetadataRecord = (value: Prisma.JsonValue | null | undefined): Record<string, unknown> => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
@@ -185,6 +187,7 @@ const INFO_TOOL_ALLOWLIST = new Set([
   'get_customer_debt',
   'get_order_history',
   'get_order_details',
+  'list_active_promotions',
   'get_unpaid_orders',
   'get_payment_status',
   'send_catalog_pdf',
@@ -1026,6 +1029,8 @@ export class RetailAgent {
         }
       }
 
+      memory.context.activeFlow = detectConversationFlow(memory);
+
       const availabilityStatus = await this.resolveWorkspaceAvailability(workspaceId);
       if ((process.env.AGENT_AVAILABILITY_DEBUG || '') === '1') {
         console.warn(`[Agent] Availability status for ${workspaceId}: ${availabilityStatus ?? 'null'}`);
@@ -1150,6 +1155,17 @@ export class RetailAgent {
         }
       }
 
+      let forcedMenuSelection: MenuSelection = null;
+      const explicitFlowIntent = parseGlobalFlowIntent(message);
+      if (explicitFlowIntent) {
+        forcedMenuSelection = await this.applyExplicitFlowIntent({
+          intent: explicitFlowIntent,
+          memory,
+          fsm,
+          sessionId,
+        });
+      }
+
       const respondWithPrimaryMenu = async (
         variant: 'primary' | 'primary_lite' = 'primary'
       ): Promise<ProcessMessageOutput> => {
@@ -1193,6 +1209,7 @@ export class RetailAgent {
         memory.context.orderViewAwaitingNumber = undefined;
         memory.context.interruptedTopic = undefined;
         memory.context.otherInquiry = undefined;
+        memory.context.activeFlow = 'menu';
 
         const [customerRecord, sessionRecord] = await Promise.all([
           this.prisma.customer.findFirst({
@@ -1391,7 +1408,7 @@ export class RetailAgent {
             id: pendingOrder.id,
             workspaceId,
             customerId,
-            status: 'awaiting_acceptance',
+            status: { in: [...AWAITING_EDITABLE_ORDER_STATUSES] },
           }),
           include: {
             items: true,
@@ -3024,7 +3041,7 @@ export class RetailAgent {
             where: withVisibleOrders({
               workspaceId,
               customerId,
-              status: 'awaiting_acceptance',
+              status: { in: [...AWAITING_EDITABLE_ORDER_STATUSES] },
             }),
             orderBy: { createdAt: 'desc' },
             select: { id: true, orderNumber: true },
@@ -3127,7 +3144,7 @@ export class RetailAgent {
             where: withVisibleOrders({
               workspaceId,
               customerId,
-              status: 'awaiting_acceptance',
+              status: { in: [...AWAITING_EDITABLE_ORDER_STATUSES] },
             }),
             orderBy: { createdAt: 'desc' },
             select: { id: true, orderNumber: true },
@@ -3169,6 +3186,196 @@ export class RetailAgent {
 
             const pendingOrder = awaitingOrders[0];
             return await handlePendingOrderDecision(pendingOrder, decision);
+          }
+        }
+      }
+
+      if (
+        !memory.context.paymentStage &&
+        !memory.context.pendingOrderDecision &&
+        !memory.context.pendingCancelOrderId &&
+        !memory.context.activeOrdersPrompt
+      ) {
+        const rawSelection = message.trim().toLowerCase();
+        const normalizedSelection = normalizeSimpleText(message);
+        const selectionReference = extractOrderNumber(message) || extractOrderDigits(message);
+        const wantsPayAll =
+          normalizedSelection === 'todo' ||
+          normalizedSelection.includes('pagar todo') ||
+          normalizedSelection.includes('todo junto');
+        const mightBePaymentSelectionReply =
+          rawSelection.startsWith('pay_order:') ||
+          !!selectionReference ||
+          wantsPayAll;
+
+        if (mightBePaymentSelectionReply) {
+          const lastAssistant = await this.prisma.agentMessage.findFirst({
+            where: { sessionId, role: 'assistant' },
+            orderBy: { createdAt: 'desc' },
+            select: { content: true, createdAt: true },
+          });
+
+          const isRecentAssistantPrompt =
+            !!lastAssistant && Date.now() - lastAssistant.createdAt.getTime() <= 30 * 60 * 1000;
+          const lastAssistantNormalized = normalizeSimpleText(lastAssistant?.content || '');
+          const askedForPaymentOrderSelection = isRecentAssistantPrompt && (
+            lastAssistantNormalized.includes('cual queres pagar') ||
+            lastAssistantNormalized.includes('que pedido queres pagar') ||
+            lastAssistantNormalized.includes('elegi el pedido que queres pagar') ||
+            lastAssistantNormalized.includes('selecciona el pedido que queres pagar') ||
+            lastAssistantNormalized.includes('pedidos impagos') ||
+            lastAssistantNormalized.includes('pedidos pendientes de pago') ||
+            lastAssistantNormalized.includes('total adeudado') ||
+            (
+              lastAssistantNormalized.includes('numero de pedido') &&
+              lastAssistantNormalized.includes('pagar')
+            )
+          );
+
+          if (askedForPaymentOrderSelection) {
+            const fromMemory = [...(memory.context.paymentOrders || []), ...(memory.context.activeOrdersPayable || [])]
+              .filter((order) => Number.isFinite(order.pendingAmount) && order.pendingAmount > 0);
+
+            const payableOrders = fromMemory.length > 0
+              ? fromMemory
+              : (await this.prisma.order.findMany({
+                where: withVisibleOrders({
+                  workspaceId,
+                  customerId,
+                  status: { notIn: ['cancelled', 'returned', 'draft', 'trashed'] },
+                }),
+                orderBy: { createdAt: 'desc' },
+                take: 20,
+                select: { id: true, orderNumber: true, total: true, paidAmount: true },
+              }))
+                .map((order) => ({
+                  id: order.id,
+                  orderNumber: order.orderNumber,
+                  pendingAmount: Math.max(order.total - order.paidAmount, 0),
+                }))
+                .filter((order) => order.pendingAmount > 0);
+
+            if (payableOrders.length > 0) {
+              if (wantsPayAll && payableOrders.length > 1) {
+                memory.context.paymentStage = 'select_order';
+                memory.context.paymentOrders = payableOrders;
+                memory.context.paymentOrderId = undefined;
+                memory.context.paymentOrderNumber = undefined;
+                memory.context.paymentPendingAmount = undefined;
+                await this.memoryManager.saveSession(memory);
+
+                const selectionContent = buildPaymentOrderSelectionContent(payableOrders);
+                const response = [
+                  'Para evitar errores, elegí primero el pedido exacto que querés pagar.',
+                  selectionContent.text,
+                ].join('\n\n');
+                const payload =
+                  selectionContent.responseType === 'interactive-buttons'
+                    ? {
+                        ...(selectionContent.responsePayload as InteractiveButtonsPayload),
+                        body: response,
+                      }
+                    : {
+                        ...(selectionContent.responsePayload as InteractiveListPayload),
+                        body: response,
+                      };
+
+                await this.storeMessage(sessionId, 'user', message, messageId);
+                await this.storeMessage(sessionId, 'assistant', response);
+
+                return {
+                  response,
+                  responseType: selectionContent.responseType,
+                  responsePayload: payload,
+                  state: fsm.getState(),
+                  toolsUsed: [],
+                  tokensUsed: 0,
+                  shouldSendMessage: true,
+                };
+              }
+
+              const selection = parsePaymentOrderSelection(message, payableOrders);
+
+              if (selection.order) {
+                const commerceSettings = (await this.loadCommerceProfile(workspaceId)) as Record<string, unknown>;
+                const paymentOptions = resolvePaymentMethodsEnabled(commerceSettings);
+                const hasMpTool = !!toolRegistry.get('create_mp_payment_link');
+                const availableOptions = {
+                  mpLink: paymentOptions.mpLink && hasMpTool,
+                  transfer: paymentOptions.transfer,
+                  cash: paymentOptions.cash,
+                };
+
+                memory.context.paymentOrders = payableOrders;
+                memory.context.paymentOrderId = selection.order.id;
+                memory.context.paymentOrderNumber = selection.order.orderNumber;
+                memory.context.paymentPendingAmount = selection.order.pendingAmount;
+                memory.context.paymentStage = 'select_method';
+                memory.context.activeOrdersPrompt = undefined;
+                memory.context.activeOrdersAction = undefined;
+                memory.context.activeOrdersAwaiting = undefined;
+                memory.context.activeOrdersPayable = undefined;
+                memory.context.activeOrdersSubmenu = undefined;
+                memory.context.activeOrdersInvoiceOptions = undefined;
+                await this.memoryManager.saveSession(memory);
+
+                const methodContent = buildPaymentMethodContent(
+                  selection.order.orderNumber,
+                  selection.order.pendingAmount,
+                  availableOptions
+                );
+
+                await this.storeMessage(sessionId, 'user', message, messageId);
+                await this.storeMessage(sessionId, 'assistant', methodContent.text);
+
+                return {
+                  response: methodContent.text,
+                  responseType: 'interactive-buttons',
+                  responsePayload: methodContent.interactive,
+                  state: fsm.getState(),
+                  toolsUsed: [],
+                  tokensUsed: 0,
+                  shouldSendMessage: true,
+                };
+              }
+
+              memory.context.paymentStage = 'select_order';
+              memory.context.paymentOrders = payableOrders;
+              memory.context.paymentOrderId = undefined;
+              memory.context.paymentOrderNumber = undefined;
+              memory.context.paymentPendingAmount = undefined;
+              await this.memoryManager.saveSession(memory);
+
+              const selectionContent = buildPaymentOrderSelectionContent(payableOrders);
+              const response = selection.ambiguous
+                ? 'Hay más de un pedido que coincide con ese número. Elegí el número completo.'
+                : selectionContent.text;
+              const payload =
+                selection.ambiguous && selectionContent.responseType === 'interactive-buttons'
+                  ? {
+                      ...(selectionContent.responsePayload as InteractiveButtonsPayload),
+                      body: `${response}\n\n${(selectionContent.responsePayload as InteractiveButtonsPayload).body}`,
+                    }
+                  : selection.ambiguous && selectionContent.responseType === 'interactive-list'
+                    ? {
+                        ...(selectionContent.responsePayload as InteractiveListPayload),
+                        body: `${response}\n\n${(selectionContent.responsePayload as InteractiveListPayload).body}`,
+                      }
+                    : selectionContent.responsePayload;
+
+              await this.storeMessage(sessionId, 'user', message, messageId);
+              await this.storeMessage(sessionId, 'assistant', response);
+
+              return {
+                response,
+                responseType: selectionContent.responseType,
+                responsePayload: payload,
+                state: fsm.getState(),
+                toolsUsed: [],
+                tokensUsed: 0,
+                shouldSendMessage: true,
+              };
+            }
           }
         }
       }
@@ -3359,21 +3566,7 @@ export class RetailAgent {
             }
           }
 
-          const response = 'No hay un pedido en curso.';
-          await this.storeMessage(sessionId, 'user', message, messageId);
-          await this.storeMessage(sessionId, 'assistant', response);
-          await this.prisma.agentSession.updateMany({
-            where: { id: sessionId, workspaceId },
-            data: { lastActivityAt: new Date() },
-          });
-
-          return {
-            response,
-            state: fsm.getState(),
-            toolsUsed: [],
-            tokensUsed: 0,
-            shouldSendMessage: true,
-          };
+          return await respondWithPrimaryMenu();
         }
 
         if (orderAction === 'edit') {
@@ -4544,7 +4737,7 @@ export class RetailAgent {
             id: orderMatch.id,
             workspaceId,
             customerId,
-            status: 'awaiting_acceptance',
+            status: { in: [...AWAITING_EDITABLE_ORDER_STATUSES] },
           }),
           include: { items: true },
         });
@@ -5048,14 +5241,14 @@ export class RetailAgent {
       
 
       // Registered customers: handle menu selections regardless of current state
-      const selection = parseMenuSelection(message, memory.context.lastMenu);
+      const selection = forcedMenuSelection ?? parseMenuSelection(message, memory.context.lastMenu);
 
       if (selection === 'order') {
         const awaitingOrders = await this.prisma.order.findMany({
           where: withVisibleOrders({
             workspaceId,
             customerId,
-            status: 'awaiting_acceptance',
+            status: { in: [...AWAITING_EDITABLE_ORDER_STATUSES] },
           }),
           orderBy: { createdAt: 'desc' },
           select: { id: true, orderNumber: true },
@@ -5070,6 +5263,7 @@ export class RetailAgent {
             memory.cart = null;
 
             memory.context.pendingOrderDecision = true;
+            memory.context.activeFlow = 'order';
             memory.context.pendingOrderOptions = awaitingOrders.map((order) => ({
               id: order.id,
               orderNumber: order.orderNumber || undefined,
@@ -5111,6 +5305,7 @@ export class RetailAgent {
         await this.storeMessage(sessionId, 'user', message, messageId);
         await this.storeMessage(sessionId, 'assistant', response);
         memory.state = AgentState.COLLECTING_ORDER;
+        memory.context.activeFlow = 'order';
         memory.context.lastMenu = undefined;
         await this.memoryManager.saveSession(memory);
 
@@ -5137,7 +5332,7 @@ export class RetailAgent {
           where: withVisibleOrders({
             workspaceId,
             customerId,
-            status: 'awaiting_acceptance',
+            status: { in: [...AWAITING_EDITABLE_ORDER_STATUSES] },
           }),
           orderBy: { createdAt: 'desc' },
           select: { id: true, orderNumber: true, total: true, paidAmount: true, status: true },
@@ -5170,6 +5365,7 @@ export class RetailAgent {
         let responsePayload: ProcessMessageOutput['responsePayload'];
         if (orders.length === 0) {
           response = 'No tenés pedidos activos en este momento.';
+          memory.context.activeFlow = 'active_orders';
           memory.context.activeOrdersPrompt = undefined;
           memory.context.activeOrdersAction = undefined;
           memory.context.activeOrdersAwaiting = undefined;
@@ -5194,6 +5390,7 @@ export class RetailAgent {
           response = content.text;
           responseType = 'interactive-buttons';
           responsePayload = content.interactive;
+          memory.context.activeFlow = 'active_orders';
           memory.context.activeOrdersPrompt = true;
           memory.context.activeOrdersAction = undefined;
           memory.context.activeOrdersAwaiting = awaitingOrders.map((order) => ({
@@ -5226,6 +5423,8 @@ export class RetailAgent {
 
       if (selection === 'catalog') {
         await this.storeMessage(sessionId, 'user', message, messageId);
+        memory.context.activeFlow = 'catalog';
+        await this.memoryManager.saveSession(memory);
 
         const execution = await toolRegistry.execute(
           'send_catalog_pdf',
@@ -8042,11 +8241,23 @@ export class RetailAgent {
   ): AgentMode {
     if (!subagentsEnabled) return 'order';
 
+    const explicitIntent = parseGlobalFlowIntent(message);
+    if (explicitIntent === 'payment') return 'payments';
+    if (explicitIntent === 'order' || explicitIntent === 'active_orders') return 'order';
+    if (explicitIntent === 'catalog') return 'info';
+
     const normalized = message.toLowerCase();
     const hasPaymentContext =
       Boolean(memory.context.paymentStage) ||
       Boolean(memory.context.paymentOrders) ||
       Boolean(memory.context.paymentOrderId);
+    const activeFlow = memory.context.activeFlow;
+    if (activeFlow === 'payment' && explicitIntent !== 'menu') {
+      return 'payments';
+    }
+    if (activeFlow === 'catalog' && !hasPaymentContext) {
+      return 'info';
+    }
     const paymentIntent = PAYMENT_INTENT_KEYWORDS.some((keyword) => normalized.includes(keyword));
     if (hasPaymentContext || paymentIntent) {
       return 'payments';
@@ -8076,6 +8287,161 @@ export class RetailAgent {
     const base = buildTaskHint(fsm, memory);
     const modeHint = this.buildModeHint(mode);
     return [base, modeHint].filter(Boolean).join('\n');
+  }
+
+  private async applyExplicitFlowIntent(params: {
+    intent: ReturnType<typeof parseGlobalFlowIntent>;
+    memory: SessionMemory;
+    fsm: StateMachine;
+    sessionId: string;
+  }): Promise<MenuSelection> {
+    const { intent, memory, fsm, sessionId } = params;
+    if (!intent || intent === 'menu') return null;
+
+    const currentFlow = detectConversationFlow(memory);
+    memory.context.activeFlow = currentFlow;
+
+    if (intent === 'payment') {
+      if (memory.context.paymentStage) {
+        memory.context.activeFlow = 'payment';
+        return null;
+      }
+
+      if (currentFlow !== 'payment') {
+        pushFlowStack(memory, currentFlow, 'explicit_payment_intent');
+      }
+      memory.context.activeFlow = 'payment';
+
+      memory.context.invoiceDataCollection = undefined;
+      memory.context.pendingInvoicePrompt = undefined;
+      memory.context.pendingCatalogOffer = undefined;
+      memory.context.pendingProductSelection = undefined;
+      memory.context.pendingStockAdjustment = undefined;
+      memory.context.pendingCancelOrderId = undefined;
+      memory.context.pendingCancelOrderNumber = undefined;
+      memory.context.pendingOrderDecision = undefined;
+      memory.context.pendingOrderId = undefined;
+      memory.context.pendingOrderNumber = undefined;
+      memory.context.pendingOrderOptions = undefined;
+      memory.context.activeOrdersPrompt = undefined;
+      memory.context.activeOrdersAction = undefined;
+      memory.context.activeOrdersAwaiting = undefined;
+      memory.context.activeOrdersPayable = undefined;
+      memory.context.activeOrdersSubmenu = undefined;
+      memory.context.activeOrdersInvoiceOptions = undefined;
+      memory.context.otherInquiry = undefined;
+      clearPaymentContext(memory);
+
+      if (fsm.getState() !== AgentState.IDLE && fsm.canTransition(AgentState.IDLE)) {
+        fsm.transition(AgentState.IDLE);
+        await this.memoryManager.updateState(sessionId, AgentState.IDLE);
+      }
+      memory.state = fsm.getState();
+      await this.memoryManager.saveSession(memory);
+      return 'active';
+    }
+
+    if (intent === 'active_orders') {
+      if (currentFlow !== 'active_orders') {
+        pushFlowStack(memory, currentFlow, 'explicit_active_orders_intent');
+      }
+      memory.context.activeFlow = 'active_orders';
+
+      clearPaymentContext(memory);
+      memory.context.pendingCatalogOffer = undefined;
+      memory.context.pendingProductSelection = undefined;
+      memory.context.pendingStockAdjustment = undefined;
+      memory.context.pendingCancelOrderId = undefined;
+      memory.context.pendingCancelOrderNumber = undefined;
+      memory.context.pendingOrderDecision = undefined;
+      memory.context.pendingOrderId = undefined;
+      memory.context.pendingOrderNumber = undefined;
+      memory.context.pendingOrderOptions = undefined;
+      memory.context.invoiceDataCollection = undefined;
+      memory.context.pendingInvoicePrompt = undefined;
+      memory.context.otherInquiry = undefined;
+
+      if (fsm.getState() !== AgentState.IDLE && fsm.canTransition(AgentState.IDLE)) {
+        fsm.transition(AgentState.IDLE);
+        await this.memoryManager.updateState(sessionId, AgentState.IDLE);
+      }
+      memory.state = fsm.getState();
+      await this.memoryManager.saveSession(memory);
+      return 'active';
+    }
+
+    if (intent === 'catalog') {
+      if (currentFlow !== 'catalog') {
+        pushFlowStack(memory, currentFlow, 'explicit_catalog_intent');
+      }
+      memory.context.activeFlow = 'catalog';
+
+      clearPaymentContext(memory);
+      memory.context.activeOrdersPrompt = undefined;
+      memory.context.activeOrdersAction = undefined;
+      memory.context.activeOrdersAwaiting = undefined;
+      memory.context.activeOrdersPayable = undefined;
+      memory.context.activeOrdersSubmenu = undefined;
+      memory.context.activeOrdersInvoiceOptions = undefined;
+      memory.context.pendingOrderDecision = undefined;
+      memory.context.pendingOrderId = undefined;
+      memory.context.pendingOrderNumber = undefined;
+      memory.context.pendingOrderOptions = undefined;
+      memory.context.pendingProductSelection = undefined;
+      memory.context.pendingStockAdjustment = undefined;
+      memory.context.pendingCancelOrderId = undefined;
+      memory.context.pendingCancelOrderNumber = undefined;
+      memory.context.invoiceDataCollection = undefined;
+      memory.context.pendingInvoicePrompt = undefined;
+
+      if (fsm.getState() !== AgentState.IDLE && fsm.canTransition(AgentState.IDLE)) {
+        fsm.transition(AgentState.IDLE);
+        await this.memoryManager.updateState(sessionId, AgentState.IDLE);
+      }
+      memory.state = fsm.getState();
+      await this.memoryManager.saveSession(memory);
+      return 'catalog';
+    }
+
+    if (intent === 'order') {
+      const hasFlowToInterrupt =
+        Boolean(memory.context.paymentStage) ||
+        Boolean(memory.context.paymentOrders) ||
+        Boolean(memory.context.paymentOrderId) ||
+        Boolean(memory.context.activeOrdersPrompt) ||
+        currentFlow !== 'order';
+
+      if (!hasFlowToInterrupt) {
+        memory.context.activeFlow = 'order';
+        return null;
+      }
+
+      if (currentFlow !== 'order') {
+        pushFlowStack(memory, currentFlow, 'explicit_order_intent');
+      }
+      memory.context.activeFlow = 'order';
+
+      clearPaymentContext(memory);
+      memory.context.activeOrdersPrompt = undefined;
+      memory.context.activeOrdersAction = undefined;
+      memory.context.activeOrdersAwaiting = undefined;
+      memory.context.activeOrdersPayable = undefined;
+      memory.context.activeOrdersSubmenu = undefined;
+      memory.context.activeOrdersInvoiceOptions = undefined;
+      memory.context.invoiceDataCollection = undefined;
+      memory.context.pendingInvoicePrompt = undefined;
+      memory.context.otherInquiry = undefined;
+
+      if (fsm.getState() !== AgentState.IDLE && fsm.canTransition(AgentState.IDLE)) {
+        fsm.transition(AgentState.IDLE);
+        await this.memoryManager.updateState(sessionId, AgentState.IDLE);
+      }
+      memory.state = fsm.getState();
+      await this.memoryManager.saveSession(memory);
+      return 'order';
+    }
+
+    return null;
   }
 
   private selectToolsForMode<TTool extends { name: string; description: string; input_schema: unknown }>(params: {
@@ -8439,6 +8805,11 @@ function parseInvoiceRequestSelection(
     const id = raw.split(':')[1];
     const match = orders.find((order) => order.id === id);
     return { order: match || null, ambiguous: false };
+  }
+
+  const selectedIndex = extractSelectionIndex(message);
+  if (selectedIndex && selectedIndex <= orders.length) {
+    return { order: orders[selectedIndex - 1], ambiguous: false };
   }
 
   const reference = extractOrderNumber(message) || extractOrderDigits(message);
@@ -9694,6 +10065,60 @@ type ActiveOrderRequest = { action: ActiveOrderAction; orderNumber?: string; ord
 type OrderViewRequest = { orderNumber?: string } | null;
 type PaymentMethodSelection = 'link' | 'transfer' | 'cash' | 'back' | 'more' | 'prev' | null;
 type CatalogOfferDecision = 'yes' | 'no' | 'back' | null;
+type FlowKind = NonNullable<SessionMemory['context']['activeFlow']>;
+
+function detectConversationFlow(memory: SessionMemory): FlowKind {
+  if (memory.context.invoiceDataCollection || memory.context.pendingInvoicePrompt) {
+    return 'invoice';
+  }
+  if (
+    memory.context.paymentStage ||
+    memory.context.paymentOrders ||
+    memory.context.paymentOrderId
+  ) {
+    return 'payment';
+  }
+  if (
+    memory.context.activeOrdersPrompt ||
+    memory.context.activeOrdersAction ||
+    memory.context.activeOrdersAwaiting ||
+    memory.context.activeOrdersPayable
+  ) {
+    return 'active_orders';
+  }
+  if (
+    memory.context.pendingCatalogOffer ||
+    memory.context.lastMenu === 'secondary'
+  ) {
+    return 'catalog';
+  }
+  if (
+    memory.context.pendingProductSelection ||
+    memory.context.pendingStockAdjustment ||
+    memory.context.pendingOrderDecision ||
+    memory.context.pendingCancelOrderId ||
+    memory.context.editingOrderId ||
+    memory.cart?.items.length ||
+    memory.state === AgentState.COLLECTING_ORDER ||
+    memory.state === AgentState.AWAITING_CONFIRMATION ||
+    memory.state === AgentState.NEEDS_DETAILS ||
+    memory.state === AgentState.EXECUTING
+  ) {
+    return 'order';
+  }
+  return 'menu';
+}
+
+function pushFlowStack(memory: SessionMemory, flow: FlowKind, reason: string): void {
+  const stack = Array.isArray(memory.context.flowStack) ? [...memory.context.flowStack] : [];
+  stack.unshift({
+    flow,
+    at: new Date().toISOString(),
+    reason,
+  });
+  memory.context.flowStack = stack.slice(0, 5);
+  memory.context.interruptedTopic = flow;
+}
 
 function parseMenuSelection(message: string, lastMenu?: 'primary' | 'secondary'): MenuSelection {
   const raw = message.trim().toLowerCase();
@@ -9836,6 +10261,11 @@ function parsePendingOrderSelection(
   const decision = parsePendingOrderDecision(message);
   if (decision === 'new') return { action: 'new' };
   if (decision === 'back') return { action: 'back' };
+
+  const selectedIndex = extractSelectionIndex(message);
+  if (selectedIndex && selectedIndex <= orders.length) {
+    return { action: 'select', order: orders[selectedIndex - 1] };
+  }
 
   const reference = extractOrderNumber(message) || extractOrderDigits(message);
   if (reference) {
@@ -10223,6 +10653,11 @@ function parseActiveOrderSelection(
     return { order: match || null, ambiguous: false };
   }
 
+  const selectedIndex = extractSelectionIndex(message);
+  if (selectedIndex && selectedIndex <= orders.length) {
+    return { order: orders[selectedIndex - 1], ambiguous: false };
+  }
+
   const reference = extractOrderNumber(message) || extractOrderDigits(message);
   if (!reference) return { order: null, ambiguous: false };
 
@@ -10239,6 +10674,11 @@ function parseRepeatOrderSelection(
     const id = raw.split(':')[1];
     const match = orders.find((order) => order.id === id);
     return { order: match || null, ambiguous: false };
+  }
+
+  const selectedIndex = extractSelectionIndex(message);
+  if (selectedIndex && selectedIndex <= orders.length) {
+    return { order: orders[selectedIndex - 1], ambiguous: false };
   }
 
   const reference = extractOrderNumber(message) || extractOrderDigits(message);
@@ -10370,6 +10810,11 @@ function parsePaymentOrderSelection(
     const id = raw.split(':')[1];
     const match = orders.find((order) => order.id === id);
     return { order: match || null, ambiguous: false };
+  }
+
+  const selectedIndex = extractSelectionIndex(message);
+  if (selectedIndex && selectedIndex <= orders.length) {
+    return { order: orders[selectedIndex - 1], ambiguous: false };
   }
 
   const reference = extractOrderNumber(message) || extractOrderDigits(message);
