@@ -75,6 +75,76 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
     return (name || 'file').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 160);
   };
 
+  type JsonRecord = Record<string, unknown>;
+
+  const asRecord = (value: unknown): JsonRecord | null => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    return value as JsonRecord;
+  };
+
+  const asArray = (value: unknown): unknown[] => {
+    if (Array.isArray(value)) return value;
+    if (value === null || value === undefined) return [];
+    return [value];
+  };
+
+  const parseArcaObservations = (raw: unknown): Array<{ code: number | null; message: string | null }> => {
+    const root = asRecord(raw);
+    if (!root) return [];
+    const feDetResp = asRecord(root.FeDetResp);
+    const detail = asRecord(feDetResp?.FECAEDetResponse);
+    const observations = asRecord(detail?.Observaciones);
+    const obsEntries = asArray(observations?.Obs);
+
+    return obsEntries.map((entry) => {
+      const item = asRecord(entry);
+      const rawCode = item?.Code;
+      const code = typeof rawCode === 'number'
+        ? rawCode
+        : typeof rawCode === 'string'
+          ? Number.parseInt(rawCode, 10)
+          : NaN;
+      const rawMessage = item?.Msg;
+      return {
+        code: Number.isFinite(code) ? code : null,
+        message: typeof rawMessage === 'string' && rawMessage.trim().length > 0
+          ? rawMessage.trim()
+          : null,
+      };
+    });
+  };
+
+  const getArcaPrimaryObservation = (raw: unknown): { code: number | null; message: string | null } | null => {
+    const observations = parseArcaObservations(raw);
+    return observations.length > 0 ? observations[0] : null;
+  };
+
+  const fallbackCondicionIvaReceptorId = (cbteTipo: number): number | null => {
+    if (cbteTipo === 1) return 1; // Factura A
+    if (cbteTipo === 6 || cbteTipo === 11) return 5; // Factura B / C
+    return null;
+  };
+
+  const normalizeCondicionIvaReceptorId = (
+    cbteTipo: number,
+    requested?: number
+  ): number => {
+    const requestedId = typeof requested === 'number' && Number.isFinite(requested)
+      ? Math.trunc(requested)
+      : null;
+
+    if (!requestedId || requestedId <= 0) {
+      return fallbackCondicionIvaReceptorId(cbteTipo) ?? 5;
+    }
+
+    // Known ARCA rejection in production: code 10243 for B/C with monotributo-like ids.
+    if ((cbteTipo === 6 || cbteTipo === 11) && [6, 13, 16].includes(requestedId)) {
+      return 5;
+    }
+
+    return requestedId;
+  };
+
   const resolveLocalUploadPathFromPathname = (pathname: string): string | null => {
     const normalizedPath = (pathname || '').trim().split('?')[0];
     if (!normalizedPath) return null;
@@ -936,31 +1006,52 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
       const body = arcaInvoiceSchema.parse(request.body);
       const normalizedBody = {
         ...body,
-        condicionIVAReceptorId: body.condicionIVAReceptorId ?? 5,
+        condicionIVAReceptorId: normalizeCondicionIvaReceptorId(
+          body.cbteTipo,
+          body.condicionIVAReceptorId
+        ),
       };
       try {
-        const result = await arcaService.issueInvoice(workspaceId, normalizedBody);
+        let invoiceRequest = normalizedBody;
+        let result = await arcaService.issueInvoice(workspaceId, invoiceRequest);
+        const firstObservation = getArcaPrimaryObservation(result.raw);
+        const fallbackCondition = fallbackCondicionIvaReceptorId(invoiceRequest.cbteTipo);
+
+        if (
+          !result.approved
+          && firstObservation?.code === 10243
+          && fallbackCondition !== null
+          && fallbackCondition !== invoiceRequest.condicionIVAReceptorId
+        ) {
+          invoiceRequest = {
+            ...invoiceRequest,
+            condicionIVAReceptorId: fallbackCondition,
+          };
+          result = await arcaService.issueInvoice(workspaceId, invoiceRequest);
+        }
+
+        const rejectionObservation = getArcaPrimaryObservation(result.raw);
         const status = await arcaService.getStatus(workspaceId);
-        const totalCents = Math.round(normalizedBody.impTotal * 100);
+        const totalCents = Math.round(invoiceRequest.impTotal * 100);
 
         if (result.cbteNro) {
-          const cbteFch = normalizedBody.cbteFch || new Date().toISOString().slice(0, 10).replace(/-/g, '');
+          const cbteFch = invoiceRequest.cbteFch || new Date().toISOString().slice(0, 10).replace(/-/g, '');
           const issuedAt = parseArcaDate(cbteFch);
 
           await app.prisma.arcaInvoice.create({
             data: {
               workspaceId,
-              orderId: normalizedBody.orderId || null,
+              orderId: invoiceRequest.orderId || null,
               cuit: status.cuit || '',
-              pointOfSale: normalizedBody.pointOfSale || status.pointOfSale || 0,
-              cbteTipo: normalizedBody.cbteTipo,
+              pointOfSale: invoiceRequest.pointOfSale || status.pointOfSale || 0,
+              cbteTipo: invoiceRequest.cbteTipo,
               cbteNro: result.cbteNro,
               cae: result.cae,
               caeExpiresAt: parseArcaDate(result.caeExpiresAt) || undefined,
               total: totalCents,
               currency: 'ARS',
               status: result.approved ? 'authorized' : 'rejected',
-              requestData: normalizedBody as unknown as object,
+              requestData: invoiceRequest as unknown as object,
               responseData: result.raw as object,
             },
           });
@@ -970,21 +1061,21 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
               where: {
                 workspaceId_pointOfSale_cbteTipo_cbteNro: {
                   workspaceId,
-                  pointOfSale: normalizedBody.pointOfSale || status.pointOfSale || 0,
-                  cbteTipo: normalizedBody.cbteTipo,
+                  pointOfSale: invoiceRequest.pointOfSale || status.pointOfSale || 0,
+                  cbteTipo: invoiceRequest.cbteTipo,
                   cbteNro: result.cbteNro,
                 },
               },
               create: {
                 workspaceId,
-                pointOfSale: normalizedBody.pointOfSale || status.pointOfSale || 0,
-                cbteTipo: normalizedBody.cbteTipo,
+                pointOfSale: invoiceRequest.pointOfSale || status.pointOfSale || 0,
+                cbteTipo: invoiceRequest.cbteTipo,
                 cbteNro: result.cbteNro,
                 cbteFch: issuedAt,
                 total: totalCents,
                 currency: 'ARS',
-                docTipo: normalizedBody.docTipo,
-                docNro: String(normalizedBody.docNro),
+                docTipo: invoiceRequest.docTipo,
+                docNro: String(invoiceRequest.docNro),
                 status: result.approved ? 'authorized' : 'rejected',
                 origin: 'nexova',
               },
@@ -992,8 +1083,8 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
                 cbteFch: issuedAt,
                 total: totalCents,
                 currency: 'ARS',
-                docTipo: normalizedBody.docTipo,
-                docNro: String(normalizedBody.docNro),
+                docTipo: invoiceRequest.docTipo,
+                docNro: String(invoiceRequest.docNro),
                 status: result.approved ? 'authorized' : 'rejected',
                 origin: 'nexova',
               },
@@ -1001,9 +1092,9 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
           }
         }
 
-        if (normalizedBody.orderId && result.approved) {
+        if (invoiceRequest.orderId && result.approved) {
           const existingOrder = await app.prisma.order.findFirst({
-            where: { id: normalizedBody.orderId, workspaceId },
+            where: { id: invoiceRequest.orderId, workspaceId },
             select: { status: true, metadata: true },
           });
 
@@ -1019,14 +1110,14 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
             }
 
             await app.prisma.order.update({
-              where: { id: normalizedBody.orderId },
+              where: { id: invoiceRequest.orderId },
               data: updateData,
             });
 
             if (previousInvoiceStatus !== 'invoiced') {
               await app.prisma.orderStatusHistory.create({
                 data: {
-                  orderId: normalizedBody.orderId,
+                  orderId: invoiceRequest.orderId,
                   previousStatus: previousInvoiceStatus ?? existingOrder.status,
                   newStatus: 'invoiced',
                   reason: 'Factura emitida vía ARCA',
@@ -1037,7 +1128,12 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
           }
         }
 
-        return reply.send(result);
+        return reply.send({
+          ...result,
+          appliedCondicionIVAReceptorId: invoiceRequest.condicionIVAReceptorId,
+          rejectionCode: rejectionObservation?.code ?? null,
+          rejectionMessage: rejectionObservation?.message ?? null,
+        });
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Error al emitir factura';
         return reply.status(500).send({ error: message });

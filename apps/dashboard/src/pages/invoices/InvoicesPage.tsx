@@ -21,6 +21,12 @@ function asRecord(value: unknown): JsonRecord | null {
   return value as JsonRecord;
 }
 
+function asArray(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value;
+  if (value === null || value === undefined) return [];
+  return [value];
+}
+
 function readString(record: JsonRecord | null, key: string): string | undefined {
   const value = record?.[key];
   return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
@@ -49,6 +55,28 @@ async function readJsonRecord(response: Response): Promise<JsonRecord> {
   } catch {
     return {};
   }
+}
+
+function extractArcaRejectionMessage(data: JsonRecord): string | null {
+  const explicit = readString(data, 'rejectionMessage');
+  if (explicit) {
+    const code = readNumber(data, 'rejectionCode');
+    return code ? `ARCA rechazó la factura (${code}): ${explicit}` : `ARCA rechazó la factura: ${explicit}`;
+  }
+
+  const raw = asRecord(data.raw);
+  const feDetResp = asRecord(raw?.FeDetResp);
+  const detail = asRecord(feDetResp?.FECAEDetResponse);
+  const observations = asRecord(detail?.Observaciones);
+  const obsList = asArray(observations?.Obs);
+  const firstObs = asRecord(obsList[0]);
+  const message = readString(firstObs, 'Msg');
+  const code = readNumber(firstObs, 'Code');
+
+  if (!message && !code) return null;
+  if (message && code) return `ARCA rechazó la factura (${code}): ${message}`;
+  if (message) return `ARCA rechazó la factura: ${message}`;
+  return `ARCA rechazó la factura (código ${code})`;
 }
 
 interface OrderItem {
@@ -704,7 +732,9 @@ export default function InvoicesPage(): JSX.Element {
         await fetchExistingInvoice(selectedOrder.id);
         await fetchOrders();
       } else {
-        toast.warning('La factura fue rechazada por ARCA');
+        const rejectionMessage = extractArcaRejectionMessage(data) || 'La factura fue rechazada por ARCA';
+        setInvoiceError(rejectionMessage);
+        toast.warning(rejectionMessage);
       }
 
       await fetchSummary();
