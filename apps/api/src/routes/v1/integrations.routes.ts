@@ -242,6 +242,70 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
     return `+${digits}`;
   };
 
+  type EvolutionDocumentClient = {
+    sendDocument: (
+      to: string,
+      mediaUrl: string,
+      caption?: string,
+      opts?: { mimetype?: string; fileName?: string }
+    ) => Promise<{ messageId: string; status: string; to: string }>;
+  };
+
+  const buildPdfDataUrl = (buffer: Buffer): string => `data:application/pdf;base64,${buffer.toString('base64')}`;
+  const buildPdfRawBase64 = (buffer: Buffer): string => buffer.toString('base64');
+
+  const formatProviderError = (error: unknown): string => {
+    if (!error || typeof error !== 'object') {
+      return String(error ?? 'unknown_error');
+    }
+    const errorRecord = error as {
+      message?: unknown;
+      statusCode?: unknown;
+      responseBody?: unknown;
+    };
+    const status =
+      typeof errorRecord.statusCode === 'number' && Number.isFinite(errorRecord.statusCode)
+        ? `${errorRecord.statusCode}`
+        : '';
+    const message = typeof errorRecord.message === 'string' ? errorRecord.message.trim() : '';
+    const responseBodyRaw = typeof errorRecord.responseBody === 'string' ? errorRecord.responseBody.trim() : '';
+    const responseBody = responseBodyRaw.replace(/\s+/g, ' ').slice(0, 240);
+    if (status && responseBody) return `${status} ${responseBody}`;
+    if (status && message) return `${status} ${message}`;
+    if (responseBody) return responseBody;
+    if (message) return message;
+    return 'unknown_error';
+  };
+
+  const sendEvolutionPdfWithFallback = async (params: {
+    client: EvolutionDocumentClient;
+    to: string;
+    mediaUrl: string;
+    caption: string;
+    filename: string;
+    buffer: Buffer;
+  }): Promise<{ messageId: string; status: string; to: string }> => {
+    const attempts: Array<{ label: 'data-url' | 'base64' | 'url'; media: string }> = [
+      { label: 'data-url', media: buildPdfDataUrl(params.buffer) },
+      { label: 'base64', media: buildPdfRawBase64(params.buffer) },
+      { label: 'url', media: params.mediaUrl },
+    ];
+
+    const errors: string[] = [];
+    for (const attempt of attempts) {
+      try {
+        return await params.client.sendDocument(params.to, attempt.media, params.caption, {
+          mimetype: 'application/pdf',
+          fileName: params.filename,
+        });
+      } catch (error) {
+        errors.push(`${attempt.label}: ${formatProviderError(error)}`);
+      }
+    }
+
+    throw new Error(`Evolution no pudo enviar el PDF (${errors.join(' | ')})`);
+  };
+
   const isLocalBaseUrl = (value: string): boolean => {
     try {
       const url = new URL(value);
@@ -1368,7 +1432,14 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
             throw new Error('Evolution no está configurado (baseUrl / instanceName).');
           }
           const client = new EvolutionClient({ apiKey, baseUrl, instanceName });
-          result = await client.sendDocument(to, mediaUrl, caption);
+          result = await sendEvolutionPdfWithFallback({
+            client,
+            to,
+            mediaUrl,
+            caption,
+            filename: safeFilename,
+            buffer,
+          });
         } else {
           const client = new InfobipClient({
             apiKey,

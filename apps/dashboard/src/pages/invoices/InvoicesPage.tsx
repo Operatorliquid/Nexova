@@ -45,7 +45,7 @@ function readRecord(record: JsonRecord | null, key: string): JsonRecord | null {
 }
 
 function readErrorMessage(data: JsonRecord, fallback: string): string {
-  return readString(data, 'error') ?? readString(data, 'message') ?? fallback;
+  return readString(data, 'message') ?? readString(data, 'error') ?? fallback;
 }
 
 async function readJsonRecord(response: Response): Promise<JsonRecord> {
