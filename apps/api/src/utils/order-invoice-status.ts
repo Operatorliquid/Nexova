@@ -53,13 +53,15 @@ export const resolveOrderInvoiceStatus = (input: {
   metadata?: Prisma.JsonValue | null;
   statusHistory?: OrderStatusHistoryLike[] | null;
 }): OrderInvoiceStatus | null => {
-  if (isOrderInvoiceStatus(input.status)) return input.status;
   const metadata = asMetadataRecord(input.metadata);
   const raw = metadata.invoiceStatus;
   if (typeof raw === 'string' && isOrderInvoiceStatus(raw)) {
     return raw;
   }
-  return resolveFromStatusHistory(input.statusHistory);
+  const fromHistory = resolveFromStatusHistory(input.statusHistory);
+  if (fromHistory) return fromHistory;
+  if (isOrderInvoiceStatus(input.status)) return input.status;
+  return null;
 };
 
 export const buildOrderInvoiceStatusWhere = (invoiceStatus: OrderInvoiceStatus): Prisma.OrderWhereInput => ({
