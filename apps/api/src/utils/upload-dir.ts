@@ -42,12 +42,9 @@ function scoreUploadDirectory(candidate: string): number {
   return score;
 }
 
-export function resolveUploadDirCandidates(currentDir: string): string[] {
-  const configured = (process.env.UPLOAD_DIR || '').trim();
-  if (configured) return [configured];
-
+function buildDefaultUploadDirCandidates(currentDir: string): string[] {
   const cwd = process.cwd();
-  const candidates = uniquePaths([
+  return uniquePaths([
     // Recommended persistent mount path on Railway.
     '/data/uploads',
     path.resolve(cwd, 'uploads'),
@@ -62,8 +59,19 @@ export function resolveUploadDirCandidates(currentDir: string): string[] {
     path.resolve(currentDir, '..', '..', 'uploads'),
     path.resolve(currentDir, '..', '..', '..', 'uploads'),
   ]);
+}
 
-  return [...candidates].sort((a, b) => scoreUploadDirectory(b) - scoreUploadDirectory(a));
+export function resolveUploadDirCandidates(currentDir: string): string[] {
+  const configured = (process.env.UPLOAD_DIR || '').trim();
+  const defaults = [...buildDefaultUploadDirCandidates(currentDir)].sort(
+    (a, b) => scoreUploadDirectory(b) - scoreUploadDirectory(a)
+  );
+
+  if (configured) {
+    return uniquePaths([configured, ...defaults]);
+  }
+
+  return defaults;
 }
 
 export function resolveUploadDir(currentDir: string): string {

@@ -63,6 +63,7 @@ interface Order {
   id: string;
   orderNumber: string;
   status: string;
+  invoiceStatus?: 'pending_invoicing' | 'invoiced' | 'invoice_cancelled' | null;
   customer: {
     id: string;
     phone: string;
@@ -196,6 +197,27 @@ const STATUS_CONFIG: Record<string, { label: string; className: string }> = {
   paid: { label: 'Pagado', className: 'bg-emerald-500/20 text-emerald-400' },
   pending_payment: { label: 'Pendiente de pago', className: 'bg-amber-500/20 text-amber-400' },
   partial_payment: { label: 'Pago parcial', className: 'bg-cyan-500/20 text-cyan-400' },
+};
+
+const resolveOrderInvoiceStatus = (
+  order: Pick<Order, 'status' | 'invoiceStatus'> | null | undefined
+): 'pending_invoicing' | 'invoiced' | 'invoice_cancelled' | null => {
+  if (!order) return null;
+  if (
+    order.invoiceStatus === 'pending_invoicing' ||
+    order.invoiceStatus === 'invoiced' ||
+    order.invoiceStatus === 'invoice_cancelled'
+  ) {
+    return order.invoiceStatus;
+  }
+  if (
+    order.status === 'pending_invoicing' ||
+    order.status === 'invoiced' ||
+    order.status === 'invoice_cancelled'
+  ) {
+    return order.status;
+  }
+  return null;
 };
 
 const IVA_CONDITIONS = [
@@ -532,6 +554,7 @@ export default function InvoicesPage(): JSX.Element {
   const selectedOrderTotal = selectedOrder?.total ?? 0;
   const selectedOrderItems = selectedOrder?.items || [];
   const customer = selectedOrder?.customer;
+  const selectedOrderInvoiceStatus = resolveOrderInvoiceStatus(selectedOrder);
   const customerCuitDigits = customer?.cuit ? customer.cuit.replace(/\D/g, '') : '';
   const invoiceType = resolveInvoiceType(commerceVatConditionId, customer?.vatCondition || null);
   const customerVatConditionId = normalizeVatConditionId(customer?.vatCondition || null);
@@ -544,7 +567,7 @@ export default function InvoicesPage(): JSX.Element {
   );
   const canCreateInvoice = Boolean(
     selectedOrder &&
-      selectedOrder.status === 'pending_invoicing' &&
+      selectedOrderInvoiceStatus === 'pending_invoicing' &&
       arcaStatus?.connected &&
       !isCreating &&
       !isLoadingDetail &&
@@ -581,14 +604,14 @@ export default function InvoicesPage(): JSX.Element {
     setExistingInvoice(null);
     setExistingInvoiceError('');
     void fetchOrderDetail(order.id);
-    if (order.status === 'invoiced') {
+    if (resolveOrderInvoiceStatus(order) === 'invoiced') {
       void fetchExistingInvoice(order.id);
     }
   };
 
   const handleCreateInvoice = async (): Promise<{ approved: boolean }> => {
     if (!workspace?.id || !selectedOrder) return { approved: false };
-    if (selectedOrder.status !== 'pending_invoicing') {
+    if (resolveOrderInvoiceStatus(selectedOrder) !== 'pending_invoicing') {
       setInvoiceError('Este pedido no está pendiente de facturación.');
       return { approved: false };
     }
@@ -677,7 +700,7 @@ export default function InvoicesPage(): JSX.Element {
 
       if (approved) {
         toast.success('Factura emitida correctamente');
-        setSelectedOrder((prev) => (prev ? { ...prev, status: 'invoiced' } : prev));
+        setSelectedOrder((prev) => (prev ? { ...prev, invoiceStatus: 'invoiced' } : prev));
         await fetchExistingInvoice(selectedOrder.id);
         await fetchOrders();
       } else {
@@ -967,7 +990,9 @@ export default function InvoicesPage(): JSX.Element {
                   </div>
                 )}
                 {!isLoading && orders.map((order) => {
-                  const status = STATUS_CONFIG[order.status] || { label: order.status, className: 'bg-muted text-muted-foreground' };
+                  const invoiceStatus = resolveOrderInvoiceStatus(order);
+                  const statusKey = invoiceStatus || order.status;
+                  const status = STATUS_CONFIG[statusKey] || { label: statusKey, className: 'bg-muted text-muted-foreground' };
                   return (
                     <button
                       key={order.id}
@@ -1121,7 +1146,7 @@ export default function InvoicesPage(): JSX.Element {
                     </div>
                   )}
 
-                  {selectedOrder && selectedOrder.status === 'invoiced' && (
+                  {selectedOrder && selectedOrderInvoiceStatus === 'invoiced' && (
                     <div className="p-3 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 text-xs text-emerald-300">
                       Este pedido ya está facturado.
                     </div>
@@ -1133,13 +1158,13 @@ export default function InvoicesPage(): JSX.Element {
                     </div>
                   )}
 
-                  {selectedOrder && selectedOrder.status === 'invoiced' && isLoadingExistingInvoice && (
+                  {selectedOrder && selectedOrderInvoiceStatus === 'invoiced' && isLoadingExistingInvoice && (
                     <div className="p-3 rounded-2xl border border-border bg-secondary/40 text-xs text-muted-foreground">
                       Cargando datos de la factura...
                     </div>
                   )}
 
-                  {selectedOrder && selectedOrder.status === 'invoiced' && existingInvoiceError && (
+                  {selectedOrder && selectedOrderInvoiceStatus === 'invoiced' && existingInvoiceError && (
                     <div className="p-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 text-xs text-amber-300">
                       {existingInvoiceError}
                     </div>
@@ -1151,7 +1176,7 @@ export default function InvoicesPage(): JSX.Element {
                     </div>
                   )}
 
-                  {selectedOrder.status === 'pending_invoicing' && (
+                  {selectedOrderInvoiceStatus === 'pending_invoicing' && (
                     <Button
                       onClick={() => { void handleCreateAndSendInvoice(); }}
                       isLoading={isCreating || isSendingInvoice}
@@ -1161,7 +1186,7 @@ export default function InvoicesPage(): JSX.Element {
                     </Button>
                   )}
 
-                  {selectedOrder.status === 'invoiced' && (
+                  {selectedOrderInvoiceStatus === 'invoiced' && (
                     <Button
                       onClick={() => { void handleSendInvoice(); }}
                       isLoading={isSendingInvoice}

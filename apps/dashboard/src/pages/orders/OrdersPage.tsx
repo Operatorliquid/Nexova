@@ -81,6 +81,7 @@ interface Order {
   id: string;
   orderNumber: string;
   status: string;
+  invoiceStatus?: 'pending_invoicing' | 'invoiced' | 'invoice_cancelled' | null;
   cancelReason?: string | null;
   isTrashed?: boolean;
   trashReason?: string | null;
@@ -226,6 +227,16 @@ const resolveAcceptanceStatus = (order: Order): keyof typeof ACCEPTANCE_STATUS_C
     return 'awaiting_acceptance';
   }
   return 'accepted';
+};
+
+const resolveOrderInvoiceStatus = (order: Order): keyof typeof INVOICE_STATUS_CONFIG | null => {
+  if (order.invoiceStatus && order.invoiceStatus in INVOICE_STATUS_CONFIG) {
+    return order.invoiceStatus;
+  }
+  if (order.status in INVOICE_STATUS_CONFIG) {
+    return order.status as keyof typeof INVOICE_STATUS_CONFIG;
+  }
+  return null;
 };
 
 const resolvePaymentStatus = (order: Order): keyof typeof PAYMENT_STATUS_CONFIG => {
@@ -992,7 +1003,8 @@ export default function OrdersPage(): JSX.Element {
     const paymentKey = resolvePaymentStatus(order);
     const acceptance = ACCEPTANCE_STATUS_CONFIG[acceptanceKey];
     const payment = PAYMENT_STATUS_CONFIG[paymentKey];
-    const invoice = INVOICE_STATUS_CONFIG[order.status];
+    const invoiceStatus = resolveOrderInvoiceStatus(order);
+    const invoice = invoiceStatus ? INVOICE_STATUS_CONFIG[invoiceStatus] : undefined;
     return (
       <div className="inline-flex flex-wrap gap-2 justify-center">
         <span className={`px-2 py-1 text-xs rounded-full ${acceptance.color}`}>
@@ -1180,6 +1192,13 @@ export default function OrdersPage(): JSX.Element {
           0
         );
         const nextStatus = readString(orderData, 'status') ?? selectedOrder.status;
+        const nextInvoiceStatusRaw = readString(orderData, 'invoiceStatus');
+        const nextInvoiceStatus =
+          nextInvoiceStatusRaw === 'pending_invoicing'
+          || nextInvoiceStatusRaw === 'invoiced'
+          || nextInvoiceStatusRaw === 'invoice_cancelled'
+            ? nextInvoiceStatusRaw
+            : null;
         const updatedPaidAmount = Math.max(
           readNumber(orderData, 'paidAmount') ?? selectedOrder.paidAmount,
           paymentsSum
@@ -1189,6 +1208,7 @@ export default function OrdersPage(): JSX.Element {
             ? {
                 ...prev,
                 status: nextStatus,
+                invoiceStatus: nextInvoiceStatus ?? prev.invoiceStatus ?? null,
                 paidAmount: updatedPaidAmount,
                 pendingAmount: Math.max(prev.total - updatedPaidAmount, 0),
               }
@@ -1331,7 +1351,7 @@ export default function OrdersPage(): JSX.Element {
     try {
       const res = await apiFetch(
         `/api/v1/orders/${candidate.id}/restore`,
-        { method: 'POST' },
+        { method: 'POST', body: JSON.stringify({}) },
         workspace.id
       );
 

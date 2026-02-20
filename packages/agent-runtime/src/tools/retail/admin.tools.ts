@@ -316,6 +316,30 @@ const ORDER_STATUS_ALIASES: Record<string, string> = {
   borrado: 'trashed',
 };
 
+const ORDER_INVOICE_STATUS_VALUES = ['pending_invoicing', 'invoiced', 'invoice_cancelled'] as const;
+type OrderInvoiceStatus = (typeof ORDER_INVOICE_STATUS_VALUES)[number];
+const ORDER_INVOICE_STATUS_SET = new Set<string>(ORDER_INVOICE_STATUS_VALUES);
+
+const asOrderMetadata = (value: Prisma.JsonValue | null | undefined): Record<string, unknown> => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+};
+
+const resolveOrderInvoiceStatus = (order: {
+  status: string;
+  metadata?: Prisma.JsonValue | null;
+}): OrderInvoiceStatus | null => {
+  if (ORDER_INVOICE_STATUS_SET.has(order.status)) {
+    return order.status as OrderInvoiceStatus;
+  }
+  const metadata = asOrderMetadata(order.metadata);
+  const invoiceStatus = metadata.invoiceStatus;
+  if (typeof invoiceStatus === 'string' && ORDER_INVOICE_STATUS_SET.has(invoiceStatus)) {
+    return invoiceStatus as OrderInvoiceStatus;
+  }
+  return null;
+};
+
 function normalizeStatusToken(value: string): string {
   return (value || '')
     .trim()
@@ -585,7 +609,29 @@ export class AdminListOrdersTool extends BaseTool<typeof AdminListOrdersInput> {
     if (input.statuses && input.statuses.length > 0) {
       const statuses = mapOrderStatuses(input.statuses);
       if (statuses.length > 0) {
-        where.status = { in: statuses };
+        const invoiceStatuses = statuses.filter((status) => ORDER_INVOICE_STATUS_SET.has(status)) as OrderInvoiceStatus[];
+        const primaryStatuses = statuses.filter((status) => !ORDER_INVOICE_STATUS_SET.has(status));
+        const statusConditions: Prisma.OrderWhereInput[] = [];
+
+        if (primaryStatuses.length > 0) {
+          statusConditions.push({ status: { in: primaryStatuses } });
+        }
+
+        for (const invoiceStatus of invoiceStatuses) {
+          statusConditions.push({
+            OR: [
+              { status: invoiceStatus },
+              { metadata: { path: ['invoiceStatus'], equals: invoiceStatus } },
+            ],
+          });
+        }
+
+        const currentAnd = Array.isArray(where.AND) ? where.AND : (where.AND ? [where.AND] : []);
+        if (statusConditions.length === 1) {
+          where.AND = [...currentAnd, statusConditions[0]];
+        } else if (statusConditions.length > 1) {
+          where.AND = [...currentAnd, { OR: statusConditions }];
+        }
       }
     }
 
@@ -614,6 +660,7 @@ export class AdminListOrdersTool extends BaseTool<typeof AdminListOrdersInput> {
         id: true,
         orderNumber: true,
         status: true,
+        metadata: true,
         total: true,
         paidAmount: true,
         createdAt: true,
@@ -640,6 +687,7 @@ export class AdminListOrdersTool extends BaseTool<typeof AdminListOrdersInput> {
           id: o.id,
           orderNumber: o.orderNumber,
           status: o.status,
+          invoiceStatus: resolveOrderInvoiceStatus(o),
           totalCents: o.total,
           paidCents: o.paidAmount,
           pendingCents: Math.max(0, (o.total ?? 0) - (o.paidAmount ?? 0)),
@@ -690,6 +738,7 @@ export class AdminGetOrderDetailsTool extends BaseTool<typeof AdminOrderDetailsI
         id: true,
         orderNumber: true,
         status: true,
+        metadata: true,
         subtotal: true,
         tax: true,
         discount: true,
@@ -742,6 +791,7 @@ export class AdminGetOrderDetailsTool extends BaseTool<typeof AdminOrderDetailsI
         id: order.id,
         orderNumber: order.orderNumber,
         status: order.status,
+        invoiceStatus: resolveOrderInvoiceStatus(order),
         currency: order.currency,
         subtotalCents: order.subtotal,
         taxCents: order.tax,
@@ -1036,43 +1086,54 @@ export class AdminUpdateOrderStatusTool extends BaseTool<typeof AdminUpdateOrder
       return { success: false, error: 'Pedido no encontrado' };
     }
 
-    const orderMetadata =
-      order.metadata && typeof order.metadata === 'object' && !Array.isArray(order.metadata)
-        ? (order.metadata as Record<string, unknown>)
-        : {};
+    const orderMetadata = asOrderMetadata(order.metadata);
+    const currentInvoiceStatus = resolveOrderInvoiceStatus(order);
     const trashMetadata =
       orderMetadata.trash && typeof orderMetadata.trash === 'object' && !Array.isArray(orderMetadata.trash)
         ? (orderMetadata.trash as Record<string, unknown>)
         : null;
     const isAlreadyTrashed = order.status === 'trashed' || trashMetadata?.isTrashed === true;
-    const targetStatus = newStatus === 'trashed' ? 'cancelled' : newStatus;
+    const invoiceStatusTarget = ORDER_INVOICE_STATUS_SET.has(newStatus)
+      ? (newStatus as OrderInvoiceStatus)
+      : null;
+    const targetStatus = newStatus === 'trashed' ? 'cancelled' : (invoiceStatusTarget ? order.status : newStatus);
 
-    if ((newStatus === 'trashed' && isAlreadyTrashed) || (newStatus !== 'trashed' && order.status === targetStatus)) {
+    if (
+      (newStatus === 'trashed' && isAlreadyTrashed)
+      || (invoiceStatusTarget !== null && currentInvoiceStatus === invoiceStatusTarget)
+      || (newStatus !== 'trashed' && invoiceStatusTarget === null && order.status === targetStatus)
+    ) {
       return {
         success: true,
         data: {
           orderId: order.id,
           orderNumber: order.orderNumber,
-          status: order.status,
+          status: invoiceStatusTarget ?? order.status,
           message:
             newStatus === 'trashed'
               ? `El pedido ${order.orderNumber} ya está en papelera.`
-              : `El pedido ${order.orderNumber} ya está en estado "${order.status}".`,
+              : invoiceStatusTarget
+                ? `El pedido ${order.orderNumber} ya está en estado de facturación "${invoiceStatusTarget}".`
+                : `El pedido ${order.orderNumber} ya está en estado "${order.status}".`,
           unchanged: true,
         },
       };
     }
 
-    const updateData: Prisma.OrderUpdateManyMutationInput = {
-      status: targetStatus,
-    };
+    const updateData: Prisma.OrderUpdateManyMutationInput = {};
 
-    if (targetStatus === 'paid') updateData.paidAt = new Date();
-    if (targetStatus === 'shipped') updateData.shippedAt = new Date();
-    if (targetStatus === 'delivered') updateData.deliveredAt = new Date();
-    if (targetStatus === 'cancelled') {
-      updateData.cancelledAt = new Date();
-      if (input.reason) updateData.cancelReason = input.reason;
+    if (invoiceStatusTarget === null) {
+      updateData.status = targetStatus;
+    }
+
+    if (invoiceStatusTarget === null) {
+      if (targetStatus === 'paid') updateData.paidAt = new Date();
+      if (targetStatus === 'shipped') updateData.shippedAt = new Date();
+      if (targetStatus === 'delivered') updateData.deliveredAt = new Date();
+      if (targetStatus === 'cancelled') {
+        updateData.cancelledAt = new Date();
+        if (input.reason) updateData.cancelReason = input.reason;
+      }
     }
 
     if (newStatus === 'trashed') {
@@ -1090,6 +1151,13 @@ export class AdminUpdateOrderStatusTool extends BaseTool<typeof AdminUpdateOrder
       updateData.cancelReason = reason;
     }
 
+    if (invoiceStatusTarget) {
+      updateData.metadata = {
+        ...orderMetadata,
+        invoiceStatus: invoiceStatusTarget,
+      } as Prisma.InputJsonValue;
+    }
+
     await this.prisma.$transaction(async (tx) => {
       await tx.order.updateMany({
         where: { id: order.id, workspaceId: context.workspaceId },
@@ -1099,8 +1167,8 @@ export class AdminUpdateOrderStatusTool extends BaseTool<typeof AdminUpdateOrder
       await tx.orderStatusHistory.create({
         data: {
           orderId: order.id,
-          previousStatus: order.status,
-          newStatus: targetStatus,
+          previousStatus: invoiceStatusTarget ? (currentInvoiceStatus ?? order.status) : order.status,
+          newStatus: invoiceStatusTarget || targetStatus,
           reason: input.reason || null,
           changedBy: 'owner_agent',
         },
@@ -1112,12 +1180,14 @@ export class AdminUpdateOrderStatusTool extends BaseTool<typeof AdminUpdateOrder
       data: {
         orderId: order.id,
         orderNumber: order.orderNumber,
-        previousStatus: order.status,
-        newStatus: targetStatus,
+        previousStatus: invoiceStatusTarget ? (currentInvoiceStatus ?? order.status) : order.status,
+        newStatus: invoiceStatusTarget || targetStatus,
         message:
           newStatus === 'trashed'
             ? `Pedido ${order.orderNumber} cancelado y enviado a papelera.`
-            : `Pedido ${order.orderNumber}: "${order.status}" -> "${targetStatus}".`,
+            : invoiceStatusTarget
+              ? `Pedido ${order.orderNumber}: estado de facturación -> "${invoiceStatusTarget}".`
+              : `Pedido ${order.orderNumber}: "${order.status}" -> "${targetStatus}".`,
       },
     };
   }

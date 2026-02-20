@@ -20,11 +20,12 @@ import {
   sanitizeUploadFilename,
   verifySignedUploadAccess,
 } from '../../utils/upload-access.js';
-import { resolveUploadDir } from '../../utils/upload-dir.js';
+import { resolveUploadDir, resolveUploadDirCandidates } from '../../utils/upload-dir.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const UPLOAD_DIR = resolveUploadDir(__dirname);
+const UPLOAD_DIR_CANDIDATES = resolveUploadDirCandidates(__dirname);
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
 const INTERNAL_MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
@@ -38,6 +39,14 @@ const WORKSPACE_SCOPED_CATEGORIES = new Set([
   'whatsapp-media',
   'products',
 ]);
+
+function resolveExistingUploadFile(category: string, filename: string): string {
+  for (const baseDir of UPLOAD_DIR_CANDIDATES) {
+    const candidate = path.join(baseDir, category, filename);
+    if (existsSync(candidate)) return candidate;
+  }
+  return path.join(UPLOAD_DIR, category, filename);
+}
 
 function inferContentType(filename: string): string {
   const ext = path.extname(filename).toLowerCase();
@@ -148,7 +157,7 @@ export async function uploadsRoutes(app: FastifyInstance): Promise<void> {
         }
       }
 
-      const filePath = path.join(UPLOAD_DIR, category, filename);
+      const filePath = resolveExistingUploadFile(category, filename);
       if (!existsSync(filePath)) {
         return reply.status(404).send({ error: 'FILE_NOT_FOUND' });
       }

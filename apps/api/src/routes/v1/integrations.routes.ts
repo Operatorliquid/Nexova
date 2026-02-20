@@ -7,6 +7,7 @@ import { existsSync, promises as fs } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
+import { Prisma } from '@prisma/client';
 import { type FastifyInstance, type FastifyRequest, type FastifyReply } from 'fastify';
 import { z } from 'zod';
 
@@ -21,6 +22,10 @@ import {
 
 import { getWorkspacePlanContext } from '../../utils/commerce-plan.js';
 import { recalcCustomerFinancials } from '../../utils/customer-financials.js';
+import {
+  mergeOrderInvoiceStatusMetadata,
+  resolveOrderInvoiceStatus,
+} from '../../utils/order-invoice-status.js';
 import { RemoteFetchError, fetchRemoteBinarySafely } from '../../utils/remote-fetch-guard.js';
 import {
   buildSignedUploadUrl,
@@ -28,7 +33,7 @@ import {
   sanitizeUploadCategory,
   sanitizeUploadFilename,
 } from '../../utils/upload-access.js';
-import { resolveUploadDir } from '../../utils/upload-dir.js';
+import { resolveUploadDir, resolveUploadDirCandidates } from '../../utils/upload-dir.js';
 
 // MercadoPago config from environment
 const getMercadoPagoConfig = (): MercadoPagoConfig => ({
@@ -43,11 +48,22 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = path.dirname(__filename);
   const UPLOAD_DIR = resolveUploadDir(__dirname);
+  const UPLOAD_DIR_CANDIDATES = resolveUploadDirCandidates(__dirname);
   const mpConfig = getMercadoPagoConfig();
   const mpService = new MercadoPagoIntegrationService(app.prisma, mpConfig);
   const arcaService = new ArcaIntegrationService(app.prisma);
   const ledgerService = new LedgerService(app.prisma);
   const arcaPdfService = new ArcaInvoicePdfService();
+
+  const resolveExistingUploadPath = (...relativeSegments: string[]): string => {
+    for (const baseDir of UPLOAD_DIR_CANDIDATES) {
+      const candidate = path.join(baseDir, ...relativeSegments);
+      if (existsSync(candidate)) {
+        return candidate;
+      }
+    }
+    return path.join(UPLOAD_DIR, ...relativeSegments);
+  };
 
   const formatMoney = (cents: number): string =>
     new Intl.NumberFormat('es-AR', {
@@ -65,7 +81,7 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
 
     if (normalizedPath.startsWith('/uploads/')) {
       const relative = normalizedPath.replace('/uploads/', '');
-      return path.join(UPLOAD_DIR, relative);
+      return resolveExistingUploadPath(relative);
     }
 
     const signedMatch = normalizedPath.match(/^\/api\/v1\/uploads\/file\/([^/]+)\/([^/]+)$/i);
@@ -74,7 +90,7 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
     const category = sanitizeUploadCategory(signedMatch[1]);
     const filename = sanitizeUploadFilename(signedMatch[2]);
     if (!category || !filename) return null;
-    return path.join(UPLOAD_DIR, category, filename);
+    return resolveExistingUploadPath(category, filename);
   };
 
   const resolveLocalUploadPath = (ref: string): string | null => {
@@ -988,25 +1004,36 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
         if (normalizedBody.orderId && result.approved) {
           const existingOrder = await app.prisma.order.findFirst({
             where: { id: normalizedBody.orderId, workspaceId },
-            select: { status: true },
+            select: { status: true, metadata: true },
           });
 
           if (existingOrder) {
-            await app.prisma.$transaction([
-              app.prisma.order.update({
-                where: { id: normalizedBody.orderId },
-                data: { status: 'invoiced' },
-              }),
-              app.prisma.orderStatusHistory.create({
+            const previousInvoiceStatus = resolveOrderInvoiceStatus(existingOrder);
+            const updateData: Prisma.OrderUpdateInput = {
+              metadata: mergeOrderInvoiceStatusMetadata(existingOrder.metadata, 'invoiced'),
+            };
+
+            // Backward-compat: migrate legacy invoice statuses used as primary order status.
+            if (existingOrder.status === 'pending_invoicing') {
+              updateData.status = 'awaiting_acceptance';
+            }
+
+            await app.prisma.order.update({
+              where: { id: normalizedBody.orderId },
+              data: updateData,
+            });
+
+            if (previousInvoiceStatus !== 'invoiced') {
+              await app.prisma.orderStatusHistory.create({
                 data: {
                   orderId: normalizedBody.orderId,
-                  previousStatus: existingOrder.status,
+                  previousStatus: previousInvoiceStatus ?? existingOrder.status,
                   newStatus: 'invoiced',
                   reason: 'Factura emitida vía ARCA',
                   changedBy: 'system',
                 },
-              }),
-            ]);
+              });
+            }
           }
         }
 

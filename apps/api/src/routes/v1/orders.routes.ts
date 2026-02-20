@@ -19,15 +19,31 @@ import { getEffectiveCommercePlanLimits } from '../../utils/commerce-plan-limits
 import { getWorkspacePlanContext } from '../../utils/commerce-plan.js';
 import { recalcCustomerFinancials } from '../../utils/customer-financials.js';
 import { createNotificationIfEnabled } from '../../utils/notifications.js';
+import {
+  buildOrderInvoiceStatusWhere,
+  isOrderInvoiceStatus,
+  resolveOrderInvoiceStatus,
+} from '../../utils/order-invoice-status.js';
 import { calculatePromotionDiscount, promotionIsUsable } from '../../utils/promotions.js';
 import { extractReceiptAmountWithClaude, parseAmountInputToCents } from '../../utils/receipt-claude.js';
-import { resolveUploadDir } from '../../utils/upload-dir.js';
+import { resolveUploadDir, resolveUploadDirCandidates } from '../../utils/upload-dir.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const UPLOAD_DIR = resolveUploadDir(__dirname);
+const UPLOAD_DIR_CANDIDATES = resolveUploadDirCandidates(__dirname);
 const RECEIPTS_DIR = path.join(UPLOAD_DIR, 'receipts');
 const DEFAULT_LOW_STOCK_THRESHOLD = 10;
+
+const resolveExistingUploadPath = (...relativeSegments: string[]): string => {
+  for (const baseDir of UPLOAD_DIR_CANDIDATES) {
+    const candidate = path.join(baseDir, ...relativeSegments);
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return path.join(UPLOAD_DIR, ...relativeSegments);
+};
 
 type OrderMetadataRecord = Record<string, unknown>;
 type OrderTrashMetadata = {
@@ -82,6 +98,7 @@ const buildNotTrashedWhere = (): Prisma.OrderWhereInput => ({
     {
       OR: [
         { metadata: { equals: Prisma.AnyNull } },
+        { metadata: { path: ['trash'], equals: Prisma.AnyNull } },
         { metadata: { path: ['trash', 'isTrashed'], equals: Prisma.AnyNull } },
         { metadata: { path: ['trash', 'isTrashed'], equals: false } },
         { metadata: { path: ['trash', 'isTrashed'], equals: 'false' } },
@@ -476,6 +493,8 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
           });
         } else if (status === 'cancelled') {
           andConditions.push({ status: { in: ['cancelled', 'returned'] } });
+        } else if (isOrderInvoiceStatus(status)) {
+          andConditions.push(buildOrderInvoiceStatusWhere(status));
         } else {
           andConditions.push({ status });
         }
@@ -565,10 +584,12 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
         const paidAmount = Math.max(o.paidAmount ?? 0, paymentsSum);
         const fiscal = withFiscalFallback(o.customer);
         const trash = parseOrderTrashMetadata(o.metadata);
+        const invoiceStatus = resolveOrderInvoiceStatus(o);
         return {
           id: o.id,
           orderNumber: o.orderNumber,
           status: o.status,
+          invoiceStatus,
           customer: {
             id: o.customer.id,
             phone: o.customer.phone,
@@ -852,6 +873,7 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.send({
         order: {
           ...order,
+          invoiceStatus: resolveOrderInvoiceStatus(order),
           customer: {
             ...customerWithoutMetadata,
             dni: customerFiscal.dni,
@@ -1192,22 +1214,22 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
 
       const resolveLocalReceiptPath = (fileRef: string): string | null => {
         if (fileRef.startsWith('/uploads/')) {
-          return path.join(UPLOAD_DIR, fileRef.replace(/^\/uploads\//, ''));
+          return resolveExistingUploadPath(fileRef.replace(/^\/uploads\//, ''));
         }
         if (fileRef.startsWith('uploads/')) {
-          return path.join(UPLOAD_DIR, fileRef.replace(/^uploads\//, ''));
+          return resolveExistingUploadPath(fileRef.replace(/^uploads\//, ''));
         }
         try {
           const parsed = new URL(fileRef);
           if (parsed.pathname.startsWith('/uploads/')) {
-            return path.join(UPLOAD_DIR, parsed.pathname.replace(/^\/uploads\//, ''));
+            return resolveExistingUploadPath(parsed.pathname.replace(/^\/uploads\//, ''));
           }
           const signedMatch = parsed.pathname.match(/^\/api\/v1\/uploads\/file\/([^/]+)\/([^/]+)$/i);
           if (signedMatch) {
             const category = decodeURIComponent(signedMatch[1]).replace(/[^a-z0-9-]/gi, '').toLowerCase();
             const filename = decodeURIComponent(signedMatch[2]).replace(/[^a-zA-Z0-9._-]/g, '');
             if (category && filename) {
-              return path.join(UPLOAD_DIR, category, filename);
+              return resolveExistingUploadPath(category, filename);
             }
           }
         } catch {
@@ -1593,11 +1615,19 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
 
       const total = subtotal + body.shipping - finalDiscount;
       const requestedStatus = body.status ?? 'draft';
-      const status = requestedStatus === ORDER_TRASH_STATUS ? 'cancelled' : requestedStatus;
+      const requestedInvoiceStatus = isOrderInvoiceStatus(requestedStatus) ? requestedStatus : null;
+      const status = requestedStatus === ORDER_TRASH_STATUS
+        ? 'cancelled'
+        : requestedInvoiceStatus
+          ? 'awaiting_acceptance'
+          : requestedStatus;
       const isCancelledOnCreate = status === 'cancelled';
       const createdInTrashReason =
         requestedStatus === ORDER_TRASH_STATUS ? 'Creado directamente en papelera' : null;
       const metadataForCreate: Record<string, unknown> = {};
+      if (requestedInvoiceStatus) {
+        metadataForCreate.invoiceStatus = requestedInvoiceStatus;
+      }
       if (promotionMetadata) {
         metadataForCreate.promotion = promotionMetadata;
       }
@@ -1798,6 +1828,7 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.code(201).send({
         order: {
           ...order,
+          invoiceStatus: resolveOrderInvoiceStatus(order),
           hasPromotion: !!order.promotionId,
           isTrashed: orderIsInTrash(order.status, order.metadata),
           trashReason: resolveTrashReason(order.cancelReason, order.metadata),
@@ -1944,8 +1975,14 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
         typeof body.cancelReason === 'string' ? body.cancelReason.trim() : '';
       const cancelReasonInput =
         body.cancelReason !== undefined ? (normalizedCancelReason.length > 0 ? normalizedCancelReason : null) : undefined;
-      const isTrashAction = body.status === ORDER_TRASH_STATUS;
-      const statusTarget = body.status ? (isTrashAction ? 'cancelled' : body.status) : null;
+      const requestedStatus = body.status ?? null;
+      const isTrashAction = requestedStatus === ORDER_TRASH_STATUS;
+      const invoiceStatusTarget = requestedStatus && isOrderInvoiceStatus(requestedStatus) ? requestedStatus : null;
+      const previousInvoiceStatus = resolveOrderInvoiceStatus(existing);
+      const invoiceStatusChanged = !!invoiceStatusTarget && previousInvoiceStatus !== invoiceStatusTarget;
+      const statusTarget = requestedStatus && !invoiceStatusTarget
+        ? (isTrashAction ? 'cancelled' : requestedStatus)
+        : null;
       const statusChanged = !!statusTarget && statusTarget !== existing.status;
       const hasContentEdits = body.notes !== undefined
         || body.internalNotes !== undefined
@@ -1993,6 +2030,22 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
             newStatus: 'cancelled',
             changedBy: 'user',
             reason: `Enviado a papelera: ${trashReason}`,
+          },
+        });
+      } else if (invoiceStatusChanged && invoiceStatusTarget) {
+        const metadataBase = mergedMetadata || baseMetadata;
+        mergedMetadata = {
+          ...metadataBase,
+          invoiceStatus: invoiceStatusTarget,
+        };
+
+        await fastify.prisma.orderStatusHistory.create({
+          data: {
+            orderId: id,
+            previousStatus: previousInvoiceStatus ?? existing.status,
+            newStatus: invoiceStatusTarget,
+            changedBy: 'user',
+            reason: cancelReasonInput ?? null,
           },
         });
       } else if (statusChanged && statusTarget) {
@@ -2120,6 +2173,7 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.send({
         order: {
           ...order,
+          invoiceStatus: resolveOrderInvoiceStatus(order),
           hasPromotion: !!order.promotionId,
           isTrashed: orderIsInTrash(order.status, order.metadata),
           trashReason: resolveTrashReason(order.cancelReason, order.metadata),
@@ -2197,6 +2251,7 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.send({
         order: {
           ...updated,
+          invoiceStatus: resolveOrderInvoiceStatus(updated),
           isTrashed: false,
           trashReason: null,
           trash: null,
@@ -2304,6 +2359,7 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.send({
         order: {
           ...order,
+          invoiceStatus: resolveOrderInvoiceStatus(order),
           hasPromotion: !!order.promotionId,
           paidAmount,
           pendingAmount: order.total - paidAmount,

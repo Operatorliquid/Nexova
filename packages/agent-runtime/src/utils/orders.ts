@@ -8,6 +8,7 @@ export const withVisibleOrders = (where: PrismaNamespace.OrderWhereInput): Prism
     {
       OR: [
         { metadata: { equals: Prisma.AnyNull } },
+        { metadata: { path: ['trash'], equals: Prisma.AnyNull } },
         { metadata: { path: ['trash', 'isTrashed'], equals: Prisma.AnyNull } },
         { metadata: { path: ['trash', 'isTrashed'], equals: false } },
         { metadata: { path: ['trash', 'isTrashed'], equals: 'false' } },

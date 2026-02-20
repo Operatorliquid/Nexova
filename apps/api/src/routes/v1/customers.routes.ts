@@ -19,6 +19,11 @@ import {
 } from '../../utils/customer-financials.js';
 import { getMonthlyUsage, recordMonthlyUsage } from '../../utils/monthly-usage.js';
 import { createNotificationIfEnabled } from '../../utils/notifications.js';
+import {
+  buildOrderInvoiceStatusWhere,
+  isOrderInvoiceStatus,
+  resolveOrderInvoiceStatus,
+} from '../../utils/order-invoice-status.js';
 
 
 type DebtStats = {
@@ -1200,6 +1205,9 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
       'draft',
       'awaiting_acceptance',
       'accepted',
+      'pending_invoicing',
+      'invoiced',
+      'invoice_cancelled',
       'trashed',
       'pending_payment',
       'partial_payment',
@@ -1256,6 +1264,7 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
             {
               OR: [
                 { metadata: { equals: Prisma.AnyNull } },
+                { metadata: { path: ['trash'], equals: Prisma.AnyNull } },
                 { metadata: { path: ['trash', 'isTrashed'], equals: Prisma.AnyNull } },
                 { metadata: { path: ['trash', 'isTrashed'], equals: false } },
                 { metadata: { path: ['trash', 'isTrashed'], equals: 'false' } },
@@ -1276,6 +1285,8 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
           });
         } else if (query.status === 'cancelled') {
           andConditions.push({ status: { in: ['cancelled', 'returned'] } });
+        } else if (isOrderInvoiceStatus(query.status)) {
+          andConditions.push(buildOrderInvoiceStatusWhere(query.status));
         } else {
           andConditions.push({ status: query.status });
         }
@@ -1305,6 +1316,7 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
         id: o.id,
         orderNumber: o.orderNumber,
         status: o.status,
+        invoiceStatus: resolveOrderInvoiceStatus(o),
         total: o.total,
         paidAmount: o.paidAmount,
         itemCount: o.items.reduce((sum, i) => sum + i.quantity, 0),

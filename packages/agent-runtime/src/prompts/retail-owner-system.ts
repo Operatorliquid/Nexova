@@ -44,9 +44,9 @@ El usuario que te escribe por este chat es el dueño/administrador del negocio (
 - \`paid\`: pagado
 - \`pending_payment\`: pendiente de pago
 - \`partial_payment\`: pago parcial
-- \`pending_invoicing\`: pendiente de facturación
-- \`invoiced\`: facturado
-- \`invoice_cancelled\`: factura cancelada
+- \`pending_invoicing\`: pendiente de facturación (estado de facturación, no reemplaza aprobación)
+- \`invoiced\`: facturado (estado de facturación, no reemplaza aprobación)
+- \`invoice_cancelled\`: factura cancelada (estado de facturación, no reemplaza aprobación)
 - \`processing\`: en preparación/procesando
 - \`shipped\`: enviado/despachado
 - \`delivered\`: entregado

@@ -138,6 +138,41 @@ const CATALOG_TOOL_NAMES = new Set([
   'send_pdf_whatsapp',
 ]);
 
+const ORDER_INVOICE_STATUS_VALUES = ['pending_invoicing', 'invoiced', 'invoice_cancelled'] as const;
+type OrderInvoiceStatus = (typeof ORDER_INVOICE_STATUS_VALUES)[number];
+const ORDER_INVOICE_STATUS_SET = new Set<string>(ORDER_INVOICE_STATUS_VALUES);
+
+const asMetadataRecord = (value: Prisma.JsonValue | null | undefined): Record<string, unknown> => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+};
+
+const resolveOrderInvoiceStatus = (order: {
+  status: string;
+  metadata?: Prisma.JsonValue | null;
+}): OrderInvoiceStatus | null => {
+  if (ORDER_INVOICE_STATUS_SET.has(order.status)) {
+    return order.status as OrderInvoiceStatus;
+  }
+  const metadata = asMetadataRecord(order.metadata);
+  const invoiceStatus = metadata.invoiceStatus;
+  if (typeof invoiceStatus === 'string' && ORDER_INVOICE_STATUS_SET.has(invoiceStatus)) {
+    return invoiceStatus as OrderInvoiceStatus;
+  }
+  return null;
+};
+
+const withOrderInvoiceStatus = (
+  metadata: Prisma.JsonValue | null | undefined,
+  invoiceStatus: OrderInvoiceStatus
+): Prisma.InputJsonValue => {
+  const current = asMetadataRecord(metadata);
+  return {
+    ...current,
+    invoiceStatus,
+  } as Prisma.InputJsonValue;
+};
+
 const INFO_TOOL_ALLOWLIST = new Set([
   'get_commerce_profile',
   'search_products',
@@ -1944,20 +1979,23 @@ export class RetailAgent {
 
             const order = await this.prisma.order.findFirst({
               where: { id: flow.orderId, workspaceId },
-              select: { status: true, orderNumber: true },
+              select: { status: true, orderNumber: true, metadata: true },
             });
             const invoiceSource = flow.source || 'checkout_prompt';
+            const orderInvoiceStatus = order ? resolveOrderInvoiceStatus(order) : null;
 
-            if (order && !['pending_invoicing', 'invoiced'].includes(order.status)) {
+            if (order && orderInvoiceStatus !== 'pending_invoicing' && orderInvoiceStatus !== 'invoiced') {
               await this.prisma.$transaction([
                 this.prisma.order.updateMany({
                   where: { id: flow.orderId, workspaceId },
-                  data: { status: 'pending_invoicing' },
+                  data: {
+                    metadata: withOrderInvoiceStatus(order.metadata, 'pending_invoicing'),
+                  },
                 }),
                 this.prisma.orderStatusHistory.create({
                   data: {
                     orderId: flow.orderId,
-                    previousStatus: order.status,
+                    previousStatus: orderInvoiceStatus ?? order.status,
                     newStatus: 'pending_invoicing',
                     reason:
                       invoiceSource === 'active_orders'
@@ -2179,28 +2217,31 @@ export class RetailAgent {
           try {
             const order = await this.prisma.order.findFirst({
               where: { id: orderId, workspaceId },
-              select: { status: true, orderNumber: true },
+              select: { status: true, orderNumber: true, metadata: true },
             });
 
             if (!order) {
               response = 'No encontré tu pedido para actualizar la factura.';
             } else {
               const resolvedOrderNumber = orderNumber || order.orderNumber;
+              const orderInvoiceStatus = resolveOrderInvoiceStatus(order);
               response = decision
                 ? `Perfecto, vamos a preparar la factura del pedido ${resolvedOrderNumber}.`
                 : `Perfecto, tu pedido ${resolvedOrderNumber} quedó confirmado. Gracias por tu compra.`;
 
               if (decision) {
-                if (!['pending_invoicing', 'invoiced'].includes(order.status)) {
+                if (orderInvoiceStatus !== 'pending_invoicing' && orderInvoiceStatus !== 'invoiced') {
                   await this.prisma.$transaction([
                     this.prisma.order.updateMany({
                       where: { id: orderId, workspaceId },
-                      data: { status: 'pending_invoicing' },
+                      data: {
+                        metadata: withOrderInvoiceStatus(order.metadata, 'pending_invoicing'),
+                      },
                     }),
                     this.prisma.orderStatusHistory.create({
                       data: {
                         orderId,
-                        previousStatus: order.status,
+                        previousStatus: orderInvoiceStatus ?? order.status,
                         newStatus: 'pending_invoicing',
                         reason: 'Solicitud de factura al confirmar pedido',
                         changedBy: 'customer',
@@ -3998,7 +4039,7 @@ export class RetailAgent {
                 workspaceId,
                 customerId,
               }),
-              select: { id: true, orderNumber: true, status: true },
+              select: { id: true, orderNumber: true, status: true, metadata: true },
             });
 
             if (!selected) {
@@ -4015,7 +4056,8 @@ export class RetailAgent {
               };
             }
 
-            if (['pending_invoicing', 'invoiced'].includes(selected.status)) {
+            const selectedInvoiceStatus = resolveOrderInvoiceStatus(selected);
+            if (selectedInvoiceStatus === 'pending_invoicing' || selectedInvoiceStatus === 'invoiced') {
               const selectionContent = buildInvoiceRequestSelectionContent(invoiceOptions);
               const response = [
                 'Ese pedido ya tiene una solicitud de factura.',
@@ -4091,12 +4133,14 @@ export class RetailAgent {
             await this.prisma.$transaction([
               this.prisma.order.updateMany({
                 where: { id: selected.id, workspaceId },
-                data: { status: 'pending_invoicing' },
+                data: {
+                  metadata: withOrderInvoiceStatus(selected.metadata, 'pending_invoicing'),
+                },
               }),
               this.prisma.orderStatusHistory.create({
                 data: {
                   orderId: selected.id,
-                  previousStatus: selected.status,
+                  previousStatus: selectedInvoiceStatus ?? selected.status,
                   newStatus: 'pending_invoicing',
                   reason: 'Solicitud de factura desde pedidos activos',
                   changedBy: 'customer',
@@ -4356,6 +4400,10 @@ export class RetailAgent {
               workspaceId,
               customerId,
               status: { notIn: ['draft', 'pending_invoicing', 'invoiced'] },
+              AND: [
+                { NOT: { metadata: { path: ['invoiceStatus'], equals: 'pending_invoicing' } } },
+                { NOT: { metadata: { path: ['invoiceStatus'], equals: 'invoiced' } } },
+              ],
             }),
             orderBy: { createdAt: 'desc' },
             take: 5,

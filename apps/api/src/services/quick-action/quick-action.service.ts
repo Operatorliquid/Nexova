@@ -24,6 +24,7 @@ import {
   type QuickActionUIAction,
 } from './types.js';
 import { createNotificationIfEnabled } from '../../utils/notifications.js';
+import { buildOrderInvoiceStatusWhere, isOrderInvoiceStatus } from '../../utils/order-invoice-status.js';
 import { buildSignedUploadPath, resolveSignedUploadTtlSeconds } from '../../utils/upload-access.js';
 import { resolveUploadDir } from '../../utils/upload-dir.js';
 import { generateBusinessInsights } from '../analytics/insights.service.js';
@@ -1604,7 +1605,12 @@ export class QuickActionService {
     const where: Prisma.OrderWhereInput = { workspaceId };
 
     if (input.status) {
-      where.status = String(input.status);
+      const requestedStatus = String(input.status);
+      if (isOrderInvoiceStatus(requestedStatus)) {
+        where.AND = [...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []), buildOrderInvoiceStatusWhere(requestedStatus)];
+      } else {
+        where.status = requestedStatus;
+      }
     }
 
     if (input.customerId) {

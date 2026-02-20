@@ -113,6 +113,7 @@ interface CustomerOrder {
   id: string;
   orderNumber: string;
   status: string;
+  invoiceStatus?: 'pending_invoicing' | 'invoiced' | 'invoice_cancelled' | null;
   total: number;
   paidAmount: number;
   itemCount: number;
@@ -707,6 +708,26 @@ export default function CustomersPage(): JSX.Element {
     return 'accepted';
   };
 
+  const resolveOrderInvoiceStatus = (
+    order: CustomerOrder
+  ): 'pending_invoicing' | 'invoiced' | 'invoice_cancelled' | null => {
+    if (
+      order.invoiceStatus === 'pending_invoicing' ||
+      order.invoiceStatus === 'invoiced' ||
+      order.invoiceStatus === 'invoice_cancelled'
+    ) {
+      return order.invoiceStatus;
+    }
+    if (
+      order.status === 'pending_invoicing' ||
+      order.status === 'invoiced' ||
+      order.status === 'invoice_cancelled'
+    ) {
+      return order.status;
+    }
+    return null;
+  };
+
   const resolvePaymentStatus = (order: CustomerOrder): 'pending_payment' | 'partial_payment' | 'paid' => {
     if (order.total <= 0 || order.paidAmount >= order.total) return 'paid';
     if (order.paidAmount > 0) return 'partial_payment';
@@ -735,7 +756,8 @@ export default function CustomersPage(): JSX.Element {
     };
     const acceptanceKey = resolveAcceptanceStatus(order);
     const paymentKey = resolvePaymentStatus(order);
-    const invoice = invoiceBadges[order.status];
+    const invoiceStatus = resolveOrderInvoiceStatus(order);
+    const invoice = invoiceStatus ? invoiceBadges[invoiceStatus] : undefined;
     return {
       acceptance: acceptanceBadges[acceptanceKey],
       payment: paymentBadges[paymentKey],
