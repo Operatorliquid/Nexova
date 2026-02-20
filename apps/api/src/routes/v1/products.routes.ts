@@ -203,10 +203,8 @@ const normalizeProductImagesForStorage = (value: unknown): string[] => {
 
 const buildPublicProductImageUrl = (filename: string): string => {
   const signed = buildSignedUploadPath({ category: 'products', filename });
-  if (!signed.includes('sig=')) {
-    // If signing secret is missing, fall back to public static path.
-    return `${PRODUCT_UPLOADS_PREFIX}${filename}`;
-  }
+  // Even without signature params, this remains a stable proxy path
+  // that does not depend on static file mounting.
   return signed;
 };
 

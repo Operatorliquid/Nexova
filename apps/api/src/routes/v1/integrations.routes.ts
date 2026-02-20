@@ -145,6 +145,65 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
     return requestedId;
   };
 
+  const roundTo2 = (value: number): number => {
+    if (!Number.isFinite(value)) return 0;
+    return Math.round((value + Number.EPSILON) * 100) / 100;
+  };
+
+  const shouldBuildIvaFallback = (request: {
+    cbteTipo: number;
+    impTotal: number;
+    impNeto: number;
+    impIVA?: number;
+    iva?: Array<{ Id: number; BaseImp: number; Importe: number }>;
+  }): boolean => {
+    if (![1, 6].includes(request.cbteTipo)) return false;
+    if (!Number.isFinite(request.impNeto) || request.impNeto <= 0) return false;
+    if (Array.isArray(request.iva) && request.iva.length > 0) return false;
+    return true;
+  };
+
+  const buildIvaFallbackRequest = <T extends {
+    cbteTipo: number;
+    impTotal: number;
+    impNeto: number;
+    impIVA?: number;
+    impOpEx?: number;
+    impTotConc?: number;
+    iva?: Array<{ Id: number; BaseImp: number; Importe: number }>;
+  }>(request: T): T | null => {
+    if (!shouldBuildIvaFallback(request)) return null;
+
+    const total = Number.isFinite(request.impTotal) ? Math.max(request.impTotal, 0) : 0;
+    let net = Number.isFinite(request.impNeto) ? Math.max(request.impNeto, 0) : 0;
+    let ivaAmount = Number.isFinite(request.impIVA ?? Number.NaN) ? Math.max(request.impIVA ?? 0, 0) : 0;
+
+    if (ivaAmount <= 0) {
+      net = roundTo2(total / 1.21);
+      ivaAmount = roundTo2(total - net);
+    } else {
+      net = roundTo2(net);
+      ivaAmount = roundTo2(ivaAmount);
+    }
+
+    if (net <= 0 || ivaAmount < 0) return null;
+
+    return {
+      ...request,
+      impNeto: net,
+      impIVA: ivaAmount,
+      impOpEx: 0,
+      impTotConc: 0,
+      iva: [
+        {
+          Id: 5, // 21%
+          BaseImp: net,
+          Importe: ivaAmount,
+        },
+      ],
+    };
+  };
+
   const resolveLocalUploadPathFromPathname = (pathname: string): string | null => {
     const normalizedPath = (pathname || '').trim().split('?')[0];
     if (!normalizedPath) return null;
@@ -1028,6 +1087,15 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
             condicionIVAReceptorId: fallbackCondition,
           };
           result = await arcaService.issueInvoice(workspaceId, invoiceRequest);
+        }
+
+        const secondObservation = getArcaPrimaryObservation(result.raw);
+        if (!result.approved && secondObservation?.code === 10070) {
+          const withIvaFallback = buildIvaFallbackRequest(invoiceRequest);
+          if (withIvaFallback) {
+            invoiceRequest = withIvaFallback;
+            result = await arcaService.issueInvoice(workspaceId, invoiceRequest);
+          }
         }
 
         const rejectionObservation = getArcaPrimaryObservation(result.raw);
