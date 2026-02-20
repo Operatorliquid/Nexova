@@ -21,7 +21,7 @@ import {
 } from '../../utils/promotions.js';
 
 const promotionStatuses = ['draft', 'active', 'paused', 'archived', 'expired'] as const;
-const promotionTypes = ['percentage', 'fixed_price', 'second_unit_percentage', 'second_unit_fixed', 'buy_x_pay_y'] as const;
+const promotionTypes = ['percentage', 'fixed_price', 'second_unit_percentage', 'buy_x_pay_y'] as const;
 const campaignStatuses = ['draft', 'processing', 'completed', 'partial', 'failed', 'cancelled'] as const;
 const promotionRulesSchema = z.object({
   buyQuantity: z.coerce.number().int().min(2).max(100).optional(),

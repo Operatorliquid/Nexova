@@ -78,13 +78,6 @@ export function validatePromotionDefinition(params: {
     return { valid: true, normalizedRules: null };
   }
 
-  if (promoType === 'second_unit_fixed') {
-    if (value < 1) {
-      return { valid: false, message: 'El descuento de 2da unidad debe ser mayor a 0.' };
-    }
-    return { valid: true, normalizedRules: null };
-  }
-
   if (promoType === 'buy_x_pay_y') {
     const rulesRecord = asRecord(rules);
     const buyQuantity = readInt(rulesRecord?.buyQuantity) ?? DEFAULT_BUY_X_PAY_Y_RULES.buyQuantity;
@@ -123,9 +116,6 @@ export function getPromotionValueLabel(params: {
   if (promoType === 'second_unit_percentage') {
     const percent = Math.max(0, Math.min(100, value));
     return `${percent}% en 2da unidad`;
-  }
-  if (promoType === 'second_unit_fixed') {
-    return `$${Math.round(Math.max(0, value) / 100).toLocaleString('es-AR')} en 2da unidad`;
   }
   if (promoType === 'buy_x_pay_y') {
     const rules = getPromotionRules({ promoType, metadata });
@@ -188,23 +178,6 @@ export function calculatePromotionDiscount(params: {
       const discountedUnits = Math.floor(item.quantity / 2);
       if (discountedUnits <= 0) continue;
       const discountPerUnit = Math.round((item.unitPrice * percent) / 100);
-      totalDiscount += discountPerUnit * discountedUnits;
-    }
-
-    return { discount: totalDiscount, matchedSubtotal };
-  }
-
-  if (params.promotion.promoType === 'second_unit_fixed') {
-    const fixedDiscount = Math.max(0, params.promotion.value);
-    if (fixedDiscount <= 0) {
-      return { discount: 0, matchedSubtotal };
-    }
-
-    let totalDiscount = 0;
-    for (const item of matchedItems) {
-      const discountedUnits = Math.floor(item.quantity / 2);
-      if (discountedUnits <= 0) continue;
-      const discountPerUnit = Math.min(fixedDiscount, item.unitPrice);
       totalDiscount += discountPerUnit * discountedUnits;
     }
 

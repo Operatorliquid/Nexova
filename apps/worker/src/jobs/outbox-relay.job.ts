@@ -77,9 +77,6 @@ function buildPromotionValueLabel(params: {
     const percent = Math.max(0, Math.min(100, value));
     return `${percent}% OFF en la 2da unidad`;
   }
-  if (promoType === 'second_unit_fixed') {
-    return `$${formatMoneyCents(Math.max(0, value))} OFF en la 2da unidad`;
-  }
   if (promoType === 'buy_x_pay_y') {
     const rules = readPromotionRules(metadata) || { buyQuantity: 2, payQuantity: 1 };
     return `${rules.buyQuantity}x${rules.payQuantity}`;
