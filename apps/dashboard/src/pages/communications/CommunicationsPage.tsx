@@ -1007,75 +1007,150 @@ export default function CommunicationsPage(): JSX.Element {
               <h3 className="font-semibold text-foreground">Promociones configuradas</h3>
               <Badge variant="secondary">{promotions.length} items</Badge>
             </div>
-            {promotions.length === 0 ? (
-              <div className="p-6 text-sm text-muted-foreground">No hay promociones creadas todavia.</div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-border">
-                      <th className="text-left px-5 py-3 text-sm font-medium text-muted-foreground">Promo</th>
-                      <th className="text-left px-5 py-3 text-sm font-medium text-muted-foreground">Producto</th>
-                      <th className="text-left px-5 py-3 text-sm font-medium text-muted-foreground">Tipo</th>
-                      <th className="text-right px-5 py-3 text-sm font-medium text-muted-foreground">Pedidos</th>
-                      <th className="text-right px-5 py-3 text-sm font-medium text-muted-foreground">Ventas</th>
-                      <th className="text-center px-5 py-3 text-sm font-medium text-muted-foreground">Estado</th>
-                      <th className="text-left px-5 py-3 text-sm font-medium text-muted-foreground">Finaliza</th>
-                      <th className="text-right px-5 py-3 text-sm font-medium text-muted-foreground">Acciones</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {promotions.map((promotion) => (
-                      <tr key={promotion.id} className="border-b border-border last:border-0">
-                        <td className="px-5 py-4">
-                          <div className="flex items-start gap-3">
-                            {promotion.imageUrl ? (
-                              <ImageThumbnail src={promotion.imageUrl} alt={`Promo ${promotion.name}`} />
-                            ) : (
-                              <div className="w-12 h-12 rounded-lg border border-border bg-secondary/30 flex items-center justify-center shrink-0">
-                                <ImageIcon className="w-4 h-4 text-muted-foreground" />
-                              </div>
-                            )}
-                            <div className="min-w-0">
-                              <p className="font-medium text-foreground truncate">{promotion.name}</p>
-                              <p className="text-xs text-muted-foreground mt-0.5">
-                                {promotionValueLabel(promotion)}
-                              </p>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-5 py-4">
-                          <p className="text-sm text-foreground">{promotion.productName}</p>
-                          <p className="text-xs text-muted-foreground">Base: {formatCurrency(promotion.productPrice)}</p>
-                        </td>
-                        <td className="px-5 py-4 text-sm text-muted-foreground">
-                          {promotionTypeLabel(promotion.promoType)}
-                        </td>
-                        <td className="px-5 py-4 text-right text-sm text-foreground">{promotion.orderCount}</td>
-                        <td className="px-5 py-4 text-right text-sm text-foreground">{formatCurrency(promotion.revenue)}</td>
-                        <td className="px-5 py-4 text-center">
-                          <span className={`px-2 py-1 rounded-full text-xs ${statusClass(promotion.computedStatus)}`}>
-                            {statusLabel(promotion.computedStatus)}
-                          </span>
-                        </td>
-                        <td className="px-5 py-4 text-sm text-muted-foreground">{formatDate(promotion.endsAt)}</td>
-                        <td className="px-5 py-4 text-right">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => setPromotionToDelete(promotion)}
-                            className="text-red-300 hover:text-red-200 hover:bg-red-500/10"
-                          >
-                            <Trash2 className="w-4 h-4 mr-1.5" />
-                            Eliminar
-                          </Button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+            {isLoading ? (
+              <div className="flex items-center justify-center py-16">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
               </div>
+            ) : promotions.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-center">
+                <div className="w-14 h-14 rounded-2xl bg-secondary flex items-center justify-center mb-4">
+                  <Percent className="w-7 h-7 text-muted-foreground/50" />
+                </div>
+                <p className="text-muted-foreground">No hay promociones</p>
+                <p className="text-sm text-muted-foreground/50 mt-1">
+                  Crea tu primera promocion para empezar
+                </p>
+              </div>
+            ) : (
+              <>
+                {/* Mobile cards */}
+                <div className="md:hidden divide-y divide-border">
+                  {promotions.map((promotion) => (
+                    <div key={promotion.id} className="p-4 space-y-3">
+                      <div className="flex items-start gap-3">
+                        {promotion.imageUrl ? (
+                          <ImageThumbnail src={promotion.imageUrl} alt={`Promo ${promotion.name}`} />
+                        ) : (
+                          <div className="w-12 h-12 rounded-lg border border-border bg-secondary/30 flex items-center justify-center shrink-0">
+                            <ImageIcon className="w-4 h-4 text-muted-foreground" />
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="font-medium text-foreground truncate">{promotion.name}</p>
+                            <span className={`px-2.5 py-1 rounded-lg text-xs font-medium shrink-0 ${statusClass(promotion.computedStatus)}`}>
+                              {statusLabel(promotion.computedStatus)}
+                            </span>
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-0.5">{promotionValueLabel(promotion)}</p>
+                        </div>
+                      </div>
+                      <div className="space-y-1.5 text-sm">
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Producto</span>
+                          <span className="text-foreground">{promotion.productName}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Tipo</span>
+                          <span className="text-foreground">{promotionTypeLabel(promotion.promoType)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Pedidos</span>
+                          <span className="text-foreground">{promotion.orderCount}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Ventas</span>
+                          <span className="font-medium text-foreground">{formatCurrency(promotion.revenue)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Finaliza</span>
+                          <span className="text-foreground">{formatDate(promotion.endsAt)}</span>
+                        </div>
+                      </div>
+                      <div className="flex justify-end">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setPromotionToDelete(promotion)}
+                          className="text-red-300 hover:text-red-200 hover:bg-red-500/10"
+                        >
+                          <Trash2 className="w-4 h-4 mr-1.5" />
+                          Eliminar
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Desktop table */}
+                <div className="hidden md:block overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-border">
+                        <th className="text-left px-5 py-3 text-sm font-medium text-muted-foreground">Promo</th>
+                        <th className="text-left px-5 py-3 text-sm font-medium text-muted-foreground">Producto</th>
+                        <th className="text-left px-5 py-3 text-sm font-medium text-muted-foreground">Tipo</th>
+                        <th className="text-right px-5 py-3 text-sm font-medium text-muted-foreground">Pedidos</th>
+                        <th className="text-right px-5 py-3 text-sm font-medium text-muted-foreground">Ventas</th>
+                        <th className="text-center px-5 py-3 text-sm font-medium text-muted-foreground">Estado</th>
+                        <th className="text-left px-5 py-3 text-sm font-medium text-muted-foreground">Finaliza</th>
+                        <th className="text-right px-5 py-3 text-sm font-medium text-muted-foreground">Acciones</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {promotions.map((promotion) => (
+                        <tr key={promotion.id} className="border-b border-border last:border-0 hover:bg-secondary transition-colors">
+                          <td className="px-5 py-4">
+                            <div className="flex items-start gap-3">
+                              {promotion.imageUrl ? (
+                                <ImageThumbnail src={promotion.imageUrl} alt={`Promo ${promotion.name}`} />
+                              ) : (
+                                <div className="w-12 h-12 rounded-lg border border-border bg-secondary/30 flex items-center justify-center shrink-0">
+                                  <ImageIcon className="w-4 h-4 text-muted-foreground" />
+                                </div>
+                              )}
+                              <div className="min-w-0">
+                                <p className="font-medium text-foreground truncate">{promotion.name}</p>
+                                <p className="text-xs text-muted-foreground mt-0.5">
+                                  {promotionValueLabel(promotion)}
+                                </p>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-5 py-4">
+                            <p className="text-sm text-foreground">{promotion.productName}</p>
+                            <p className="text-xs text-muted-foreground">Base: {formatCurrency(promotion.productPrice)}</p>
+                          </td>
+                          <td className="px-5 py-4 text-sm text-muted-foreground">
+                            {promotionTypeLabel(promotion.promoType)}
+                          </td>
+                          <td className="px-5 py-4 text-right text-sm text-foreground">{promotion.orderCount}</td>
+                          <td className="px-5 py-4 text-right text-sm text-foreground">{formatCurrency(promotion.revenue)}</td>
+                          <td className="px-5 py-4 text-center">
+                            <span className={`px-2.5 py-1 rounded-lg text-xs font-medium ${statusClass(promotion.computedStatus)}`}>
+                              {statusLabel(promotion.computedStatus)}
+                            </span>
+                          </td>
+                          <td className="px-5 py-4 text-sm text-muted-foreground whitespace-nowrap">{formatDate(promotion.endsAt)}</td>
+                          <td className="px-5 py-4 text-right">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setPromotionToDelete(promotion)}
+                              className="text-red-300 hover:text-red-200 hover:bg-red-500/10"
+                            >
+                              <Trash2 className="w-4 h-4 mr-1.5" />
+                              Eliminar
+                            </Button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             )}
           </div>
         ) : (
@@ -1084,8 +1159,20 @@ export default function CommunicationsPage(): JSX.Element {
               <h3 className="font-semibold text-foreground">Campanas de difusion</h3>
               <Badge variant="secondary">{campaigns.length} items</Badge>
             </div>
-            {campaigns.length === 0 ? (
-              <div className="p-6 text-sm text-muted-foreground">No hay campanas enviadas todavia.</div>
+            {isLoading ? (
+              <div className="flex items-center justify-center py-16">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+              </div>
+            ) : campaigns.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-center">
+                <div className="w-14 h-14 rounded-2xl bg-secondary flex items-center justify-center mb-4">
+                  <Send className="w-7 h-7 text-muted-foreground/50" />
+                </div>
+                <p className="text-muted-foreground">No hay difusiones</p>
+                <p className="text-sm text-muted-foreground/50 mt-1">
+                  Envia tu primera difusion por WhatsApp
+                </p>
+              </div>
             ) : (
               <div className="divide-y divide-border">
                 {campaigns.map((campaign) => {
@@ -1109,7 +1196,7 @@ export default function CommunicationsPage(): JSX.Element {
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
-                          <span className={`px-2 py-1 rounded-full text-xs ${statusClass(campaign.status)}`}>
+                          <span className={`px-2.5 py-1 rounded-lg text-xs font-medium ${statusClass(campaign.status)}`}>
                             {statusLabel(campaign.status)}
                           </span>
                           <span className="text-xs text-muted-foreground">{formatDate(campaign.createdAt)}</span>
@@ -1291,13 +1378,19 @@ export default function CommunicationsPage(): JSX.Element {
                 />
               )}
             </div>
-            <Button
-              className="w-full"
-              disabled={isCreatingPromo || isCommunicationsLimitReached}
-              onClick={() => void handleCreatePromotion()}
-            >
-              {isCreatingPromo ? 'Creando...' : 'Crear promocion'}
-            </Button>
+            <div className="flex gap-3 w-full pt-4 border-t border-border">
+              <Button variant="secondary" className="flex-1" onClick={() => setIsPromoDialogOpen(false)} disabled={isCreatingPromo}>
+                Cancelar
+              </Button>
+              <Button
+                className="flex-1"
+                disabled={isCreatingPromo || isCommunicationsLimitReached}
+                onClick={() => void handleCreatePromotion()}
+                isLoading={isCreatingPromo}
+              >
+                Crear promocion
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
@@ -1386,13 +1479,19 @@ export default function CommunicationsPage(): JSX.Element {
               <Clock className="w-3.5 h-3.5" />
               El envio se procesa en cola y puede tardar algunos minutos.
             </div>
-            <Button
-              className="w-full"
-              disabled={isCreatingCampaign || isCommunicationsLimitReached}
-              onClick={() => void handleCreateCampaign()}
-            >
-              {isCreatingCampaign ? 'Encolando...' : 'Enviar difusion'}
-            </Button>
+            <div className="flex gap-3 w-full pt-4 border-t border-border">
+              <Button variant="secondary" className="flex-1" onClick={() => setIsCampaignDialogOpen(false)} disabled={isCreatingCampaign}>
+                Cancelar
+              </Button>
+              <Button
+                className="flex-1"
+                disabled={isCreatingCampaign || isCommunicationsLimitReached}
+                onClick={() => void handleCreateCampaign()}
+                isLoading={isCreatingCampaign}
+              >
+                Enviar difusion
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>

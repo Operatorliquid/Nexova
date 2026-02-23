@@ -12,6 +12,7 @@ export const DOWNLOADABLE_UPLOAD_CATEGORIES = new Set([
   'products',
   'catalogs',
   'orders',
+  'statements',
   'invoices',
   'receipts',
   'stock-receipts',

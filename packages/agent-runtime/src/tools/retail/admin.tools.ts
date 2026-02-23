@@ -13,7 +13,13 @@ import { type PrismaClient, Prisma } from '@prisma/client';
 import { type Queue } from 'bullmq';
 import { z } from 'zod';
 
-import { LedgerService, DEFAULT_DEBT_SETTINGS, StockPurchaseReceiptService, decrypt } from '@nexova/core';
+import {
+  AccountStatementPdfService,
+  LedgerService,
+  DEFAULT_DEBT_SETTINGS,
+  StockPurchaseReceiptService,
+  decrypt,
+} from '@nexova/core';
 import { COMMERCE_USAGE_METRICS, getCommercePlanCapabilities, QUEUES, type MessageSendPayload } from '@nexova/shared';
 
 import { buildProductDisplayName } from './product-utils.js';
@@ -25,6 +31,7 @@ import { resolveOrderReference } from '../../utils/order-reference.js';
 import { withVisibleOrders } from '../../utils/orders.js';
 import { fetchBinaryWithGuards } from '../../utils/remote-fetch-guard.js';
 import { extractStockReceiptWithClaude } from '../../utils/stock-receipt-claude.js';
+import { LocalFileUploader } from '../../utils/file-uploader.js';
 import { BaseTool } from '../base.js';
 
 const OWNER_PERIOD = z
@@ -150,6 +157,25 @@ const AdminSendDebtReminderInput = z
   })
   .refine((d) => d.customerId || d.phone || d.orderNumber, {
     message: 'Debe proporcionar customerId, phone u orderNumber',
+  });
+
+const AdminGetCustomerAccountStatementInput = z
+  .object({
+    customerId: z.string().uuid().optional(),
+    phone: PHONE_INPUT.optional(),
+    name: z.string().min(1).max(255).optional(),
+    asOf: z
+      .string()
+      .optional()
+      .describe('Fecha de corte ISO. Si se omite, usa fecha/hora actual.'),
+    sendToCustomer: z
+      .boolean()
+      .optional()
+      .default(false)
+      .describe('Si true, envía el PDF por WhatsApp al cliente además de devolverlo.'),
+  })
+  .refine((d) => d.customerId || d.phone || d.name, {
+    message: 'Debe proporcionar customerId, phone o name',
   });
 
 const AdminProcessStockReceiptInput = z.object({
@@ -1967,6 +1993,226 @@ export class AdminSendCustomerMessageTool extends BaseTool<typeof AdminSendCusto
   }
 }
 
+export class AdminGetCustomerAccountStatementTool extends BaseTool<typeof AdminGetCustomerAccountStatementInput> {
+  private prisma: PrismaClient;
+  private messageQueue: Queue<MessageSendPayload> | null;
+  private statementService: AccountStatementPdfService;
+  private fileUploader: LocalFileUploader;
+
+  constructor(prisma: PrismaClient, messageQueue?: Queue<MessageSendPayload> | null) {
+    super({
+      name: 'admin_get_customer_account_statement',
+      description:
+        'Genera el resumen de cuenta en PDF de un cliente (deuda + detalle) y opcionalmente lo envía por WhatsApp.',
+      category: ToolCategory.QUERY,
+      inputSchema: AdminGetCustomerAccountStatementInput,
+    });
+    this.prisma = prisma;
+    this.messageQueue = messageQueue ?? null;
+    this.statementService = new AccountStatementPdfService(prisma);
+    this.fileUploader = new LocalFileUploader();
+  }
+
+  private async resolveCustomerFromInput(
+    input: z.infer<typeof AdminGetCustomerAccountStatementInput>,
+    workspaceId: string
+  ): Promise<{
+    id: string;
+    phone: string;
+    firstName: string | null;
+    lastName: string | null;
+    businessName: string | null;
+  }> {
+    if (input.customerId) {
+      const customer = await this.prisma.customer.findFirst({
+        where: { id: input.customerId, workspaceId, deletedAt: null },
+        select: { id: true, phone: true, firstName: true, lastName: true, businessName: true },
+      });
+      if (!customer) throw new Error('Cliente no encontrado');
+      return customer;
+    }
+
+    if (input.phone) {
+      const customer = await resolveCustomerByPhone(this.prisma, workspaceId, input.phone);
+      if (!customer) throw new Error('Cliente no encontrado');
+      return {
+        id: customer.id,
+        phone: customer.phone,
+        firstName: customer.firstName,
+        lastName: customer.lastName,
+        businessName: customer.businessName,
+      };
+    }
+
+    const query = (input.name || '').trim();
+    const candidates = await this.prisma.customer.findMany({
+      where: {
+        workspaceId,
+        deletedAt: null,
+        OR: [
+          { firstName: { contains: query, mode: 'insensitive' } },
+          { lastName: { contains: query, mode: 'insensitive' } },
+          { businessName: { contains: query, mode: 'insensitive' } },
+        ],
+      },
+      take: 5,
+      orderBy: { lastSeenAt: 'desc' },
+      select: { id: true, phone: true, firstName: true, lastName: true, businessName: true },
+    });
+
+    if (candidates.length === 0) {
+      throw new Error('Cliente no encontrado');
+    }
+    if (candidates.length > 1) {
+      const names = candidates
+        .map((customer) =>
+          [customer.firstName, customer.lastName].filter(Boolean).join(' ').trim()
+          || customer.businessName
+          || customer.phone
+        )
+        .join(', ');
+      throw new Error(`Encontré varios clientes: ${names}. Especificá mejor.`);
+    }
+    return candidates[0];
+  }
+
+  async execute(
+    input: z.infer<typeof AdminGetCustomerAccountStatementInput>,
+    context: ToolContext
+  ): Promise<ToolResult> {
+    const guard = assertOwnerContext(context);
+    if (guard) return guard;
+
+    const plan = await resolveWorkspacePlan(this.prisma, context.workspaceId);
+    const capabilities = getCommercePlanCapabilities(plan);
+    if (!capabilities.showAccountStatementPdf) {
+      return { success: false, error: 'Tu plan actual no incluye resumen de cuenta en PDF.' };
+    }
+
+    try {
+      const customer = await this.resolveCustomerFromInput(input, context.workspaceId);
+      const asOf = input.asOf ? new Date(input.asOf) : undefined;
+      if (asOf && Number.isNaN(asOf.getTime())) {
+        return { success: false, error: 'Fecha de corte inválida. Usá formato ISO (ej: 2026-02-23).' };
+      }
+
+      const statement = await this.statementService.generateCustomerStatement(context.workspaceId, customer.id, {
+        asOf,
+      });
+
+      const fileUrl = await this.fileUploader.upload(
+        statement.buffer,
+        statement.filename,
+        'application/pdf',
+        context.workspaceId,
+        { category: 'statements' }
+      );
+
+      const customerName =
+        [customer.firstName, customer.lastName].filter(Boolean).join(' ').trim()
+        || customer.businessName
+        || customer.phone;
+
+      let sessionId: string | null = null;
+      if (input.sendToCustomer) {
+        if (!this.messageQueue) {
+          return {
+            success: false,
+            error: 'No hay cola de mensajes configurada para enviar por WhatsApp.',
+          };
+        }
+
+        const normalizedTo = normalizePhoneE164(customer.phone);
+        const channelIds = normalizePhoneCandidates(normalizedTo);
+        const existingSession = await this.prisma.agentSession.findFirst({
+          where: {
+            workspaceId: context.workspaceId,
+            channelType: 'whatsapp',
+            OR: channelIds.map((id) => ({ channelId: id })),
+          },
+          select: { id: true },
+        });
+
+        sessionId = existingSession
+          ? existingSession.id
+          : (
+            await this.prisma.agentSession.create({
+              data: {
+                workspaceId: context.workspaceId,
+                customerId: customer.id,
+                channelId: normalizedTo,
+                channelType: 'whatsapp',
+                currentState: 'IDLE',
+                agentActive: false,
+                metadata: { internalActor: 'owner_agent', contextStartAt: new Date().toISOString() } as Prisma.InputJsonValue,
+              },
+              select: { id: true },
+            })
+          ).id;
+
+        const caption = statement.totalDebt > 0
+          ? `📄 Resumen de cuenta actualizado. Total adeudado: $${formatMoneyNumber(statement.totalDebt)}.`
+          : '📄 Resumen de cuenta actualizado. No registra deuda pendiente.';
+
+        try {
+          await this.prisma.agentMessage.create({
+            data: {
+              sessionId,
+              role: 'assistant',
+              content: caption,
+              metadata: { internalActor: 'owner_agent', kind: 'account_statement' } as Prisma.InputJsonValue,
+            },
+          });
+        } catch {
+          // Non-fatal
+        }
+
+        await this.messageQueue.add(
+          `owner-account-statement-${customer.id}-${randomUUID().slice(0, 8)}`,
+          {
+            workspaceId: context.workspaceId,
+            sessionId,
+            to: normalizedTo,
+            messageType: 'media',
+            content: {
+              text: caption,
+              mediaUrl: fileUrl,
+              mediaType: 'document',
+            },
+            correlationId: context.correlationId,
+          },
+          {
+            attempts: QUEUES.MESSAGE_SEND.attempts,
+            backoff: QUEUES.MESSAGE_SEND.backoff,
+          }
+        );
+      }
+
+      return {
+        success: true,
+        data: {
+          customerId: customer.id,
+          customerName,
+          phone: customer.phone,
+          fileUrl,
+          filename: statement.filename,
+          totalDebt: statement.totalDebt,
+          unpaidOrders: statement.unpaidOrdersCount,
+          generatedAt: statement.generatedAt.toISOString(),
+          sentToCustomer: Boolean(input.sendToCustomer),
+          sessionId,
+          message: input.sendToCustomer
+            ? 'Resumen de cuenta generado y enviado al cliente por WhatsApp.'
+            : 'Resumen de cuenta generado correctamente.',
+        },
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'No se pudo generar el resumen de cuenta';
+      return { success: false, error: message };
+    }
+  }
+}
+
 function interpolateTemplate(template: string, vars: Record<string, string>): string {
   return template.replace(/\{(\w+)\}/g, (_match: string, key: string) => vars[key] || `{${key}}`);
 }
@@ -3724,6 +3970,7 @@ export function createAdminTools(
     new AdminCancelOrderTool(prisma),
     new AdminCreateOrderTool(prisma),
     new AdminSendCustomerMessageTool(prisma, deps.messageQueue),
+    new AdminGetCustomerAccountStatementTool(prisma, deps.messageQueue),
     new AdminSendDebtReminderTool(prisma, deps.messageQueue),
     new AdminAdjustPricesPercentTool(prisma),
     new AdminProcessStockReceiptTool(prisma),

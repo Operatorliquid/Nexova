@@ -29,10 +29,11 @@ const UPLOAD_DIR_CANDIDATES = resolveUploadDirCandidates(__dirname);
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
 const INTERNAL_MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
-const INTERNAL_ALLOWED_CATEGORIES = new Set(['catalogs', 'orders', 'invoices', 'stock-receipts']);
+const INTERNAL_ALLOWED_CATEGORIES = new Set(['catalogs', 'orders', 'statements', 'invoices', 'stock-receipts']);
 const WORKSPACE_SCOPED_CATEGORIES = new Set([
   'catalogs',
   'orders',
+  'statements',
   'invoices',
   'receipts',
   'stock-receipts',
@@ -68,6 +69,8 @@ function requiredPermissionForCategory(category: string): string {
       return 'products:read';
     case 'orders':
       return 'orders:read';
+    case 'statements':
+      return 'payments:read';
     case 'invoices':
     case 'receipts':
       return 'payments:read';

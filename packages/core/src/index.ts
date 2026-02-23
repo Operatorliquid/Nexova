@@ -56,6 +56,7 @@ export type { QueueConnection } from './queue/queue.service.js';
 
 // Ledger (Debt Management)
 export { LedgerService, LedgerServiceError } from './ledger/ledger.service.js';
+export { AccountStatementPdfService } from './ledger/account-statement-pdf.service.js';
 export type {
   LedgerEntryType,
   LedgerReferenceType,
@@ -76,6 +77,7 @@ export type {
   WorkspaceDebtSettings,
 } from './ledger/types.js';
 export { DEFAULT_DEBT_SETTINGS } from './ledger/types.js';
+export type { AccountStatementPdfResult } from './ledger/account-statement-pdf.service.js';
 
 // Catalog (PDF Generation)
 export { CatalogPdfService, CatalogError } from './catalog/catalog-pdf.service.js';

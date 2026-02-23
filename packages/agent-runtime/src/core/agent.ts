@@ -191,6 +191,7 @@ const INFO_TOOL_ALLOWLIST = new Set([
   'get_unpaid_orders',
   'get_payment_status',
   'send_catalog_pdf',
+  'send_account_statement_pdf',
   'generate_catalog_pdf',
   'send_pdf_whatsapp',
 ]);
@@ -212,6 +213,7 @@ const PAYMENT_TOOL_ALLOWLIST = new Set([
   'get_customer_debt',
   'get_customer_info',
   'get_customer_notes',
+  'send_account_statement_pdf',
 ]);
 
 const MEMORY_MUTATING_TOOLS = new Set([
@@ -459,6 +461,14 @@ export class RetailAgent {
       return input;
     }
 
+    if (toolName === 'admin_get_customer_account_statement') {
+      if (hasAny(['customerId', 'phone', 'name'])) return input;
+      if (focus.customerId) return { ...input, customerId: focus.customerId };
+      if (focus.customerPhone) return { ...input, phone: focus.customerPhone };
+      if (focus.customerName) return { ...input, name: focus.customerName };
+      return input;
+    }
+
     if (toolName === 'admin_get_order_details') {
       if (hasAny(['orderNumber'])) return input;
       if (focus.orderNumber) return { ...input, orderNumber: focus.orderNumber };
@@ -589,6 +599,15 @@ export class RetailAgent {
       if (inputCustomerId) patch.customerId = inputCustomerId;
       if (inputPhone) patch.customerPhone = inputPhone;
       if (inputOrderNumber) patch.orderNumber = inputOrderNumber;
+    }
+
+    if (toolName === 'admin_get_customer_account_statement' && data) {
+      const customerId = toTrimmedString(data.customerId);
+      if (customerId) patch.customerId = customerId;
+      const customerPhone = toTrimmedString(data.phone);
+      if (customerPhone) patch.customerPhone = customerPhone;
+      const customerName = toTrimmedString(data.customerName);
+      if (customerName) patch.customerName = customerName;
     }
 
     const hasPatch = Object.values(patch).some((v) => typeof v === 'string' && v.trim().length > 0);

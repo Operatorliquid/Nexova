@@ -11,7 +11,7 @@ import { fileURLToPath } from 'url';
 import Anthropic from '@anthropic-ai/sdk';
 import { type PrismaClient, Prisma } from '@prisma/client';
 
-import { LedgerService, CatalogPdfService, decrypt, logger } from '@nexova/core';
+import { AccountStatementPdfService, LedgerService, CatalogPdfService, decrypt, logger } from '@nexova/core';
 
 import {
   type QuickActionRequest,
@@ -28,6 +28,7 @@ import { buildOrderInvoiceStatusWhere, isOrderInvoiceStatus } from '../../utils/
 import { getPromotionValueLabel } from '../../utils/promotions.js';
 import { buildSignedUploadPath, resolveSignedUploadTtlSeconds } from '../../utils/upload-access.js';
 import { resolveUploadDir } from '../../utils/upload-dir.js';
+import { getWorkspacePlanContext } from '../../utils/commerce-plan.js';
 import { generateBusinessInsights } from '../analytics/insights.service.js';
 import { buildMetrics, normalizeRange } from '../analytics/metrics.service.js';
 
@@ -35,6 +36,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const UPLOAD_DIR = resolveUploadDir(__dirname);
 const CATALOG_DIR = path.join(UPLOAD_DIR, 'catalogs');
+const STATEMENTS_DIR = path.join(UPLOAD_DIR, 'statements');
 
 const UNIT_SHORT_LABELS: Record<string, string> = {
   unit: 'uds',
@@ -282,6 +284,7 @@ HERRAMIENTAS DISPONIBLES:
 - mark_notification_read(notificationId: string): Marcar notificación como leída
 - mark_all_notifications_read(): Marcar todas las notificaciones como leídas
 - generate_catalog_pdf(category?: string, search?: string): Generar catálogo PDF
+- generate_account_statement_pdf(customerId?: string, phone?: string, name?: string, asOf?: string): Generar resumen de cuenta PDF de un cliente
 - get_business_metrics(range?: 'today'|'week'|'month'|'30d'|'90d'|'12m'|'all'): Resumen de métricas del negocio
 - get_sales_summary(range?: 'today'|'week'|'month'|'30d'|'90d'|'12m'|'all', month?: number|string, year?: number, from?: string, to?: string): Resumen de ventas por período
 - get_low_stock_products(limit?: number, threshold?: number): Productos con stock bajo o agotado
@@ -919,6 +922,8 @@ export class QuickActionService {
         return this.toolMarkAllNotificationsRead(input, workspaceId);
       case 'generate_catalog_pdf':
         return this.toolGenerateCatalogPdf(input, workspaceId);
+      case 'generate_account_statement_pdf':
+        return this.toolGenerateAccountStatementPdf(input, workspaceId);
       case 'get_business_metrics':
         return this.toolGetBusinessMetrics(input, workspaceId);
       case 'get_sales_summary':
@@ -3189,6 +3194,51 @@ export class QuickActionService {
     };
   }
 
+  private async toolGenerateAccountStatementPdf(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
+    const planContext = await getWorkspacePlanContext(this.prisma, workspaceId);
+    if (!planContext.capabilities.showAccountStatementPdf) {
+      throw new Error('Tu plan actual no incluye resumen de cuenta en PDF.');
+    }
+
+    const customer = await this.resolveCustomer(input, workspaceId);
+
+    let asOf: Date | undefined;
+    if (typeof input.asOf === 'string' && input.asOf.trim()) {
+      const parsed = new Date(input.asOf);
+      if (Number.isNaN(parsed.getTime())) {
+        throw new Error('Fecha asOf inválida. Usá formato ISO (ej: 2026-02-23).');
+      }
+      asOf = parsed;
+    }
+
+    const statementService = new AccountStatementPdfService(this.prisma);
+    const statement = await statementService.generateCustomerStatement(workspaceId, customer.id, { asOf });
+
+    if (!existsSync(STATEMENTS_DIR)) {
+      await fs.mkdir(STATEMENTS_DIR, { recursive: true });
+    }
+
+    const safeFilename = statement.filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const storedFilename = `${workspaceId}-${Date.now()}-${randomUUID().slice(0, 8)}-${safeFilename}`;
+    const filepath = path.join(STATEMENTS_DIR, storedFilename);
+    await fs.writeFile(filepath, statement.buffer);
+
+    return {
+      data: {
+        customer: this.normalizeCustomerTotals(customer),
+        filename: statement.filename,
+        totalDebt: statement.totalDebt,
+        unpaidOrders: statement.unpaidOrdersCount,
+        generatedAt: statement.generatedAt.toISOString(),
+        url: buildSignedUploadPath({
+          category: 'statements',
+          filename: storedFilename,
+          ttlSeconds: resolveSignedUploadTtlSeconds(),
+        }),
+      },
+    };
+  }
+
   private async toolGetBusinessMetrics(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
     const range = typeof input.range === 'string' ? normalizeRange(input.range) : '90d';
     const metrics = await buildMetrics(this.prisma, workspaceId, range);
@@ -3752,6 +3802,7 @@ export class QuickActionService {
     const wantsTopCustomer = this.commandWantsTopCustomer(normalized);
     const wantsLowStock = this.commandWantsLowStock(normalized);
     const wantsPromotions = this.commandWantsPromotions(normalized);
+    const wantsAccountStatement = this.commandWantsAccountStatement(normalized);
     const wantsInsights = this.commandWantsInsights(normalized);
     const wantsProductStock = this.commandWantsProductStock(normalized);
     const inferredOrderStatus = this.inferOrderStatusFromCommand(normalized);
@@ -3764,6 +3815,15 @@ export class QuickActionService {
     const debtReminderBulk = this.extractDebtReminderBulkIntent(command);
     const debtReminderIntent = this.extractDebtReminderIntent(command);
     const customerIdentifier = this.extractCustomerIdentifierFromCommand(command);
+
+    if (wantsAccountStatement) {
+      return [
+        this.buildParsedToolCall(
+          'generate_account_statement_pdf',
+          customerIdentifier ? { ...customerIdentifier } : {}
+        ),
+      ];
+    }
 
     if (debtReminderBulk) {
       return [this.buildParsedToolCall('send_debt_reminders_bulk', {})];
@@ -4002,6 +4062,10 @@ export class QuickActionService {
       return [this.buildParsedToolCall('get_sales_summary', input)];
     }
 
+    if (this.commandWantsAccountStatement(normalized)) {
+      return [this.buildParsedToolCall('generate_account_statement_pdf', customerIdentifier || {})];
+    }
+
     if (this.commandWantsTopProduct(normalized)) {
       const input: Record<string, unknown> = {};
       if (monthRange) {
@@ -4128,6 +4192,18 @@ export class QuickActionService {
       normalized.includes('ofertas') ||
       normalized.includes('descuento') ||
       normalized.includes('descuentos')
+    );
+  }
+
+  private commandWantsAccountStatement(normalized: string): boolean {
+    return (
+      normalized.includes('resumen de cuenta') ||
+      normalized.includes('estado de cuenta') ||
+      normalized.includes('cuenta corriente') ||
+      normalized.includes('que debe') ||
+      normalized.includes('que debo') ||
+      normalized.includes('saldo adeudado') ||
+      normalized.includes('deuda hasta hoy')
     );
   }
 
@@ -4361,6 +4437,7 @@ export class QuickActionService {
       case 'get_customer_info':
       case 'get_customer_balance':
       case 'get_unpaid_orders':
+      case 'generate_account_statement_pdf':
       case 'update_customer':
       case 'send_debt_reminder':
       case 'open_conversation':
@@ -6516,6 +6593,33 @@ export class QuickActionService {
       if (url) {
         addOpenUrl('Descargar catálogo', url);
       }
+    }
+
+    const accountStatementResult = resultMap.get('generate_account_statement_pdf');
+    if (accountStatementResult?.success) {
+      const data = toRecord(accountStatementResult.data);
+      const customer = readRecord(data, 'customer');
+      const customerName = this.formatCustomerName(toCustomerNameInput(customer));
+      const totalDebt = readNumber(data, 'totalDebt') ?? 0;
+      const unpaidOrders = readNumber(data, 'unpaidOrders') ?? 0;
+      const url = readTrimmedString(data, 'url');
+      const customerId = readTrimmedString(customer, 'id');
+
+      if (totalDebt > 0) {
+        summaryLines.push(
+          `Resumen de cuenta de ${customerName}: deuda $${this.formatMoney(totalDebt)} en ${Math.trunc(unpaidOrders)} pedido(s).`
+        );
+      } else {
+        summaryLines.push(`Resumen de cuenta de ${customerName}: sin deuda pendiente.`);
+      }
+
+      if (url) {
+        addOpenUrl('Descargar resumen de cuenta', url);
+      }
+      if (customerId) {
+        addNavigate('Abrir cliente', '/customers', { customerId });
+      }
+      addNavigate('Ver deudas', '/debts');
     }
 
     const salesSummaryResult = resultMap.get('get_sales_summary');

@@ -6,7 +6,7 @@ import { Prisma } from '@prisma/client';
 import { type FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 
-import { LedgerService, decrypt } from '@nexova/core';
+import { AccountStatementPdfService, LedgerService, decrypt } from '@nexova/core';
 import { EvolutionClient, InfobipClient } from '@nexova/integrations/whatsapp';
 import { COMMERCE_USAGE_METRICS } from '@nexova/shared';
 
@@ -104,6 +104,7 @@ const createCustomerSchema = z.object({
 
 export const customersRoutes: FastifyPluginAsync = async (fastify) => {
   const ledgerService = new LedgerService(fastify.prisma);
+  const accountStatementService = new AccountStatementPdfService(fastify.prisma);
 
   const resolveWhatsAppApiKey = (number: { apiKeyEnc?: string | null; apiKeyIv?: string | null }): string => {
     const provider = ((number as { provider?: string | null }).provider || 'infobip').toLowerCase();
@@ -373,6 +374,64 @@ export const customersRoutes: FastifyPluginAsync = async (fastify) => {
 
       const orders = await ledgerService.getUnpaidOrders(workspaceId, id);
       return reply.send({ orders });
+    }
+  );
+
+  // Download account statement PDF for a customer
+  fastify.get<{ Params: { id: string }; Querystring: { asOf?: string } }>(
+    '/:id/account-statement/pdf',
+    { preHandler: [fastify.requirePermission('payments:read')] },
+    async (request, reply) => {
+      const workspaceId = request.headers['x-workspace-id'] as string;
+      if (!workspaceId) {
+        return reply.code(400).send({ error: 'MISSING_WORKSPACE', message: 'X-Workspace-Id header required' });
+      }
+
+      const membership = await fastify.prisma.membership.findFirst({
+        where: {
+          workspaceId,
+          userId: request.user!.sub,
+          status: { in: ['ACTIVE', 'active'] },
+        },
+        include: { role: { select: { name: true } } },
+      });
+      const planContext = await getWorkspacePlanContext(fastify.prisma, workspaceId, membership?.role?.name);
+      if (!planContext.capabilities.showAccountStatementPdf) {
+        return reply.code(403).send({
+          error: 'FORBIDDEN_BY_PLAN',
+          message: 'Tu plan actual no incluye resumen de cuenta en PDF',
+        });
+      }
+
+      const { id } = request.params;
+
+      const customer = await fastify.prisma.customer.findFirst({
+        where: { id, workspaceId, deletedAt: null },
+        select: { id: true },
+      });
+
+      if (!customer) {
+        return reply.code(404).send({ error: 'NOT_FOUND', message: 'Customer not found' });
+      }
+
+      let asOf: Date | undefined;
+      if (request.query.asOf) {
+        const parsed = new Date(request.query.asOf);
+        if (Number.isNaN(parsed.getTime())) {
+          return reply.code(400).send({ error: 'INVALID_DATE', message: 'asOf debe ser una fecha válida (ISO)' });
+        }
+        asOf = parsed;
+      }
+
+      const statement = await accountStatementService.generateCustomerStatement(workspaceId, id, {
+        asOf,
+      });
+
+      return reply
+        .header('Content-Type', 'application/pdf')
+        .header('Cache-Control', 'private, no-store')
+        .header('Content-Disposition', `inline; filename="${statement.filename}"`)
+        .send(statement.buffer);
     }
   );
 

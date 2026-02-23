@@ -7,7 +7,14 @@ import { randomUUID } from 'crypto';
 import { type Prisma, type PrismaClient } from '@prisma/client';
 import { z } from 'zod';
 
-import { CatalogPdfService, type CatalogOptions, type CatalogProductFilter, OrderReceiptPdfService, decrypt } from '@nexova/core';
+import {
+  AccountStatementPdfService,
+  CatalogPdfService,
+  type CatalogOptions,
+  type CatalogProductFilter,
+  OrderReceiptPdfService,
+  decrypt,
+} from '@nexova/core';
 import {
   EvolutionClient,
   EvolutionError,
@@ -1202,6 +1209,294 @@ export class SendOrderPdfTool extends BaseTool<typeof SendOrderPdfInput> {
 
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// SEND ACCOUNT STATEMENT PDF
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const SendAccountStatementPdfInput = z.object({
+  customerId: z.string().uuid().optional().describe('Opcional: ID de cliente (solo owner).'),
+});
+
+export class SendAccountStatementPdfTool extends BaseTool<typeof SendAccountStatementPdfInput> {
+  private prisma: PrismaClient;
+  private statementService: AccountStatementPdfService;
+  private fileUploader: LocalFileUploader;
+
+  constructor(prisma: PrismaClient) {
+    super({
+      name: 'send_account_statement_pdf',
+      description:
+        'Genera y envía por WhatsApp un resumen de cuenta en PDF con deuda vigente, detalle de pedidos y movimientos recientes.',
+      category: ToolCategory.MUTATION,
+      inputSchema: SendAccountStatementPdfInput,
+    });
+    this.prisma = prisma;
+    this.statementService = new AccountStatementPdfService(prisma);
+    this.fileUploader = new LocalFileUploader();
+  }
+
+  async execute(input: z.infer<typeof SendAccountStatementPdfInput>, context: ToolContext): Promise<ToolResult> {
+    const targetCustomerId = input.customerId?.trim() || context.customerId;
+
+    if (!context.isOwner && targetCustomerId !== context.customerId) {
+      return { success: false, error: 'Solo podés solicitar tu propio resumen de cuenta.' };
+    }
+
+    const workspace = await this.prisma.workspace.findUnique({
+      where: { id: context.workspaceId },
+      select: { plan: true, settings: true },
+    });
+    const workspaceSettings = (workspace?.settings as Record<string, unknown> | undefined) || {};
+    const plan = resolveCommercePlan({
+      workspacePlan: workspace?.plan,
+      settingsPlan: workspaceSettings.commercePlan,
+      fallback: 'pro',
+    });
+    const capabilities = getCommercePlanCapabilities(plan);
+    if (!capabilities.showAccountStatementPdf) {
+      return {
+        success: false,
+        error: 'Tu plan actual no incluye resumen de cuenta en PDF.',
+      };
+    }
+
+    try {
+      const customer = await this.prisma.customer.findFirst({
+        where: { id: targetCustomerId, workspaceId: context.workspaceId, deletedAt: null },
+        select: { id: true, phone: true, firstName: true, lastName: true, businessName: true },
+      });
+
+      if (!customer?.phone) {
+        return { success: false, error: 'No se encontró el cliente para generar el resumen.' };
+      }
+
+      const statement = await this.statementService.generateCustomerStatement(
+        context.workspaceId,
+        customer.id
+      );
+
+      const mediaUrl = await this.fileUploader.upload(
+        statement.buffer,
+        statement.filename || 'resumen_cuenta.pdf',
+        'application/pdf',
+        context.workspaceId,
+        { category: 'statements' }
+      );
+
+      const whatsappNumber = await this.prisma.whatsAppNumber.findFirst({
+        where: { workspaceId: context.workspaceId, isActive: true },
+      });
+
+      if (!whatsappNumber) {
+        return { success: false, error: 'No hay un número de WhatsApp activo para este comercio' };
+      }
+
+      const apiKey = this.resolveWhatsAppApiKey(whatsappNumber);
+      if (!apiKey) {
+        return { success: false, error: 'La API key de WhatsApp no está configurada' };
+      }
+
+      const to = this.normalizePhone(customer.phone);
+      const customerName = [customer.firstName, customer.lastName].filter(Boolean).join(' ').trim()
+        || customer.businessName
+        || 'cliente';
+      const caption = statement.totalDebt > 0
+        ? `📄 Resumen de cuenta de ${customerName}. Total adeudado: ${this.formatMoney(statement.totalDebt)}.`
+        : `📄 Resumen de cuenta de ${customerName}. Sin deuda pendiente al momento.`;
+
+      const provider = (whatsappNumber.provider || 'infobip').toLowerCase();
+      let result: { messageId: string; status: string; to: string };
+      if (provider === 'evolution') {
+        const baseUrl = this.resolveEvolutionBaseUrl(whatsappNumber.apiUrl);
+        const instanceName = this.getEvolutionInstanceName(whatsappNumber.providerConfig);
+        if (!baseUrl || !instanceName) {
+          return { success: false, error: 'Evolution no está configurado (baseUrl / instanceName).' };
+        }
+        const client = new EvolutionClient({ apiKey, baseUrl, instanceName });
+        result = await this.sendEvolutionPdfWithInlineFallback({
+          client,
+          to,
+          mediaUrl,
+          caption,
+          filename: statement.filename || 'resumen_cuenta.pdf',
+          buffer: statement.buffer,
+        });
+      } else {
+        const client = new InfobipClient({
+          apiKey,
+          baseUrl: this.resolveInfobipBaseUrl(whatsappNumber.apiUrl),
+          senderNumber: whatsappNumber.phoneNumber,
+        });
+        result = await client.sendDocument(to, mediaUrl, caption);
+      }
+
+      try {
+        await this.prisma.eventOutbox.create({
+          data: {
+            workspaceId: context.workspaceId,
+            eventType: 'message.sent',
+            aggregateType: 'Message',
+            aggregateId: result.messageId || randomUUID(),
+            payload: {
+              to,
+              content: {
+                mediaType: 'document',
+                mediaUrl,
+                text: caption,
+              },
+              status: result.status,
+            },
+            status: 'pending',
+            correlationId: context.correlationId || null,
+          },
+        });
+      } catch {
+        // Non-fatal
+      }
+
+      return {
+        success: true,
+        data: {
+          customerId: customer.id,
+          filename: statement.filename,
+          totalDebt: statement.totalDebt,
+          unpaidOrders: statement.unpaidOrdersCount,
+          message:
+            statement.totalDebt > 0
+              ? 'Resumen de cuenta enviado con deuda pendiente.'
+              : 'Resumen de cuenta enviado. El cliente no registra deuda pendiente.',
+        },
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        success: false,
+        error: `Error al generar o enviar el resumen de cuenta: ${message}`,
+      };
+    }
+  }
+
+  private normalizePhone(phone: string): string {
+    const trimmed = phone.trim();
+    const digits = trimmed.replace(/\D/g, '');
+    if (!digits) return trimmed;
+    return `+${digits}`;
+  }
+
+  private formatMoney(cents: number): string {
+    return `$${Math.round(cents / 100).toLocaleString('es-AR')}`;
+  }
+
+  private async sendEvolutionPdfWithInlineFallback(params: {
+    client: EvolutionClient;
+    to: string;
+    mediaUrl: string;
+    caption: string;
+    filename: string;
+    buffer: Buffer;
+  }): Promise<{ messageId: string; status: string; to: string }> {
+    const inlineDataUrl = this.buildPdfDataUrl(params.buffer);
+    const inlineRawBase64 = this.buildPdfRawBase64(params.buffer);
+    try {
+      return await params.client.sendDocument(params.to, inlineDataUrl, params.caption, {
+        mimetype: 'application/pdf',
+        fileName: params.filename,
+      });
+    } catch (inlineDataUrlError) {
+      if (!(inlineDataUrlError instanceof EvolutionError)) throw inlineDataUrlError;
+      try {
+        return await params.client.sendDocument(params.to, inlineRawBase64, params.caption, {
+          mimetype: 'application/pdf',
+          fileName: params.filename,
+        });
+      } catch (inlineRawError) {
+        if (!(inlineRawError instanceof EvolutionError)) throw inlineRawError;
+        try {
+          return await params.client.sendDocument(params.to, params.mediaUrl, params.caption, {
+            mimetype: 'application/pdf',
+            fileName: params.filename,
+          });
+        } catch (urlError) {
+          if (!(urlError instanceof EvolutionError)) throw urlError;
+          throw new Error(
+            `No se pudo enviar el resumen en PDF por Evolution (data-url: ${this.formatEvolutionError(inlineDataUrlError)} | base64: ${this.formatEvolutionError(inlineRawError)} | url: ${this.formatEvolutionError(urlError)})`
+          );
+        }
+      }
+    }
+  }
+
+  private buildPdfDataUrl(buffer: Buffer): string {
+    return `data:application/pdf;base64,${buffer.toString('base64')}`;
+  }
+
+  private buildPdfRawBase64(buffer: Buffer): string {
+    return buffer.toString('base64');
+  }
+
+  private formatEvolutionError(error: EvolutionError): string {
+    const response = (error.responseBody || '').trim();
+    if (response.length === 0) return `${error.statusCode}`;
+    const compact = response.replace(/\s+/g, ' ');
+    return `${error.statusCode} ${compact.slice(0, 240)}`;
+  }
+
+  private resolveWhatsAppApiKey(number: {
+    apiKeyEnc?: string | null;
+    apiKeyIv?: string | null;
+    provider?: string | null;
+  }): string {
+    const provider = (number.provider || 'infobip').toLowerCase();
+    if (provider === 'infobip') {
+      const envKey = (process.env.INFOBIP_API_KEY || '').trim();
+      if (envKey) return envKey;
+      if (number.apiKeyEnc && number.apiKeyIv) {
+        return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
+      }
+      return '';
+    }
+    if (provider === 'evolution') {
+      const envKey = (process.env.EVOLUTION_API_KEY || '').trim();
+      if (envKey) return envKey;
+      if (number.apiKeyEnc && number.apiKeyIv) {
+        return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
+      }
+      return '';
+    }
+    if (number.apiKeyEnc && number.apiKeyIv) {
+      return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
+    }
+    return '';
+  }
+
+  private resolveInfobipBaseUrl(apiUrl?: string | null): string {
+    const cleaned = (apiUrl || '').trim().replace(/\/$/, '');
+    const envUrl = (process.env.INFOBIP_BASE_URL || '').trim().replace(/\/$/, '');
+    const defaultUrl = 'https://api.infobip.com';
+
+    if (cleaned && cleaned.toLowerCase() !== defaultUrl) {
+      return cleaned;
+    }
+    if (envUrl) {
+      return envUrl;
+    }
+    return cleaned || defaultUrl;
+  }
+
+  private resolveEvolutionBaseUrl(apiUrl?: string | null): string {
+    const cleaned = (apiUrl || '').trim().replace(/\/$/, '');
+    const envUrl = (process.env.EVOLUTION_BASE_URL || '').trim().replace(/\/$/, '');
+    return cleaned || envUrl;
+  }
+
+  private getEvolutionInstanceName(providerConfig: unknown): string {
+    if (!providerConfig || typeof providerConfig !== 'object') return '';
+    const cfg = providerConfig as Record<string, unknown>;
+    const value = cfg.instanceName ?? cfg.instance ?? cfg.name;
+    return typeof value === 'string' ? value.trim() : '';
+  }
+}
+
 /**
  * Create all commerce tools
  */
@@ -1215,6 +1510,7 @@ export function createCommerceTools(
     new ProcessPaymentReceiptTool(prisma),
     new ListActivePromotionsTool(prisma),
     new SendCatalogPdfTool(prisma),
+    new SendAccountStatementPdfTool(prisma),
     new SendOrderPdfTool(prisma),
   ];
 }

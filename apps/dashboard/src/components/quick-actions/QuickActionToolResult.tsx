@@ -500,6 +500,39 @@ export function QuickActionToolResult({ tool }: { tool: ToolExecutionResult }): 
     );
   }
 
+  if (tool.toolName === 'generate_account_statement_pdf' && tool.data && typeof tool.data === 'object') {
+    const data = asRecord(tool.data);
+    const customer = asRecord(data?.customer);
+    const url = readString(data, 'url');
+    const totalDebt = readNumber(data, 'totalDebt');
+    const unpaidOrders = readCount(data, 'unpaidOrders');
+
+    return (
+      <ResultSection title="Resumen de cuenta">
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-muted-foreground">Cliente</span>
+          <span className="text-foreground">{getDisplayName(customer)}</span>
+        </div>
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-muted-foreground">Deuda</span>
+          <span className="font-medium text-foreground">${formatMoney(totalDebt)}</span>
+        </div>
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-muted-foreground">Pedidos pendientes</span>
+          <span className="text-foreground">{unpaidOrders}</span>
+        </div>
+        {url && (
+          <button
+            onClick={() => window.open(url, '_blank')}
+            className="w-full h-9 rounded-xl bg-secondary hover:bg-secondary/80 text-sm text-foreground border border-border transition-all"
+          >
+            Descargar resumen PDF
+          </button>
+        )}
+      </ResultSection>
+    );
+  }
+
   return (
     <ResultSection title="Resultado">
       <p className="text-sm text-muted-foreground">Acción completada.</p>

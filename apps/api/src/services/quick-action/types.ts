@@ -233,6 +233,13 @@ export const TOOL_POLICIES: Record<string, ToolPolicy> = {
     allowedRoles: ['owner', 'admin', 'staff'],
     description: 'Generar catálogo PDF',
   },
+  generate_account_statement_pdf: {
+    name: 'generate_account_statement_pdf',
+    riskLevel: 'safe',
+    requiresConfirmation: false,
+    allowedRoles: ['owner', 'admin', 'staff'],
+    description: 'Generar resumen de cuenta PDF de un cliente',
+  },
   get_business_metrics: {
     name: 'get_business_metrics',
     riskLevel: 'safe',
@@ -441,6 +448,7 @@ export const COMMAND_SUGGESTIONS = [
   { command: 'listar productos', example: 'listar productos', description: 'Muestra productos activos' },
   { command: 'stock de', example: 'stock de cerveza quilmes', description: 'Ver stock de un producto' },
   { command: 'deuda de', example: 'deuda de cliente Juan', description: 'Ver deuda de un cliente' },
+  { command: 'resumen de cuenta', example: 'resumen de cuenta de Juan Pérez', description: 'Genera el resumen de cuenta PDF de un cliente' },
   { command: 'deudores', example: 'clientes con deuda', description: 'Lista clientes con deuda' },
   { command: 'recordar deuda', example: 'enviar recordatorio de deuda a cliente Juan', description: '⚠️ Envía recordatorio de deuda (requiere confirmación)' },
   { command: 'recordar deuda a todos', example: 'enviar recordatorio de deuda a todos los clientes', description: '⚠️ Envía recordatorio masivo (requiere confirmación)' },

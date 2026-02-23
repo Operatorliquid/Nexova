@@ -4,6 +4,8 @@
  */
 
 export { LedgerService, LedgerServiceError } from './ledger.service.js';
+export { AccountStatementPdfService } from './account-statement-pdf.service.js';
+export type { AccountStatementPdfResult } from './account-statement-pdf.service.js';
 
 export type {
   LedgerEntryType,

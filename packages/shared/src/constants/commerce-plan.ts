@@ -9,6 +9,7 @@ export interface CommercePlanCapabilities {
   showCommunicationsModule: boolean;
   showInvoicesModule: boolean;
   showDebtsModule: boolean;
+  showAccountStatementPdf: boolean;
   showQuickActions: boolean;
   showMetricsAiInsights: boolean;
   showMetricsStockExpenseCard: boolean;
@@ -47,6 +48,7 @@ const PLAN_CAPABILITIES: Record<CommercePlan, CommercePlanCapabilities> = {
     showCommunicationsModule: false,
     showInvoicesModule: false,
     showDebtsModule: false,
+    showAccountStatementPdf: false,
     showQuickActions: false,
     showMetricsAiInsights: false,
     showMetricsStockExpenseCard: false,
@@ -65,6 +67,7 @@ const PLAN_CAPABILITIES: Record<CommercePlan, CommercePlanCapabilities> = {
     showCommunicationsModule: true,
     showInvoicesModule: true,
     showDebtsModule: true,
+    showAccountStatementPdf: true,
     showQuickActions: false,
     showMetricsAiInsights: true,
     showMetricsStockExpenseCard: true,
@@ -83,6 +86,7 @@ const PLAN_CAPABILITIES: Record<CommercePlan, CommercePlanCapabilities> = {
     showCommunicationsModule: true,
     showInvoicesModule: true,
     showDebtsModule: true,
+    showAccountStatementPdf: true,
     showQuickActions: true,
     showMetricsAiInsights: true,
     showMetricsStockExpenseCard: true,
