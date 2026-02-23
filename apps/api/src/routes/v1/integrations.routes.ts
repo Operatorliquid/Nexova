@@ -35,13 +35,77 @@ import {
 } from '../../utils/upload-access.js';
 import { resolveUploadDir, resolveUploadDirCandidates } from '../../utils/upload-dir.js';
 
+const MP_CALLBACK_PATH = '/api/v1/integrations/mercadopago/callback';
+
+const trimEnvValue = (value: string | undefined): string => (value || '').trim();
+
+const isLocalhostUrl = (value: string): boolean => {
+  try {
+    const parsed = new URL(value);
+    const host = parsed.hostname.toLowerCase();
+    return host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0';
+  } catch {
+    return false;
+  }
+};
+
+const resolvePublicApiBaseFromEnv = (): string | null => {
+  const candidates = [
+    process.env.API_BASE_URL,
+    process.env.API_PUBLIC_URL,
+    process.env.PUBLIC_API_URL,
+    process.env.PUBLIC_BASE_URL,
+    process.env.BASE_URL,
+    process.env.API_URL,
+  ];
+  for (const value of candidates) {
+    const trimmed = trimEnvValue(value).replace(/\/$/, '');
+    if (trimmed && !isLocalhostUrl(trimmed)) return trimmed;
+  }
+  return null;
+};
+
+const resolveMercadoPagoRedirectUri = (): string => {
+  const explicit = trimEnvValue(process.env.MP_REDIRECT_URI);
+  if (explicit && !isLocalhostUrl(explicit)) {
+    return explicit;
+  }
+
+  const base = resolvePublicApiBaseFromEnv();
+  if (base) {
+    return `${base}${MP_CALLBACK_PATH}`;
+  }
+
+  if (explicit) return explicit;
+  return `http://localhost:3000${MP_CALLBACK_PATH}`;
+};
+
 // MercadoPago config from environment
 const getMercadoPagoConfig = (): MercadoPagoConfig => ({
-  clientId: process.env.MP_CLIENT_ID || '',
-  clientSecret: process.env.MP_CLIENT_SECRET || '',
-  redirectUri: process.env.MP_REDIRECT_URI || 'http://localhost:3000/api/v1/integrations/mercadopago/callback',
+  clientId: trimEnvValue(process.env.MP_CLIENT_ID),
+  clientSecret: trimEnvValue(process.env.MP_CLIENT_SECRET),
+  redirectUri: resolveMercadoPagoRedirectUri(),
   sandbox: process.env.MP_SANDBOX === 'true',
 });
+
+const validateMercadoPagoConfig = (
+  config: MercadoPagoConfig
+): { ok: boolean; errors: string[] } => {
+  const errors: string[] = [];
+  if (!config.clientId) errors.push('Falta MP_CLIENT_ID');
+  if (!config.clientSecret) errors.push('Falta MP_CLIENT_SECRET');
+  if (!config.redirectUri) {
+    errors.push('Falta MP_REDIRECT_URI (o API_BASE_URL/API_PUBLIC_URL)');
+  } else {
+    if (!/^https?:\/\//i.test(config.redirectUri)) {
+      errors.push('MP_REDIRECT_URI no es una URL válida');
+    }
+    if (process.env.NODE_ENV === 'production' && isLocalhostUrl(config.redirectUri)) {
+      errors.push('MP_REDIRECT_URI no puede apuntar a localhost en producción');
+    }
+  }
+  return { ok: errors.length === 0, errors };
+};
 
 export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
   // Initialize services
@@ -658,6 +722,23 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
       const workspaceId = request.workspaceId;
       if (!workspaceId) {
         return reply.status(400).send({ error: 'Workspace required' });
+      }
+      const configCheck = validateMercadoPagoConfig(mpConfig);
+      if (!configCheck.ok) {
+        request.log.error(
+          {
+            workspaceId,
+            errors: configCheck.errors,
+            redirectUri: mpConfig.redirectUri,
+            sandbox: mpConfig.sandbox,
+            hasClientId: Boolean(mpConfig.clientId),
+            hasClientSecret: Boolean(mpConfig.clientSecret),
+          },
+          'MercadoPago OAuth config is invalid'
+        );
+        return reply.status(500).send({
+          error: `Configuración de MercadoPago incompleta: ${configCheck.errors.join(' · ')}`,
+        });
       }
       const enabled = await assertMercadoPagoEnabled(workspaceId, request.user!.sub);
       if (!enabled.ok) {
