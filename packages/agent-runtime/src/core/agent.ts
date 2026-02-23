@@ -1091,6 +1091,9 @@ export class RetailAgent {
         currentState: fsm.getState(),
         channelType: normalizedChannelType,
       };
+      const wantsAccountStatementPdf =
+        wasAccountStatementExplicitlyRequested(message) ||
+        await this.isAccountStatementPdfFollowUp({ message, sessionId });
 
       const normalizedMessage = message.toLowerCase().trim();
       const wantsHuman = HANDOFF_KEYWORDS.some((keyword) => normalizedMessage.includes(keyword));
@@ -1583,7 +1586,7 @@ export class RetailAgent {
           };
         }
 
-        if (wasAccountStatementExplicitlyRequested(message)) {
+        if (wantsAccountStatementPdf) {
           await this.storeMessage(sessionId, 'user', message, messageId);
 
           const execution = await toolRegistry.execute(
@@ -6702,7 +6705,7 @@ export class RetailAgent {
         }
       }
 
-      if (wasAccountStatementExplicitlyRequested(message)) {
+      if (wantsAccountStatementPdf) {
         await this.storeMessage(sessionId, 'user', message, messageId);
 
         const execution = await toolRegistry.execute(
@@ -8571,6 +8574,47 @@ export class RetailAgent {
   private normalizePhoneDigits(phone: string): string {
     return phone.trim().replace(/\D/g, '');
   }
+
+  private async isAccountStatementPdfFollowUp(params: {
+    message: string;
+    sessionId: string;
+  }): Promise<boolean> {
+    const normalized = normalizeSimpleText(params.message);
+    if (!normalized) return false;
+
+    const asksForPdfSummary = normalized.includes('resumen') && normalized.includes('pdf');
+    if (!asksForPdfSummary) return false;
+
+    const mentionsOrder = normalized.includes('pedido') || normalized.includes('orden');
+    if (mentionsOrder) return false;
+
+    const lastAssistant = await this.prisma.agentMessage.findFirst({
+      where: { sessionId: params.sessionId, role: 'assistant' },
+      orderBy: { createdAt: 'desc' },
+      select: { content: true, createdAt: true },
+    });
+
+    if (!lastAssistant) return false;
+    if (Date.now() - lastAssistant.createdAt.getTime() > 30 * 60 * 1000) return false;
+
+    const previous = normalizeSimpleText(lastAssistant.content);
+    if (!previous) return false;
+
+    const accountContextMarkers = [
+      'resumen de cuenta',
+      'estado de cuenta',
+      'saldo actual',
+      'saldo adeudado',
+      'total adeudado',
+      'pedidos impagos',
+      'ultimos pagos',
+      'últimos pagos',
+      'deuda pendiente',
+      'debes',
+    ];
+
+    return accountContextMarkers.some((marker) => previous.includes(marker));
+  }
 }
 
 function isNegativeSentiment(normalizedMessage: string): boolean {
@@ -9653,7 +9697,17 @@ function wasAccountStatementExplicitlyRequested(message: string): boolean {
     'que debe',
   ];
 
-  return phrases.some((phrase) => normalized.includes(phrase));
+  if (phrases.some((phrase) => normalized.includes(phrase))) return true;
+
+  const asksForPdfSummary = normalized.includes('resumen') && normalized.includes('pdf');
+  const accountHints =
+    normalized.includes('cuenta') ||
+    normalized.includes('deuda') ||
+    normalized.includes('saldo') ||
+    normalized.includes('adeud');
+  const mentionsOrder = normalized.includes('pedido') || normalized.includes('orden');
+
+  return asksForPdfSummary && accountHints && !mentionsOrder;
 }
 
 function isGreetingMessage(message: string): boolean {
