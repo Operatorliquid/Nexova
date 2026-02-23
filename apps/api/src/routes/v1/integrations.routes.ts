@@ -746,6 +746,32 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
       }
 
       const { url, state } = mpService.getAuthorizationUrl(workspaceId);
+      try {
+        const parsedUrl = new URL(url);
+        request.log.warn(
+          {
+            workspaceId,
+            redirectUri: mpConfig.redirectUri,
+            authOrigin: parsedUrl.origin,
+            authPath: parsedUrl.pathname,
+            hasPkce: parsedUrl.searchParams.has('code_challenge'),
+            challengeMethod: parsedUrl.searchParams.get('code_challenge_method'),
+            hasPlatformId: parsedUrl.searchParams.has('platform_id'),
+            platformId: parsedUrl.searchParams.get('platform_id'),
+            statePrefix: state.slice(0, 16),
+          },
+          'MercadoPago OAuth auth-url generated'
+        );
+      } catch {
+        request.log.warn(
+          {
+            workspaceId,
+            redirectUri: mpConfig.redirectUri,
+            statePrefix: state.slice(0, 16),
+          },
+          'MercadoPago OAuth auth-url generated (could not parse URL)'
+        );
+      }
 
       // State contains workspaceId.timestamp.random and is validated in handleOAuthCallback
       return reply.send({ url, state });
@@ -771,6 +797,14 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
     },
     handler: async (request, reply) => {
       const { code, state, error } = request.query;
+      request.log.warn(
+        {
+          hasCode: Boolean(code),
+          hasState: Boolean(state),
+          oauthError: error || null,
+        },
+        'MercadoPago OAuth callback received'
+      );
 
       // Redirect URL for dashboard
       const dashboardUrl = process.env.DASHBOARD_URL || 'http://localhost:5173';

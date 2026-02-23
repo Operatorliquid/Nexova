@@ -27,6 +27,7 @@ const __dirname = path.dirname(__filename);
 const UPLOAD_DIR = resolveUploadDir(__dirname);
 const UPLOAD_DIR_CANDIDATES = resolveUploadDirCandidates(__dirname);
 const UPLOAD_BASE_DIRS = Array.from(new Set([UPLOAD_DIR, ...UPLOAD_DIR_CANDIDATES]));
+const DB_BACKUP_CATEGORIES = new Set(['products']);
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
 const INTERNAL_MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
@@ -84,6 +85,31 @@ async function mirrorUploadFileAcrossCandidates(
           error,
         },
         'Could not mirror uploaded file into candidate upload directory'
+      );
+    }
+  }));
+}
+
+async function mirrorUploadBufferAcrossCandidates(
+  category: string,
+  filename: string,
+  buffer: Buffer,
+  log: FastifyRequest['log']
+): Promise<void> {
+  const candidatePaths = resolveUploadFileCandidates(category, filename);
+  await Promise.all(candidatePaths.map(async (targetPath) => {
+    try {
+      await fs.mkdir(path.dirname(targetPath), { recursive: true });
+      await fs.writeFile(targetPath, buffer);
+    } catch (error) {
+      log.warn(
+        {
+          category,
+          filename,
+          targetPath,
+          error,
+        },
+        'Could not hydrate upload buffer into candidate path'
       );
     }
   }));
@@ -162,6 +188,86 @@ export async function uploadsRoutes(app: FastifyInstance): Promise<void> {
   if (!existsSync(primaryProductsDir)) {
     mkdirSync(primaryProductsDir, { recursive: true });
   }
+
+  let dbBackupsAvailable = false;
+  try {
+    await app.prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS upload_file_backups (
+        category VARCHAR(64) NOT NULL,
+        filename VARCHAR(255) NOT NULL,
+        mime_type VARCHAR(255) NOT NULL,
+        content BYTEA NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (category, filename)
+      )
+    `);
+    dbBackupsAvailable = true;
+  } catch (error) {
+    app.log.warn({ error }, 'Could not ensure upload_file_backups table');
+  }
+
+  const persistUploadBackup = async (
+    category: string,
+    filename: string,
+    mimeType: string,
+    content: Buffer
+  ): Promise<void> => {
+    if (!dbBackupsAvailable || !DB_BACKUP_CATEGORIES.has(category)) return;
+    try {
+      await app.prisma.$executeRaw`
+        INSERT INTO upload_file_backups (category, filename, mime_type, content, size_bytes, updated_at)
+        VALUES (${category}, ${filename}, ${mimeType}, ${content}, ${content.length}, NOW())
+        ON CONFLICT (category, filename)
+        DO UPDATE SET
+          mime_type = EXCLUDED.mime_type,
+          content = EXCLUDED.content,
+          size_bytes = EXCLUDED.size_bytes,
+          updated_at = NOW()
+      `;
+    } catch (error) {
+      app.log.warn(
+        {
+          category,
+          filename,
+          error,
+        },
+        'Could not persist upload backup into database'
+      );
+    }
+  };
+
+  const readUploadBackup = async (
+    category: string,
+    filename: string
+  ): Promise<{ mimeType: string; content: Buffer } | null> => {
+    if (!dbBackupsAvailable || !DB_BACKUP_CATEGORIES.has(category)) return null;
+    try {
+      const rows = await app.prisma.$queryRaw<Array<{ mime_type: string; content: Buffer }>>`
+        SELECT mime_type, content
+        FROM upload_file_backups
+        WHERE category = ${category}
+          AND filename = ${filename}
+        LIMIT 1
+      `;
+      if (!rows.length || !rows[0]?.content) return null;
+      return {
+        mimeType: rows[0].mime_type || inferContentType(filename),
+        content: rows[0].content,
+      };
+    } catch (error) {
+      app.log.warn(
+        {
+          category,
+          filename,
+          error,
+        },
+        'Could not read upload backup from database'
+      );
+      return null;
+    }
+  };
 
   /**
    * GET /uploads/file/:category/:filename
@@ -242,6 +348,15 @@ export async function uploadsRoutes(app: FastifyInstance): Promise<void> {
 
       const { filePath, attemptedPaths } = resolveExistingUploadFile(category, filename);
       if (!filePath) {
+        const backup = await readUploadBackup(category, filename);
+        if (backup) {
+          await mirrorUploadBufferAcrossCandidates(category, filename, backup.content, request.log);
+          void reply.header('Content-Type', backup.mimeType);
+          void reply.header('Content-Length', String(backup.content.length));
+          void reply.header('Cache-Control', hasValidSignature ? 'private, max-age=300' : 'private, no-store');
+          return reply.send(backup.content);
+        }
+
         request.log.warn(
           {
             category,
@@ -315,6 +430,8 @@ export async function uploadsRoutes(app: FastifyInstance): Promise<void> {
         // Save file
         await pipeline(data.file, createWriteStream(filepath));
         await mirrorUploadFileAcrossCandidates('products', filename, filepath, request.log);
+        const storedBuffer = await fs.readFile(filepath);
+        await persistUploadBackup('products', filename, data.mimetype, storedBuffer);
 
         // Return relative URL (will work with any domain)
         const imageUrl = `/uploads/products/${filename}`;
