@@ -4,7 +4,7 @@
  */
 import { randomUUID } from 'crypto';
 
-import { type Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { type FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 
@@ -31,6 +31,7 @@ const promotionRulesSchema = z.object({
 const promotionsQuerySchema = z.object({
   search: z.string().optional(),
   status: z.enum(promotionStatuses).optional(),
+  includeHidden: z.coerce.boolean().default(false),
   limit: z.coerce.number().int().min(1).max(200).default(50),
   offset: z.coerce.number().int().min(0).default(0),
 });
@@ -155,6 +156,39 @@ function readPromotionRules(metadata: Prisma.JsonValue | null | undefined): Prom
 
   if (!buyQuantity || !payQuantity) return null;
   return { buyQuantity, payQuantity };
+}
+
+type PromotionMetadataRecord = Record<string, unknown>;
+
+function asPromotionMetadataRecord(value: Prisma.JsonValue | null | undefined): PromotionMetadataRecord {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return { ...(value as Record<string, unknown>) };
+}
+
+function buildVisiblePromotionsWhere(): Prisma.PromotionWhereInput {
+  return {
+    OR: [
+      { metadata: { equals: Prisma.AnyNull } },
+      { metadata: { path: ['dashboard'], equals: Prisma.AnyNull } },
+      { metadata: { path: ['dashboard', 'hidden'], equals: Prisma.AnyNull } },
+      { metadata: { path: ['dashboard', 'hidden'], equals: false } },
+      { metadata: { path: ['dashboard', 'hidden'], equals: 'false' } },
+    ],
+  };
+}
+
+function hidePromotionInMetadata(metadata: Prisma.JsonValue | null | undefined, userId?: string | null): Prisma.InputJsonObject {
+  const nextMetadata = asPromotionMetadataRecord(metadata);
+  const currentDashboardRaw = nextMetadata.dashboard;
+  const currentDashboard =
+    currentDashboardRaw && typeof currentDashboardRaw === 'object' && !Array.isArray(currentDashboardRaw)
+      ? { ...(currentDashboardRaw as Record<string, unknown>) }
+      : {};
+  currentDashboard.hidden = true;
+  currentDashboard.hiddenAt = new Date().toISOString();
+  currentDashboard.hiddenBy = userId || null;
+  nextMetadata.dashboard = currentDashboard;
+  return nextMetadata as Prisma.InputJsonObject;
 }
 
 type CommunicationsUsageSummary = {
@@ -357,6 +391,10 @@ export const communicationsRoutes: FastifyPluginAsync = async (fastify) => {
             ],
           });
         }
+      }
+
+      if (!query.includeHidden) {
+        andConditions.push(buildVisiblePromotionsWhere());
       }
 
       if (andConditions.length > 0) {
@@ -703,6 +741,57 @@ export const communicationsRoutes: FastifyPluginAsync = async (fastify) => {
             metadata: updated.metadata,
           }),
           computedStatus: computePromotionStatus(updated.status, updated.startsAt, updated.endsAt),
+        },
+      });
+    }
+  );
+
+  fastify.delete(
+    '/promotions/:id',
+    { preHandler: [fastify.requirePermission('products:update')] },
+    async (request, reply) => {
+      const workspaceId = getWorkspaceId(request.headers as Record<string, unknown>);
+      if (!workspaceId) {
+        return reply.code(400).send({ error: 'MISSING_WORKSPACE', message: 'X-Workspace-Id header required' });
+      }
+      const planAccess = await ensureCommunicationsEnabled(workspaceId, request.user?.sub);
+      if (!planAccess) {
+        return reply.code(403).send({
+          error: 'FORBIDDEN_BY_PLAN',
+          message: 'Tu plan actual no incluye el módulo de comunicación',
+        });
+      }
+
+      const { id } = request.params as { id: string };
+      const existing = await fastify.prisma.promotion.findFirst({
+        where: { id, workspaceId, deletedAt: null },
+        select: {
+          id: true,
+          name: true,
+          metadata: true,
+        },
+      });
+      if (!existing) {
+        return reply.code(404).send({ error: 'NOT_FOUND', message: 'Promocion no encontrada' });
+      }
+
+      const updated = await fastify.prisma.promotion.update({
+        where: { id: existing.id },
+        data: {
+          metadata: hidePromotionInMetadata(existing.metadata, request.user?.sub),
+        },
+        select: {
+          id: true,
+          name: true,
+        },
+      });
+
+      return reply.send({
+        ok: true,
+        promotion: {
+          id: updated.id,
+          name: updated.name,
+          hidden: true,
         },
       });
     }

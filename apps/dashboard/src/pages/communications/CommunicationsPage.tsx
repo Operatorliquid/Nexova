@@ -9,9 +9,11 @@ import {
   Search,
   Upload,
   X,
+  Trash2,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { DeleteConfirmModal } from '../../components/stock';
 import {
   AnimatedPage,
   AnimatedStagger,
@@ -291,6 +293,20 @@ function statusClass(status: string): string {
   return 'bg-secondary text-muted-foreground';
 }
 
+function statusLabel(status: string): string {
+  if (status === 'active') return 'Activa';
+  if (status === 'completed') return 'Completada';
+  if (status === 'processing') return 'Procesando';
+  if (status === 'draft') return 'Borrador';
+  if (status === 'paused') return 'Pausada';
+  if (status === 'partial') return 'Parcial';
+  if (status === 'expired') return 'Vencida';
+  if (status === 'failed') return 'Fallida';
+  if (status === 'archived') return 'Archivada';
+  if (status === 'cancelled') return 'Cancelada';
+  return status;
+}
+
 function ImageThumbnail({ src, alt }: { src: string; alt: string }): JSX.Element {
   const [failed, setFailed] = useState(false);
   if (failed) {
@@ -351,6 +367,8 @@ export default function CommunicationsPage(): JSX.Element {
   const [campaignImagePreview, setCampaignImagePreview] = useState('');
   const [campaignImageInputKey, setCampaignImageInputKey] = useState(0);
   const [campaignPromotionId, setCampaignPromotionId] = useState('none');
+  const [promotionToDelete, setPromotionToDelete] = useState<PromotionView | null>(null);
+  const [isDeletingPromotion, setIsDeletingPromotion] = useState(false);
 
   const communicationsUsage = metrics.usage.communicationsActions;
   const hasCommunicationsLimit = communicationsUsage.limit !== null;
@@ -826,6 +844,29 @@ export default function CommunicationsPage(): JSX.Element {
     }
   };
 
+  const handleDeletePromotion = async (): Promise<void> => {
+    if (!workspace?.id || !promotionToDelete) return;
+    setIsDeletingPromotion(true);
+    try {
+      const response = await apiFetch(
+        `/api/v1/communications/promotions/${promotionToDelete.id}`,
+        { method: 'DELETE' },
+        workspace.id
+      );
+      const body = await readJsonRecord(response);
+      if (!response.ok) {
+        throw new Error(readString(body, 'message') || 'No se pudo eliminar la promocion');
+      }
+      setPromotions((prev) => prev.filter((promotion) => promotion.id !== promotionToDelete.id));
+      setPromotionToDelete(null);
+      toastSuccess('Promocion eliminada');
+    } catch (error) {
+      toastError(error instanceof Error ? error.message : 'No se pudo eliminar la promocion');
+    } finally {
+      setIsDeletingPromotion(false);
+    }
+  };
+
   if (!capabilities.showCommunicationsModule) {
     return (
       <div className="h-full overflow-y-auto scrollbar-hide p-4 md:p-6">
@@ -980,6 +1021,7 @@ export default function CommunicationsPage(): JSX.Element {
                       <th className="text-right px-5 py-3 text-sm font-medium text-muted-foreground">Ventas</th>
                       <th className="text-center px-5 py-3 text-sm font-medium text-muted-foreground">Estado</th>
                       <th className="text-left px-5 py-3 text-sm font-medium text-muted-foreground">Finaliza</th>
+                      <th className="text-right px-5 py-3 text-sm font-medium text-muted-foreground">Acciones</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1013,10 +1055,22 @@ export default function CommunicationsPage(): JSX.Element {
                         <td className="px-5 py-4 text-right text-sm text-foreground">{formatCurrency(promotion.revenue)}</td>
                         <td className="px-5 py-4 text-center">
                           <span className={`px-2 py-1 rounded-full text-xs ${statusClass(promotion.computedStatus)}`}>
-                            {promotion.computedStatus}
+                            {statusLabel(promotion.computedStatus)}
                           </span>
                         </td>
                         <td className="px-5 py-4 text-sm text-muted-foreground">{formatDate(promotion.endsAt)}</td>
+                        <td className="px-5 py-4 text-right">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setPromotionToDelete(promotion)}
+                            className="text-red-300 hover:text-red-200 hover:bg-red-500/10"
+                          >
+                            <Trash2 className="w-4 h-4 mr-1.5" />
+                            Eliminar
+                          </Button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -1056,7 +1110,7 @@ export default function CommunicationsPage(): JSX.Element {
                         </div>
                         <div className="flex items-center gap-2">
                           <span className={`px-2 py-1 rounded-full text-xs ${statusClass(campaign.status)}`}>
-                            {campaign.status}
+                            {statusLabel(campaign.status)}
                           </span>
                           <span className="text-xs text-muted-foreground">{formatDate(campaign.createdAt)}</span>
                         </div>
@@ -1342,6 +1396,21 @@ export default function CommunicationsPage(): JSX.Element {
           </div>
         </DialogContent>
       </Dialog>
+
+      <DeleteConfirmModal
+        isOpen={promotionToDelete !== null}
+        onClose={() => {
+          if (!isDeletingPromotion) setPromotionToDelete(null);
+        }}
+        onConfirm={handleDeletePromotion}
+        isLoading={isDeletingPromotion}
+        title="Eliminar promocion"
+        message={
+          promotionToDelete
+            ? `¿Eliminar "${promotionToDelete.name}" del listado?`
+            : '¿Eliminar esta promocion del listado?'
+        }
+      />
     </div>
   );
 }
