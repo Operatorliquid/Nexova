@@ -11,8 +11,6 @@
   "references": [
     { "path": "../../packages/shared" },
     { "path": "../../packages/core" },
-    { "path": "../../packages/retail" },
-    { "path": "../../packages/integrations" },
-    { "path": "../../packages/agent-runtime" }
+    { "path": "../../packages/integrations" }
   ]
 }
