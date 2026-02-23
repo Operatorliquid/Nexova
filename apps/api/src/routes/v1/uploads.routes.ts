@@ -374,6 +374,7 @@ export async function uploadsRoutes(app: FastifyInstance): Promise<void> {
       }
 
       const buffer = await fs.readFile(filePath);
+      await persistUploadBackup(category, filename, inferContentType(filename), buffer);
       void reply.header('Content-Type', inferContentType(filename));
       void reply.header('Content-Length', String(buffer.length));
       void reply.header('Cache-Control', hasValidSignature ? 'private, max-age=300' : 'private, no-store');
