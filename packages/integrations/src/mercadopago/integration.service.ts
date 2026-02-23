@@ -63,7 +63,7 @@ export class MercadoPagoIntegrationService {
     const { workspaceId } = parsedState;
 
     // Exchange code for tokens
-    const tokens = await this.oauthService.exchangeCodeForTokens(code);
+    const tokens = await this.oauthService.exchangeCodeForTokens(code, state);
 
     // Get user info
     const client = this.createClientWithTokens(tokens);

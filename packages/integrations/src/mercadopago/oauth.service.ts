@@ -3,6 +3,8 @@
  * Handles OAuth flow: authorization URL generation, token exchange, and refresh
  */
 
+import { createHash, createHmac } from 'crypto';
+
 import type {
   MercadoPagoConfig,
   MercadoPagoTokens,
@@ -25,12 +27,16 @@ export class MercadoPagoOAuthService {
    * User will be redirected to MercadoPago to authorize the app
    */
   getAuthorizationUrl(state: string): string {
+    const codeVerifier = this.derivePkceVerifier(state);
+    const codeChallenge = this.buildPkceChallenge(codeVerifier);
     const params = new URLSearchParams({
       client_id: this.config.clientId,
       response_type: 'code',
       platform_id: 'mp',
       redirect_uri: this.config.redirectUri,
       state,
+      code_challenge: codeChallenge,
+      code_challenge_method: 'S256',
     });
 
     return `${MP_AUTH_URL}?${params.toString()}`;
@@ -40,20 +46,25 @@ export class MercadoPagoOAuthService {
    * Exchange authorization code for access tokens
    * Called after user authorizes and is redirected back with a code
    */
-  async exchangeCodeForTokens(code: string): Promise<MercadoPagoTokens> {
+  async exchangeCodeForTokens(code: string, state?: string): Promise<MercadoPagoTokens> {
+    const bodyParams = new URLSearchParams({
+      client_id: this.config.clientId,
+      client_secret: this.config.clientSecret,
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: this.config.redirectUri,
+    });
+    if (state) {
+      bodyParams.set('code_verifier', this.derivePkceVerifier(state));
+    }
+
     const response = await fetch(MP_TOKEN_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
         'Accept': 'application/json',
       },
-      body: new URLSearchParams({
-        client_id: this.config.clientId,
-        client_secret: this.config.clientSecret,
-        grant_type: 'authorization_code',
-        code,
-        redirect_uri: this.config.redirectUri,
-      }).toString(),
+      body: bodyParams.toString(),
     });
 
     if (!response.ok) {
@@ -156,6 +167,17 @@ export class MercadoPagoOAuthService {
       userId: data.user_id.toString(),
       publicKey: data.public_key,
     };
+  }
+
+  private derivePkceVerifier(state: string): string {
+    const secret = `${this.config.clientSecret}:${this.config.clientId}`;
+    const verifier = createHmac('sha256', secret).update(state).digest('base64url');
+    // RFC 7636 allows 43-128 chars; sha256 base64url yields 43 chars.
+    return verifier.slice(0, 128);
+  }
+
+  private buildPkceChallenge(verifier: string): string {
+    return createHash('sha256').update(verifier).digest('base64url');
   }
 }
 

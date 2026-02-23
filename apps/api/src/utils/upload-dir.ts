@@ -1,4 +1,4 @@
-import { existsSync } from 'fs';
+import { existsSync, mkdirSync } from 'fs';
 import path from 'path';
 
 const KNOWN_UPLOAD_SUBDIRECTORIES = [
@@ -48,6 +48,14 @@ function resolveRailwayVolumeMountPath(): string | null {
   return normalizePath(path.resolve(raw));
 }
 
+function isRailwayRuntime(): boolean {
+  return Boolean(
+    (process.env.RAILWAY_ENVIRONMENT || '').trim()
+    || (process.env.RAILWAY_PROJECT_ID || '').trim()
+    || (process.env.RAILWAY_SERVICE_ID || '').trim()
+  );
+}
+
 function buildRailwayVolumeCandidates(railwayMountPath: string | null): string[] {
   if (!railwayMountPath) return [];
   const normalized = normalizePath(railwayMountPath);
@@ -84,6 +92,7 @@ export function resolveUploadDirCandidates(currentDir: string): string[] {
   const configuredRaw = (process.env.UPLOAD_DIR || '').trim();
   const configured = configuredRaw ? normalizePath(path.resolve(configuredRaw)) : '';
   const railwayMountPath = resolveRailwayVolumeMountPath();
+  const runningOnRailway = isRailwayRuntime();
   const railwayCandidates = buildRailwayVolumeCandidates(railwayMountPath);
   const railwayCandidateSet = new Set(railwayCandidates.map((entry) => normalizePath(entry)));
   const defaults = [...buildDefaultUploadDirCandidates(currentDir, railwayMountPath)];
@@ -95,6 +104,11 @@ export function resolveUploadDirCandidates(currentDir: string): string[] {
     if (configured && normalized === configured) score += 10_000;
     if (railwayCandidateSet.has(normalized)) score += 8_000;
     if (candidateExists && (normalized === '/data/uploads' || normalized === '/data')) score += 2_000;
+    if (runningOnRailway && !configured) {
+      // Prefer /data/uploads in Railway even when it starts empty.
+      if (normalized === '/data/uploads') score += 20_000;
+      if (normalized === '/data') score += 10_000;
+    }
     return score;
   };
 
@@ -109,5 +123,13 @@ export function resolveUploadDirCandidates(currentDir: string): string[] {
 
 export function resolveUploadDir(currentDir: string): string {
   const candidates = resolveUploadDirCandidates(currentDir);
-  return candidates[0] || path.resolve(process.cwd(), 'uploads');
+  for (const candidate of candidates) {
+    try {
+      mkdirSync(candidate, { recursive: true });
+      return candidate;
+    } catch {
+      // Try next candidate when this path is not writable.
+    }
+  }
+  return path.resolve(process.cwd(), 'uploads');
 }

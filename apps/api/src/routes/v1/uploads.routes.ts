@@ -26,6 +26,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const UPLOAD_DIR = resolveUploadDir(__dirname);
 const UPLOAD_DIR_CANDIDATES = resolveUploadDirCandidates(__dirname);
+const UPLOAD_BASE_DIRS = Array.from(new Set([UPLOAD_DIR, ...UPLOAD_DIR_CANDIDATES]));
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
 const INTERNAL_MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
@@ -41,12 +42,51 @@ const WORKSPACE_SCOPED_CATEGORIES = new Set([
   'products',
 ]);
 
-function resolveExistingUploadFile(category: string, filename: string): string {
-  for (const baseDir of UPLOAD_DIR_CANDIDATES) {
-    const candidate = path.join(baseDir, category, filename);
-    if (existsSync(candidate)) return candidate;
+function resolveUploadFileCandidates(category: string, filename: string): string[] {
+  return UPLOAD_BASE_DIRS.map((baseDir) => path.join(baseDir, category, filename));
+}
+
+function resolveExistingUploadFile(category: string, filename: string): { filePath: string | null; attemptedPaths: string[] } {
+  const attemptedPaths = resolveUploadFileCandidates(category, filename);
+  for (const candidate of attemptedPaths) {
+    if (existsSync(candidate)) return { filePath: candidate, attemptedPaths };
   }
-  return path.join(UPLOAD_DIR, category, filename);
+  return { filePath: null, attemptedPaths };
+}
+
+function resolveCategoryUploadDirs(category: string): string[] {
+  return UPLOAD_BASE_DIRS.map((baseDir) => path.join(baseDir, category));
+}
+
+async function mirrorUploadFileAcrossCandidates(
+  category: string,
+  filename: string,
+  sourcePath: string,
+  log: FastifyRequest['log']
+): Promise<void> {
+  const sourceDir = path.resolve(path.dirname(sourcePath));
+  const candidateDirs = Array.from(new Set(resolveCategoryUploadDirs(category).map((dir) => path.resolve(dir))));
+
+  await Promise.all(candidateDirs.map(async (targetDir) => {
+    if (targetDir === sourceDir) return;
+
+    const targetPath = path.join(targetDir, filename);
+    try {
+      await fs.mkdir(targetDir, { recursive: true });
+      await fs.copyFile(sourcePath, targetPath);
+    } catch (error) {
+      log.warn(
+        {
+          category,
+          filename,
+          sourcePath,
+          targetPath,
+          error,
+        },
+        'Could not mirror uploaded file into candidate upload directory'
+      );
+    }
+  }));
 }
 
 function inferContentType(filename: string): string {
@@ -117,9 +157,10 @@ function readHeaderValue(value: unknown): string {
 
 export async function uploadsRoutes(app: FastifyInstance): Promise<void> {
   // Ensure upload directories exist
-  const productsDir = path.join(UPLOAD_DIR, 'products');
-  if (!existsSync(productsDir)) {
-    mkdirSync(productsDir, { recursive: true });
+  const productUploadDirs = resolveCategoryUploadDirs('products');
+  const primaryProductsDir = productUploadDirs[0] || path.join(UPLOAD_DIR, 'products');
+  if (!existsSync(primaryProductsDir)) {
+    mkdirSync(primaryProductsDir, { recursive: true });
   }
 
   /**
@@ -199,8 +240,16 @@ export async function uploadsRoutes(app: FastifyInstance): Promise<void> {
         }
       }
 
-      const filePath = resolveExistingUploadFile(category, filename);
-      if (!existsSync(filePath)) {
+      const { filePath, attemptedPaths } = resolveExistingUploadFile(category, filename);
+      if (!filePath) {
+        request.log.warn(
+          {
+            category,
+            filename,
+            attemptedPaths,
+          },
+          'Upload file was not found in any candidate directory'
+        );
         return reply.status(404).send({ error: 'FILE_NOT_FOUND' });
       }
 
@@ -261,10 +310,11 @@ export async function uploadsRoutes(app: FastifyInstance): Promise<void> {
         // Generate unique filename
         const ext = data.filename.split('.').pop() || 'jpg';
         const filename = `${workspaceId}-${randomUUID()}.${ext}`;
-        const filepath = path.join(productsDir, filename);
+        const filepath = path.join(primaryProductsDir, filename);
 
         // Save file
         await pipeline(data.file, createWriteStream(filepath));
+        await mirrorUploadFileAcrossCandidates('products', filename, filepath, request.log);
 
         // Return relative URL (will work with any domain)
         const imageUrl = `/uploads/products/${filename}`;
@@ -323,7 +373,8 @@ export async function uploadsRoutes(app: FastifyInstance): Promise<void> {
           return reply.status(400).send({ error: 'INVALID_CATEGORY' });
         }
 
-        const targetDir = path.join(UPLOAD_DIR, category);
+        const categoryUploadDirs = resolveCategoryUploadDirs(category);
+        const targetDir = categoryUploadDirs[0] || path.join(UPLOAD_DIR, category);
         if (!existsSync(targetDir)) {
           mkdirSync(targetDir, { recursive: true });
         }
@@ -335,6 +386,7 @@ export async function uploadsRoutes(app: FastifyInstance): Promise<void> {
         const filepath = path.join(targetDir, filename);
 
         await pipeline(data.file, createWriteStream(filepath));
+        await mirrorUploadFileAcrossCandidates(category, filename, filepath, request.log);
 
         const forwardedHost = readHeaderValue(request.headers['x-forwarded-host']);
         const host = forwardedHost || readHeaderValue(request.headers.host);
