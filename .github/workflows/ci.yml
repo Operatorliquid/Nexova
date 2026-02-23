@@ -33,6 +33,14 @@ jobs:
       - name: Lint hardened SSRF surface
         run: pnpm lint:security
 
+      - name: Build internal workspace packages
+        run: |
+          pnpm --filter @nexova/shared build
+          pnpm --filter @nexova/core build
+          pnpm --filter @nexova/integrations build
+          pnpm --filter @nexova/retail build
+          pnpm --filter @nexova/agent-runtime build
+
       - name: Typecheck critical packages
         run: |
           pnpm --filter @nexova/api typecheck
