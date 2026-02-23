@@ -1583,6 +1583,37 @@ export class RetailAgent {
           };
         }
 
+        if (wasAccountStatementExplicitlyRequested(message)) {
+          await this.storeMessage(sessionId, 'user', message, messageId);
+
+          const execution = await toolRegistry.execute(
+            'send_account_statement_pdf',
+            {},
+            toolContext
+          );
+
+          toolsUsed.push(execution);
+
+          const toolMessage = extractToolMessage(execution.result.data);
+          const response = execution.result.success
+            ? toolMessage || 'Te envié tu resumen de cuenta en PDF.'
+            : execution.result.error || 'No pude generar tu resumen de cuenta ahora mismo.';
+
+          await this.storeMessage(sessionId, 'assistant', response);
+          await this.prisma.agentSession.updateMany({
+            where: { id: sessionId, workspaceId },
+            data: { lastActivityAt: new Date(), agentActive: true },
+          });
+
+          return {
+            response,
+            state: fsm.getState(),
+            toolsUsed,
+            tokensUsed: 0,
+            shouldSendMessage: true,
+          };
+        }
+
         const contextStartAt = await this.getSessionContextStartAt(sessionId, workspaceId);
         const history = await this.getConversationHistory(sessionId, contextStartAt);
         const recentHistory = HISTORY_LIMIT > 0 ? history.slice(-HISTORY_LIMIT) : history;
@@ -6671,6 +6702,40 @@ export class RetailAgent {
         }
       }
 
+      if (wasAccountStatementExplicitlyRequested(message)) {
+        await this.storeMessage(sessionId, 'user', message, messageId);
+
+        const execution = await toolRegistry.execute(
+          'send_account_statement_pdf',
+          {},
+          toolContext
+        );
+
+        toolsUsed.push(execution);
+
+        const toolMessage = extractToolMessage(execution.result.data);
+        const response = execution.result.success
+          ? toolMessage || 'Te envié tu resumen de cuenta en PDF.'
+          : execution.result.error || 'No pude generar tu resumen de cuenta ahora mismo.';
+
+        await this.storeMessage(sessionId, 'assistant', response);
+        await this.prisma.agentSession.updateMany({
+          where: { id: sessionId, workspaceId },
+          data: {
+            currentState: fsm.getState(),
+            lastActivityAt: new Date(),
+          },
+        });
+
+        return {
+          response,
+          state: fsm.getState(),
+          toolsUsed,
+          tokensUsed: 0,
+          shouldSendMessage: true,
+        };
+      }
+
       // Get conversation history (respect context reset)
       const contextStartAt = await this.getSessionContextStartAt(sessionId, workspaceId);
       const history = await this.getConversationHistory(sessionId, contextStartAt);
@@ -9569,6 +9634,23 @@ function wasCatalogExplicitlyRequested(message: string): boolean {
     'mostrar catálogo',
     'catalogo de productos',
     'catálogo de productos',
+  ];
+
+  return phrases.some((phrase) => normalized.includes(phrase));
+}
+
+function wasAccountStatementExplicitlyRequested(message: string): boolean {
+  const normalized = normalizeSimpleText(message);
+  if (!normalized) return false;
+
+  const phrases = [
+    'resumen de cuenta',
+    'estado de cuenta',
+    'cuenta corriente',
+    'saldo adeudado',
+    'deuda hasta hoy',
+    'que debo',
+    'que debe',
   ];
 
   return phrases.some((phrase) => normalized.includes(phrase));

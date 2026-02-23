@@ -4755,6 +4755,7 @@ export class QuickActionService {
 
     const normalized = this.normalizeText(cleaned);
     if (!normalized) return null;
+    const hasAccountStatementContext = this.commandWantsAccountStatement(normalized);
     const hasCustomerContext =
       normalized.includes('cliente') ||
       normalized.includes('deuda') ||
@@ -4765,7 +4766,8 @@ export class QuickActionService {
       normalized.includes('mensaje') ||
       normalized.includes('deudor') ||
       normalized.includes('pago') ||
-      normalized.includes('cobranza');
+      normalized.includes('cobranza') ||
+      hasAccountStatementContext;
     if (!hasCustomerContext) return null;
 
     if ((normalized.includes('todos') || normalized.includes('todas')) && (normalized.includes('clientes') || normalized.includes('deudores'))) {
@@ -4779,6 +4781,9 @@ export class QuickActionService {
     }
 
     const patterns: RegExp[] = [
+      /(?:^|\b)(?:resumen|estado)\s+de\s+cuenta\s+(?:de|del|para)?\s*(.+)$/i,
+      /(?:^|\b)cuenta\s+corriente\s+(?:de|del|para)?\s*(.+)$/i,
+      /(?:^|\b)(?:que\s+debe|que\s+debo)\s+(?:de|del|de la|del cliente|de cliente|para)?\s*(.+)$/i,
       /(?:^|\b)(?:buscar|ver|mostrar|mostrame|dame|traeme|trae|abrir)\s+(?:el\s+|al\s+)?cliente\s+(.+)$/i,
       /(?:^|\b)cliente\s+(.+)$/i,
       /(?:^|\b)clientes\s+(.+)$/i,
