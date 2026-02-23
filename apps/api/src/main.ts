@@ -102,7 +102,7 @@ const prisma = new PrismaClient(
       }
     : undefined
 );
-const DEPLOY_STAMP = '2026-02-16.api.8';
+const DEPLOY_STAMP = '2026-02-23.api.9';
 
 // Redis connection for BullMQ
 const redisConnection = {
