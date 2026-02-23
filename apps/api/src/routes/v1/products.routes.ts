@@ -7,7 +7,7 @@ import { type FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
 
 import { createNotificationIfEnabled } from '../../utils/notifications.js';
-import { buildSignedUploadPath, sanitizeUploadFilename } from '../../utils/upload-access.js';
+import { buildUploadProxyPath, sanitizeUploadFilename } from '../../utils/upload-access.js';
 
 const productQuerySchema = z.object({
   search: z.string().optional(),
@@ -202,10 +202,8 @@ const normalizeProductImagesForStorage = (value: unknown): string[] => {
 };
 
 const buildPublicProductImageUrl = (filename: string): string => {
-  const signed = buildSignedUploadPath({ category: 'products', filename });
-  // Even without signature params, this remains a stable proxy path
-  // that does not depend on static file mounting.
-  return signed;
+  // Stable proxy path for authenticated dashboard access (no expiring signature).
+  return buildUploadProxyPath('products', filename);
 };
 
 const resolveProductImageUrls = (value: unknown): string[] => {

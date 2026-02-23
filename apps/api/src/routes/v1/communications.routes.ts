@@ -13,6 +13,7 @@ import { COMMERCE_USAGE_METRICS, type CommercePlan } from '@nexova/shared';
 import { getEffectiveCommercePlanLimits } from '../../utils/commerce-plan-limits.js';
 import { getWorkspacePlanContext } from '../../utils/commerce-plan.js';
 import { getMonthlyUsage, recordMonthlyUsage } from '../../utils/monthly-usage.js';
+import { buildUploadProxyPath, sanitizeUploadFilename } from '../../utils/upload-access.js';
 import {
   computePromotionStatus,
   getPromotionValueLabel,
@@ -27,6 +28,8 @@ const promotionRulesSchema = z.object({
   buyQuantity: z.coerce.number().int().min(2).max(100).optional(),
   payQuantity: z.coerce.number().int().min(1).max(99).optional(),
 });
+const PRODUCT_UPLOADS_PREFIX = '/uploads/products/';
+const PRODUCT_UPLOADS_PROXY_PREFIX = '/api/v1/uploads/file/products/';
 
 const promotionsQuerySchema = z.object({
   search: z.string().optional(),
@@ -113,8 +116,49 @@ function normalizeOptionalImageUrl(value: string | null | undefined): string | n
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function decodePathname(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function extractProductUploadFilename(value: string): string | null {
+  const raw = value.trim();
+  if (!raw) return null;
+
+  const fromPath = (pathname: string, prefix: string): string | null => {
+    if (!pathname.startsWith(prefix)) return null;
+    const remainder = pathname.slice(prefix.length);
+    const filenameCandidate = remainder.split('/')[0] || '';
+    return sanitizeUploadFilename(filenameCandidate);
+  };
+
+  if (raw.startsWith('http://') || raw.startsWith('https://')) {
+    try {
+      const parsed = new URL(raw);
+      const pathname = decodePathname(parsed.pathname);
+      return fromPath(pathname, PRODUCT_UPLOADS_PREFIX) ?? fromPath(pathname, PRODUCT_UPLOADS_PROXY_PREFIX);
+    } catch {
+      return null;
+    }
+  }
+
+  const withoutQuery = decodePathname(raw.split('?')[0] || '');
+  return fromPath(withoutQuery, PRODUCT_UPLOADS_PREFIX) ?? fromPath(withoutQuery, PRODUCT_UPLOADS_PROXY_PREFIX);
+}
+
+function resolveProductUploadUrlForDashboard(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const filename = extractProductUploadFilename(value);
+  if (!filename) return value;
+  return buildUploadProxyPath('products', filename);
+}
+
 function isSupportedImageUrl(value: string): boolean {
   if (value.startsWith('/uploads/products/')) return true;
+  if (value.startsWith('/api/v1/uploads/file/products/')) return true;
   try {
     const parsed = new URL(value);
     return parsed.protocol === 'http:' || parsed.protocol === 'https:';
@@ -130,7 +174,8 @@ function readPromotionImageUrl(metadata: Prisma.JsonValue): string | null {
   const value = (metadata as Record<string, unknown>).imageUrl;
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
+  if (trimmed.length === 0) return null;
+  return resolveProductUploadUrlForDashboard(trimmed);
 }
 
 function readPromotionRules(metadata: Prisma.JsonValue | null | undefined): PromotionRuleConfig | null {
@@ -838,7 +883,7 @@ export const communicationsRoutes: FastifyPluginAsync = async (fastify) => {
           id: campaign.id,
           name: campaign.name,
           message: campaign.message,
-          imageUrl: campaign.imageUrl,
+          imageUrl: resolveProductUploadUrlForDashboard(campaign.imageUrl),
           status: campaign.status,
           targetType: campaign.targetType,
           totalRecipients: campaign.totalRecipients,

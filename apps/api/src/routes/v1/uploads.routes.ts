@@ -127,6 +127,9 @@ export async function uploadsRoutes(app: FastifyInstance): Promise<void> {
     Params: { category: string; filename: string };
     Querystring: { exp?: string; sig?: string };
   }>('/file/:category/:filename', {
+    config: {
+      allowMissingWorkspace: true,
+    },
     handler: async (request, reply) => {
       const category = sanitizeUploadCategory(request.params.category);
       const filename = sanitizeUploadFilename(request.params.filename);
@@ -144,15 +147,51 @@ export async function uploadsRoutes(app: FastifyInstance): Promise<void> {
 
       if (!hasValidSignature) {
         const requiredPermission = requiredPermissionForCategory(category);
-        const guard = app.requirePermission(requiredPermission);
-        await guard(request, reply);
+        await app.authenticate(request, reply);
         if (reply.sent) return;
 
-        const scopeByWorkspace = WORKSPACE_SCOPED_CATEGORIES.has(category) && !request.user?.isSuperAdmin;
-        if (scopeByWorkspace) {
-          const ownerWorkspaceId = extractWorkspaceIdFromFilename(filename);
-          if (!ownerWorkspaceId || !request.workspaceId || ownerWorkspaceId !== request.workspaceId.toLowerCase()) {
-            return reply.status(403).send({ error: 'FORBIDDEN', message: 'File does not belong to workspace' });
+        if (!request.user) {
+          return reply.status(401).send({ error: 'UNAUTHORIZED' });
+        }
+
+        if (!request.user.isSuperAdmin) {
+          const scopeByWorkspace = WORKSPACE_SCOPED_CATEGORIES.has(category);
+          if (scopeByWorkspace) {
+            const ownerWorkspaceId = extractWorkspaceIdFromFilename(filename);
+            if (!ownerWorkspaceId) {
+              return reply.status(403).send({ error: 'FORBIDDEN', message: 'File does not belong to workspace' });
+            }
+
+            const membership = await app.prisma.membership.findUnique({
+              where: {
+                userId_workspaceId: {
+                  userId: request.user.sub,
+                  workspaceId: ownerWorkspaceId,
+                },
+              },
+              include: {
+                role: {
+                  select: {
+                    permissions: true,
+                  },
+                },
+              },
+            });
+            const membershipStatus = (membership?.status || '').toLowerCase();
+            if (!membership || membershipStatus !== 'active') {
+              return reply.status(403).send({ error: 'FORBIDDEN', message: 'File does not belong to workspace' });
+            }
+
+            if (!hasPermission(membership.role.permissions, requiredPermission)) {
+              return reply.status(403).send({
+                error: 'FORBIDDEN',
+                message: `Se requiere el permiso '${requiredPermission}'`,
+              });
+            }
+          } else {
+            const guard = app.requirePermission(requiredPermission);
+            await guard(request, reply);
+            if (reply.sent) return;
           }
         }
       }
