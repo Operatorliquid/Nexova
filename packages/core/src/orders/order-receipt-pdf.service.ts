@@ -18,13 +18,21 @@ const CONTENT_GAP = 12;
 const ROW_HEIGHT = 18;
 const LOGO_MAX_WIDTH = 90;
 const LOGO_MAX_HEIGHT = 40;
+const DEFAULT_RECEIPT_TITLE = 'BOLETA';
+const DEFAULT_RECEIPT_FOOTER = 'Gracias por tu compra.';
+const DEFAULT_PRIMARY_COLOR_HEX = '#1F2937';
+const DEFAULT_HEADER_BG_HEX = '#F3F4F6';
+const HEX_COLOR_REGEX = /^#[0-9A-Fa-f]{6}$/;
 
-const COLORS = {
-  text: rgb(0.1, 0.1, 0.1),
-  muted: rgb(0.45, 0.45, 0.45),
-  border: rgb(0.86, 0.86, 0.86),
-  headerBg: rgb(0.97, 0.97, 0.97),
-};
+type PdfColor = ReturnType<typeof rgb>;
+
+interface ReceiptPalette {
+  text: PdfColor;
+  muted: PdfColor;
+  border: PdfColor;
+  headerBg: PdfColor;
+  primary: PdfColor;
+}
 
 interface ReceiptOrderItem {
   name: string;
@@ -54,6 +62,24 @@ export interface ReceiptOrder {
   items: ReceiptOrderItem[];
 }
 
+interface ReceiptBrandingSettings {
+  title: string;
+  footerText: string;
+  primaryColor: string;
+  tableHeaderColor: string;
+  logoMode: 'business' | 'custom' | 'none';
+  customLogoUrl: string;
+  showBusinessAddress: boolean;
+}
+
+interface WorkspaceBranding {
+  workspaceName: string;
+  businessName: string;
+  businessAddress: string;
+  logoUrl: string;
+  receiptBranding: ReceiptBrandingSettings;
+}
+
 export class OrderReceiptPdfService {
   private prisma: PrismaClient;
 
@@ -63,6 +89,7 @@ export class OrderReceiptPdfService {
 
   async generateReceipt(workspaceId: string, order: ReceiptOrder): Promise<{ buffer: Buffer; filename: string }> {
     const branding = await this.getWorkspaceBranding(workspaceId);
+    const palette = this.resolvePalette(branding.receiptBranding);
 
     const pdfDoc = await PDFDocument.create();
     const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -85,32 +112,43 @@ export class OrderReceiptPdfService {
       timeText,
       logoImage,
       logoDims,
-    });
+      title: branding.receiptBranding.title,
+    }, palette);
 
     y -= CONTENT_GAP;
 
     const customerName = this.formatCustomerName(order.customer);
-    y = this.drawInfoBlock(currentPage, font, fontBold, y, [
+    const infoRows: Array<{ label: string; value: string }> = [
       { label: 'Cliente', value: customerName || 'Consumidor final' },
       { label: 'Telefono', value: order.customer.phone || '-' },
       { label: 'Pedido', value: order.orderNumber },
-    ]);
+    ];
+    if (branding.receiptBranding.showBusinessAddress && branding.businessAddress) {
+      infoRows.push({ label: 'Direccion', value: branding.businessAddress });
+    }
+    y = this.drawInfoBlock(currentPage, font, fontBold, y, infoRows, palette);
 
     y -= CONTENT_GAP;
 
-    y = this.drawTableHeader(currentPage, fontBold, y);
+    y = this.drawTableHeader(currentPage, fontBold, y, palette);
     y -= 4;
 
     for (const item of order.items) {
       if (y - ROW_HEIGHT < MARGIN + 120) {
-        const continuation = this.addContinuationPage(pdfDoc, fontBold, order.orderNumber);
+        const continuation = this.addContinuationPage(
+          pdfDoc,
+          fontBold,
+          order.orderNumber,
+          branding.receiptBranding.title,
+          palette
+        );
         currentPage = continuation.page;
         y = continuation.y;
-        y = this.drawTableHeader(currentPage, fontBold, y);
+        y = this.drawTableHeader(currentPage, fontBold, y, palette);
         y -= 4;
       }
 
-      this.drawTableRow(currentPage, font, y, item);
+      this.drawTableRow(currentPage, font, y, item, palette);
       y -= ROW_HEIGHT;
     }
 
@@ -124,12 +162,14 @@ export class OrderReceiptPdfService {
       { label: 'Total', value: order.total, bold: true },
       { label: 'Pagado', value: order.paidAmount },
       { label: 'Pendiente', value: pendingAmount },
-    ]);
+    ], palette);
 
     if (order.notes) {
       y -= CONTENT_GAP;
-      this.drawNotes(currentPage, font, fontBold, y, order.notes);
+      this.drawNotes(currentPage, font, fontBold, y, order.notes, palette);
     }
+
+    this.drawFooter(currentPage, font, branding.receiptBranding.footerText, palette);
 
     const pdfBytes = await pdfDoc.save();
     const buffer = Buffer.from(pdfBytes);
@@ -149,9 +189,11 @@ export class OrderReceiptPdfService {
       timeText: string;
       logoImage: PDFImage | null;
       logoDims: { width: number; height: number } | null;
-    }
+      title: string;
+    },
+    palette: ReceiptPalette
   ): number {
-    const title = 'BOLETA';
+    const title = params.title || DEFAULT_RECEIPT_TITLE;
     const titleSize = 24;
     const titleWidth = fontBold.widthOfTextAtSize(title, titleSize);
     const titleY = PAGE.height - MARGIN - titleSize;
@@ -161,7 +203,7 @@ export class OrderReceiptPdfService {
       y: titleY,
       size: titleSize,
       font: fontBold,
-      color: COLORS.text,
+      color: palette.primary,
     });
 
     let leftX = MARGIN;
@@ -183,7 +225,7 @@ export class OrderReceiptPdfService {
       y: headerBottom,
       size: 11,
       font: fontBold,
-      color: COLORS.text,
+      color: palette.text,
     });
 
     const orderText = `Pedido: ${params.orderNumber}`;
@@ -191,15 +233,15 @@ export class OrderReceiptPdfService {
     const timeText = `Hora: ${params.timeText}`;
 
     const rightBlockX = PAGE.width - MARGIN;
-    this.drawRightText(page, font, orderText, rightBlockX, headerBottom + 6, 9, COLORS.text);
-    this.drawRightText(page, font, dateText, rightBlockX, headerBottom - 6, 9, COLORS.muted);
-    this.drawRightText(page, font, timeText, rightBlockX, headerBottom - 18, 9, COLORS.muted);
+    this.drawRightText(page, font, orderText, rightBlockX, headerBottom + 6, 9, palette.text);
+    this.drawRightText(page, font, dateText, rightBlockX, headerBottom - 6, 9, palette.muted);
+    this.drawRightText(page, font, timeText, rightBlockX, headerBottom - 18, 9, palette.muted);
 
     page.drawLine({
       start: { x: MARGIN, y: headerBottom - 28 },
       end: { x: PAGE.width - MARGIN, y: headerBottom - 28 },
       thickness: 1,
-      color: COLORS.border,
+      color: palette.border,
     });
 
     return headerBottom - 42;
@@ -210,7 +252,8 @@ export class OrderReceiptPdfService {
     font: PDFFont,
     fontBold: PDFFont,
     y: number,
-    rows: Array<{ label: string; value: string }>
+    rows: Array<{ label: string; value: string }>,
+    palette: ReceiptPalette
   ): number {
     let currentY = y;
     rows.forEach((row) => {
@@ -219,29 +262,29 @@ export class OrderReceiptPdfService {
         y: currentY,
         size: 10,
         font: fontBold,
-        color: COLORS.text,
+        color: palette.text,
       });
       page.drawText(row.value, {
         x: MARGIN + 80,
         y: currentY,
         size: 10,
         font,
-        color: COLORS.text,
+        color: palette.text,
       });
       currentY -= 14;
     });
     return currentY;
   }
 
-  private drawTableHeader(page: PDFPage, fontBold: PDFFont, y: number): number {
+  private drawTableHeader(page: PDFPage, fontBold: PDFFont, y: number, palette: ReceiptPalette): number {
     const headerY = y - 4;
     page.drawRectangle({
       x: MARGIN,
       y: headerY - 12,
       width: PAGE.width - MARGIN * 2,
       height: 18,
-      color: COLORS.headerBg,
-      borderColor: COLORS.border,
+      color: palette.headerBg,
+      borderColor: palette.border,
       borderWidth: 1,
     });
 
@@ -250,34 +293,34 @@ export class OrderReceiptPdfService {
       y: headerY - 8,
       size: 9,
       font: fontBold,
-      color: COLORS.text,
+      color: palette.text,
     });
     page.drawText('Cant.', {
       x: PAGE.width * 0.6,
       y: headerY - 8,
       size: 9,
       font: fontBold,
-      color: COLORS.text,
+      color: palette.text,
     });
     page.drawText('Precio', {
       x: PAGE.width * 0.7,
       y: headerY - 8,
       size: 9,
       font: fontBold,
-      color: COLORS.text,
+      color: palette.text,
     });
     page.drawText('Total', {
       x: PAGE.width * 0.85,
       y: headerY - 8,
       size: 9,
       font: fontBold,
-      color: COLORS.text,
+      color: palette.text,
     });
 
     return headerY - 18;
   }
 
-  private drawTableRow(page: PDFPage, font: PDFFont, y: number, item: ReceiptOrderItem): void {
+  private drawTableRow(page: PDFPage, font: PDFFont, y: number, item: ReceiptOrderItem, palette: ReceiptPalette): void {
     const nameMaxWidth = PAGE.width * 0.55 - MARGIN;
     const nameText = this.truncateText(item.name, nameMaxWidth, font, 9);
 
@@ -286,7 +329,7 @@ export class OrderReceiptPdfService {
       y,
       size: 9,
       font,
-      color: COLORS.text,
+      color: palette.text,
     });
 
     page.drawText(String(item.quantity), {
@@ -294,11 +337,11 @@ export class OrderReceiptPdfService {
       y,
       size: 9,
       font,
-      color: COLORS.text,
+      color: palette.text,
     });
 
-    this.drawRightText(page, font, this.formatMoney(item.unitPrice), PAGE.width * 0.8, y, 9, COLORS.text);
-    this.drawRightText(page, font, this.formatMoney(item.total), PAGE.width - MARGIN, y, 9, COLORS.text);
+    this.drawRightText(page, font, this.formatMoney(item.unitPrice), PAGE.width * 0.8, y, 9, palette.text);
+    this.drawRightText(page, font, this.formatMoney(item.total), PAGE.width - MARGIN, y, 9, palette.text);
   }
 
   private drawTotals(
@@ -306,7 +349,8 @@ export class OrderReceiptPdfService {
     font: PDFFont,
     fontBold: PDFFont,
     y: number,
-    rows: Array<{ label: string; value: number; bold?: boolean; negative?: boolean }>
+    rows: Array<{ label: string; value: number; bold?: boolean; negative?: boolean }>,
+    palette: ReceiptPalette
   ): number {
     let currentY = y;
     rows.forEach((row) => {
@@ -320,51 +364,68 @@ export class OrderReceiptPdfService {
         y: currentY,
         size: 10,
         font: labelFont,
-        color: COLORS.text,
+        color: row.bold ? palette.primary : palette.text,
       });
 
-      this.drawRightText(page, valueFont, value, PAGE.width - MARGIN, currentY, 10, COLORS.text);
+      this.drawRightText(
+        page,
+        valueFont,
+        value,
+        PAGE.width - MARGIN,
+        currentY,
+        10,
+        row.bold ? palette.primary : palette.text
+      );
       currentY -= 14;
     });
 
     return currentY;
   }
 
-  private drawNotes(page: PDFPage, font: PDFFont, fontBold: PDFFont, y: number, notes: string): void {
+  private drawNotes(
+    page: PDFPage,
+    font: PDFFont,
+    fontBold: PDFFont,
+    y: number,
+    notes: string,
+    palette: ReceiptPalette
+  ): void {
     page.drawText('Notas:', {
       x: MARGIN,
       y,
       size: 10,
       font: fontBold,
-      color: COLORS.text,
+      color: palette.text,
     });
     page.drawText(notes, {
       x: MARGIN + 40,
       y,
       size: 10,
       font,
-      color: COLORS.text,
+      color: palette.text,
     });
   }
 
   private addContinuationPage(
     pdfDoc: PDFDocument,
     fontBold: PDFFont,
-    orderNumber: string
+    orderNumber: string,
+    title: string,
+    palette: ReceiptPalette
   ): { page: PDFPage; y: number } {
     const page = pdfDoc.addPage([PAGE.width, PAGE.height]);
-    page.drawText(`BOLETA - ${orderNumber}`, {
+    page.drawText(`${title} - ${orderNumber}`, {
       x: MARGIN,
       y: PAGE.height - MARGIN - 18,
       size: 12,
       font: fontBold,
-      color: COLORS.text,
+      color: palette.primary,
     });
     page.drawLine({
       start: { x: MARGIN, y: PAGE.height - MARGIN - 28 },
       end: { x: PAGE.width - MARGIN, y: PAGE.height - MARGIN - 28 },
       thickness: 1,
-      color: COLORS.border,
+      color: palette.border,
     });
     return { page, y: PAGE.height - MARGIN - 44 };
   }
@@ -376,7 +437,7 @@ export class OrderReceiptPdfService {
     rightX: number,
     y: number,
     size: number,
-    color = COLORS.text
+    color: PdfColor
   ): void {
     const width = font.widthOfTextAtSize(text, size);
     page.drawText(text, {
@@ -411,18 +472,105 @@ export class OrderReceiptPdfService {
     return text;
   }
 
-  private async getWorkspaceBranding(workspaceId: string): Promise<{ workspaceName: string; businessName: string; logoUrl: string }> {
+  private drawFooter(page: PDFPage, font: PDFFont, footerText: string, palette: ReceiptPalette): void {
+    const text = (footerText || '').trim();
+    if (!text) return;
+    const size = 9;
+    const width = font.widthOfTextAtSize(text, size);
+    const x = Math.max(MARGIN, (PAGE.width - width) / 2);
+    const y = MARGIN - 6;
+    page.drawText(text, {
+      x,
+      y,
+      size,
+      font,
+      color: palette.muted,
+    });
+  }
+
+  private async getWorkspaceBranding(workspaceId: string): Promise<WorkspaceBranding> {
     const workspace = await this.prisma.workspace.findUnique({
       where: { id: workspaceId },
       select: { name: true, settings: true },
     });
 
     const settings = (workspace?.settings as Record<string, unknown>) || {};
+    const receiptBranding = this.resolveReceiptBrandingSettings(settings.receiptBranding);
+    const businessLogo = this.readOptionalString(settings.companyLogo);
+    const customLogo = this.readOptionalString(receiptBranding.customLogoUrl);
+    let logoUrl = businessLogo;
+
+    if (receiptBranding.logoMode === 'none') {
+      logoUrl = '';
+    } else if (receiptBranding.logoMode === 'custom' && customLogo) {
+      logoUrl = customLogo;
+    }
+
     return {
       workspaceName: workspace?.name || 'Comercio',
-      businessName: (settings.businessName as string) || workspace?.name || 'Comercio',
-      logoUrl: (settings.companyLogo as string) || '',
+      businessName: this.readOptionalString(settings.businessName) || workspace?.name || 'Comercio',
+      businessAddress: this.readOptionalString(settings.businessAddress),
+      logoUrl,
+      receiptBranding,
     };
+  }
+
+  private resolveReceiptBrandingSettings(value: unknown): ReceiptBrandingSettings {
+    const source = this.readRecord(value);
+    const primaryColor = this.normalizeHexColor(this.readOptionalString(source?.primaryColor), DEFAULT_PRIMARY_COLOR_HEX);
+    const tableHeaderColor = this.normalizeHexColor(this.readOptionalString(source?.tableHeaderColor), DEFAULT_HEADER_BG_HEX);
+    const rawLogoMode = this.readOptionalString(source?.logoMode);
+    const logoMode: ReceiptBrandingSettings['logoMode'] =
+      rawLogoMode === 'custom' || rawLogoMode === 'none'
+        ? rawLogoMode
+        : 'business';
+
+    return {
+      title: this.readOptionalString(source?.title) || DEFAULT_RECEIPT_TITLE,
+      footerText: this.readOptionalString(source?.footerText) || DEFAULT_RECEIPT_FOOTER,
+      primaryColor,
+      tableHeaderColor,
+      logoMode,
+      customLogoUrl: this.readOptionalString(source?.customLogoUrl),
+      showBusinessAddress: this.readOptionalBoolean(source?.showBusinessAddress, true),
+    };
+  }
+
+  private resolvePalette(branding: ReceiptBrandingSettings): ReceiptPalette {
+    const primary = this.parseHexColor(branding.primaryColor) ?? this.parseHexColor(DEFAULT_PRIMARY_COLOR_HEX)!;
+    const headerBg = this.parseHexColor(branding.tableHeaderColor) ?? this.parseHexColor(DEFAULT_HEADER_BG_HEX)!;
+    return {
+      text: rgb(0.1, 0.1, 0.1),
+      muted: rgb(0.45, 0.45, 0.45),
+      border: rgb(0.86, 0.86, 0.86),
+      headerBg,
+      primary,
+    };
+  }
+
+  private normalizeHexColor(value: string, fallback: string): string {
+    return HEX_COLOR_REGEX.test(value) ? value.toUpperCase() : fallback;
+  }
+
+  private parseHexColor(value: string): PdfColor | null {
+    if (!HEX_COLOR_REGEX.test(value)) return null;
+    const r = Number.parseInt(value.slice(1, 3), 16) / 255;
+    const g = Number.parseInt(value.slice(3, 5), 16) / 255;
+    const b = Number.parseInt(value.slice(5, 7), 16) / 255;
+    return rgb(r, g, b);
+  }
+
+  private readRecord(value: unknown): Record<string, unknown> | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    return value as Record<string, unknown>;
+  }
+
+  private readOptionalString(value: unknown): string {
+    return typeof value === 'string' ? value.trim() : '';
+  }
+
+  private readOptionalBoolean(value: unknown, fallback: boolean): boolean {
+    return typeof value === 'boolean' ? value : fallback;
   }
 
   private async loadLogo(

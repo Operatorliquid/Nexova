@@ -71,6 +71,7 @@ function toPhoneDigits(value: string): string {
 }
 
 const WHATSAPP_CONTACT_REGEX = /^\+?\d{8,15}$/;
+const RECEIPT_COLOR_REGEX = /^#[0-9A-Fa-f]{6}$/;
 
 function randomNumericString(length: number): string {
   const bytes = randomBytes(Math.max(8, length));
@@ -1421,6 +1422,26 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
           afternoonShiftStart: z.string().regex(/^\d{2}:\d{2}$/).optional(),
           afternoonShiftEnd: z.string().regex(/^\d{2}:\d{2}$/).optional(),
           assistantNotes: z.string().max(2000).optional(),
+          receiptBranding: z
+            .object({
+              title: z.string().trim().max(60).optional(),
+              footerText: z.string().trim().max(220).optional(),
+              primaryColor: z.string().trim().regex(RECEIPT_COLOR_REGEX, 'Color inválido').optional(),
+              tableHeaderColor: z.string().trim().regex(RECEIPT_COLOR_REGEX, 'Color inválido').optional(),
+              logoMode: z.enum(['business', 'custom', 'none']).optional(),
+              customLogoUrl: z
+                .string()
+                .trim()
+                .max(2_000_000)
+                .refine(
+                  (value) => value.length === 0 || /^https?:\/\//i.test(value) || /^data:image\//i.test(value),
+                  'Logo personalizado inválido'
+                )
+                .optional(),
+              showBusinessAddress: z.boolean().optional(),
+            })
+            .optional()
+            .nullable(),
           availabilityStatus: z.enum(['available', 'unavailable', 'vacation']).optional(),
 	        })
 	        .parse(request.body);
@@ -1457,6 +1478,66 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
 	      const currentSettings = (workspace?.settings as Record<string, unknown>) || {};
 	      const { ownerAgentPin, ...rest } = body;
 	      const newSettings: Record<string, unknown> = { ...currentSettings, ...rest };
+
+      if (body.receiptBranding === null) {
+        delete newSettings.receiptBranding;
+      } else if (isRecord(body.receiptBranding)) {
+        const existingReceiptBranding = isRecord(currentSettings.receiptBranding)
+          ? currentSettings.receiptBranding
+          : {};
+        const mergedReceiptBranding: Record<string, unknown> = {
+          ...existingReceiptBranding,
+          ...body.receiptBranding,
+        };
+
+        const normalizeStringSetting = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
+        const normalizeColorSetting = (value: unknown): string => {
+          const normalized = normalizeStringSetting(value);
+          return RECEIPT_COLOR_REGEX.test(normalized) ? normalized.toUpperCase() : '';
+        };
+
+        const normalizedTitle = normalizeStringSetting(mergedReceiptBranding.title);
+        if (normalizedTitle) mergedReceiptBranding.title = normalizedTitle;
+        else delete mergedReceiptBranding.title;
+
+        const normalizedFooter = normalizeStringSetting(mergedReceiptBranding.footerText);
+        if (normalizedFooter) mergedReceiptBranding.footerText = normalizedFooter;
+        else delete mergedReceiptBranding.footerText;
+
+        const normalizedPrimaryColor = normalizeColorSetting(mergedReceiptBranding.primaryColor);
+        if (normalizedPrimaryColor) mergedReceiptBranding.primaryColor = normalizedPrimaryColor;
+        else delete mergedReceiptBranding.primaryColor;
+
+        const normalizedTableHeaderColor = normalizeColorSetting(mergedReceiptBranding.tableHeaderColor);
+        if (normalizedTableHeaderColor) mergedReceiptBranding.tableHeaderColor = normalizedTableHeaderColor;
+        else delete mergedReceiptBranding.tableHeaderColor;
+
+        const normalizedLogoMode = normalizeStringSetting(mergedReceiptBranding.logoMode);
+        if (normalizedLogoMode === 'business' || normalizedLogoMode === 'custom' || normalizedLogoMode === 'none') {
+          mergedReceiptBranding.logoMode = normalizedLogoMode;
+        } else {
+          delete mergedReceiptBranding.logoMode;
+        }
+
+        const normalizedCustomLogo = normalizeStringSetting(mergedReceiptBranding.customLogoUrl);
+        if (normalizedCustomLogo) mergedReceiptBranding.customLogoUrl = normalizedCustomLogo;
+        else delete mergedReceiptBranding.customLogoUrl;
+
+        if (mergedReceiptBranding.logoMode !== 'custom') {
+          delete mergedReceiptBranding.customLogoUrl;
+        }
+
+        if (typeof mergedReceiptBranding.showBusinessAddress !== 'boolean') {
+          delete mergedReceiptBranding.showBusinessAddress;
+        }
+
+        if (Object.keys(mergedReceiptBranding).length > 0) {
+          newSettings.receiptBranding = mergedReceiptBranding;
+        } else {
+          delete newSettings.receiptBranding;
+        }
+      }
+
       const hasLowStockThresholdUpdate = typeof body.lowStockThreshold === 'number';
       const lowStockThresholdToApply = hasLowStockThresholdUpdate
         ? body.lowStockThreshold

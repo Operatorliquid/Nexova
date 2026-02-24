@@ -124,6 +124,7 @@ const getSettingsNav = (
 
   if (businessType === 'commerce') {
     nav.push({ name: 'Mi negocio', href: '/settings/business' });
+    nav.push({ name: 'Boletas', href: '/settings/receipts' });
     nav.push({ name: 'Stock', href: '/settings/stock' });
     nav.push({ name: 'Pagos', href: '/settings/payments' });
   }
@@ -2485,6 +2486,359 @@ function NotificationsSettings(): JSX.Element {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// RECEIPT SETTINGS (Commerce only)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+type ReceiptLogoMode = 'business' | 'custom' | 'none';
+
+interface ReceiptBrandingSettings {
+  title: string;
+  footerText: string;
+  primaryColor: string;
+  tableHeaderColor: string;
+  logoMode: ReceiptLogoMode;
+  customLogoUrl: string | null;
+  showBusinessAddress: boolean;
+}
+
+const DEFAULT_RECEIPT_SETTINGS: ReceiptBrandingSettings = {
+  title: 'BOLETA',
+  footerText: 'Gracias por tu compra.',
+  primaryColor: '#1F2937',
+  tableHeaderColor: '#F3F4F6',
+  logoMode: 'business',
+  customLogoUrl: null,
+  showBusinessAddress: true,
+};
+
+function normalizeHexColor(value: string | undefined, fallback: string): string {
+  const normalized = (value || '').trim();
+  return /^#[0-9A-Fa-f]{6}$/.test(normalized) ? normalized.toUpperCase() : fallback;
+}
+
+function ReceiptSettings(): JSX.Element {
+  const { workspace } = useAuth();
+  const toast = useToast();
+  const customLogoRef = useRef<HTMLInputElement>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [error, setError] = useState('');
+  const [businessLogoUrl, setBusinessLogoUrl] = useState<string | null>(null);
+  const [settings, setSettings] = useState<ReceiptBrandingSettings>(DEFAULT_RECEIPT_SETTINGS);
+
+  useEffect(() => {
+    if (!workspace?.id) return;
+
+    const loadSettings = async (): Promise<void> => {
+      setIsLoading(true);
+      setError('');
+      try {
+        const res = await fetchWithCredentials(`${API_URL}/api/v1/workspaces/${workspace.id}`, {
+          headers: {
+            'X-Workspace-Id': workspace.id,
+          },
+        });
+
+        if (!res.ok) {
+          const data = await readJsonRecord(res);
+          throw new Error(readErrorMessage(data, 'No se pudo cargar la configuración de boletas'));
+        }
+
+        const data = await readJsonRecord(res);
+        const workspaceData = readRecord(data, 'workspace');
+        const workspaceSettings = readRecord(workspaceData, 'settings');
+        const receiptBranding = readRecord(workspaceSettings, 'receiptBranding');
+
+        const logoModeRaw = readString(receiptBranding, 'logoMode');
+        const logoMode: ReceiptLogoMode =
+          logoModeRaw === 'custom' || logoModeRaw === 'none'
+            ? logoModeRaw
+            : 'business';
+
+        setBusinessLogoUrl(readString(workspaceSettings, 'companyLogo') ?? null);
+        setSettings({
+          title: readString(receiptBranding, 'title') ?? DEFAULT_RECEIPT_SETTINGS.title,
+          footerText: readString(receiptBranding, 'footerText') ?? DEFAULT_RECEIPT_SETTINGS.footerText,
+          primaryColor: normalizeHexColor(
+            readString(receiptBranding, 'primaryColor'),
+            DEFAULT_RECEIPT_SETTINGS.primaryColor
+          ),
+          tableHeaderColor: normalizeHexColor(
+            readString(receiptBranding, 'tableHeaderColor'),
+            DEFAULT_RECEIPT_SETTINGS.tableHeaderColor
+          ),
+          logoMode,
+          customLogoUrl: readString(receiptBranding, 'customLogoUrl') ?? null,
+          showBusinessAddress: readBoolean(
+            receiptBranding,
+            'showBusinessAddress',
+            DEFAULT_RECEIPT_SETTINGS.showBusinessAddress
+          ),
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'No se pudo cargar la configuración de boletas';
+        setError(message);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    void loadSettings();
+  }, [workspace?.id]);
+
+  const handleCustomLogoUpload = (file: File): void => {
+    setUploadingLogo(true);
+    setError('');
+
+    try {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const result = typeof reader.result === 'string' ? reader.result : '';
+        if (!result) {
+          setError('No se pudo leer el logo');
+        } else {
+          setSettings((prev) => ({ ...prev, customLogoUrl: result, logoMode: 'custom' }));
+        }
+        setUploadingLogo(false);
+      };
+      reader.onerror = () => {
+        setError('No se pudo leer el logo');
+        setUploadingLogo(false);
+      };
+      reader.readAsDataURL(file);
+    } catch {
+      setError('No se pudo leer el logo');
+      setUploadingLogo(false);
+    }
+  };
+
+  const handleSave = async (): Promise<void> => {
+    if (!workspace?.id) return;
+
+    setIsSaving(true);
+    setError('');
+
+    try {
+      const payload = {
+        receiptBranding: {
+          title: settings.title.trim(),
+          footerText: settings.footerText.trim(),
+          primaryColor: normalizeHexColor(settings.primaryColor, DEFAULT_RECEIPT_SETTINGS.primaryColor),
+          tableHeaderColor: normalizeHexColor(settings.tableHeaderColor, DEFAULT_RECEIPT_SETTINGS.tableHeaderColor),
+          logoMode: settings.logoMode,
+          customLogoUrl: settings.logoMode === 'custom' ? (settings.customLogoUrl || '') : '',
+          showBusinessAddress: settings.showBusinessAddress,
+        },
+      };
+
+      const res = await fetchWithCredentials(`${API_URL}/api/v1/workspaces/${workspace.id}/settings`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Workspace-Id': workspace.id,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const data = await readJsonRecord(res);
+        throw new Error(readErrorMessage(data, 'No se pudo guardar la configuración de boletas'));
+      }
+
+      toast.success('Configuración de boletas guardada');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'No se pudo guardar la configuración de boletas';
+      setError(message);
+      toast.error(message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const previewLogo =
+    settings.logoMode === 'none'
+      ? null
+      : settings.logoMode === 'custom'
+        ? settings.customLogoUrl
+        : businessLogoUrl;
+
+  if (isLoading) {
+    return (
+      <div className="glass-card rounded-2xl overflow-hidden">
+        <div className="p-5 border-b border-border">
+          <div className="animate-pulse h-5 w-40 rounded-lg bg-secondary" />
+        </div>
+        <div className="p-5 space-y-4">
+          <div className="animate-pulse h-10 w-full rounded-xl bg-secondary" />
+          <div className="animate-pulse h-10 w-full rounded-xl bg-secondary" />
+          <div className="animate-pulse h-20 w-full rounded-xl bg-secondary" />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="glass-card rounded-2xl overflow-hidden">
+      <div className="p-5 border-b border-border">
+        <h3 className="font-semibold text-foreground">Boletas y resumenes PDF</h3>
+        <p className="text-sm text-muted-foreground mt-1">
+          Personalizá el diseño de las boletas/resúmenes que se envían por WhatsApp y dashboard.
+        </p>
+      </div>
+      <div className="p-5 space-y-5">
+        {error && (
+          <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
+            {error}
+          </div>
+        )}
+
+        <Input
+          label="Título del PDF"
+          value={settings.title}
+          onChange={(e) => setSettings((prev) => ({ ...prev, title: e.target.value }))}
+          maxLength={60}
+          hint='Ejemplo: "BOLETA", "RESUMEN DE PEDIDO"'
+        />
+
+        <div>
+          <label className="block text-sm font-medium text-foreground mb-2">Texto de pie</label>
+          <Textarea
+            value={settings.footerText}
+            onChange={(e) => setSettings((prev) => ({ ...prev, footerText: e.target.value }))}
+            rows={2}
+            maxLength={220}
+            placeholder="Gracias por tu compra."
+          />
+          <p className="mt-1 text-xs text-muted-foreground">Se muestra al final del PDF.</p>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className="text-sm font-medium text-foreground mb-2 block">Color principal</label>
+            <input
+              type="color"
+              value={settings.primaryColor}
+              onChange={(e) =>
+                setSettings((prev) => ({
+                  ...prev,
+                  primaryColor: normalizeHexColor(e.target.value, DEFAULT_RECEIPT_SETTINGS.primaryColor),
+                }))
+              }
+              className="h-10 w-full rounded-xl border border-input bg-background px-2"
+            />
+          </div>
+          <div>
+            <label className="text-sm font-medium text-foreground mb-2 block">Color del encabezado de tabla</label>
+            <input
+              type="color"
+              value={settings.tableHeaderColor}
+              onChange={(e) =>
+                setSettings((prev) => ({
+                  ...prev,
+                  tableHeaderColor: normalizeHexColor(e.target.value, DEFAULT_RECEIPT_SETTINGS.tableHeaderColor),
+                }))
+              }
+              className="h-10 w-full rounded-xl border border-input bg-background px-2"
+            />
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          <label className="text-sm font-medium text-foreground">Logo en boleta</label>
+          <Select
+            value={settings.logoMode}
+            onValueChange={(value) => setSettings((prev) => ({ ...prev, logoMode: value as ReceiptLogoMode }))}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="business">Usar logo del negocio</SelectItem>
+              <SelectItem value="custom">Usar logo personalizado</SelectItem>
+              <SelectItem value="none">Sin logo</SelectItem>
+            </SelectContent>
+          </Select>
+
+          {settings.logoMode === 'custom' && (
+            <div className="flex items-center gap-3">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => customLogoRef.current?.click()}
+                isLoading={uploadingLogo}
+              >
+                {settings.customLogoUrl ? 'Cambiar logo' : 'Subir logo personalizado'}
+              </Button>
+              {settings.customLogoUrl && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setSettings((prev) => ({ ...prev, customLogoUrl: null }))}
+                >
+                  Quitar
+                </Button>
+              )}
+              <input
+                ref={customLogoRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleCustomLogoUpload(file);
+                }}
+              />
+            </div>
+          )}
+
+          <div className="rounded-xl border border-border bg-secondary/40 p-3 flex items-center gap-3">
+            <div
+              className={cn(
+                'w-14 h-14 rounded-lg border border-border bg-background flex items-center justify-center overflow-hidden'
+              )}
+            >
+              {previewLogo ? (
+                <img src={previewLogo} alt="Preview logo boleta" className="w-full h-full object-cover" />
+              ) : (
+                <Building2 className="w-5 h-5 text-muted-foreground" />
+              )}
+            </div>
+            <div className="text-xs text-muted-foreground">
+              {settings.logoMode === 'business'
+                ? businessLogoUrl
+                  ? 'Se usará el logo cargado en Mi negocio.'
+                  : 'No tenés logo en Mi negocio. Subí uno o elegí logo personalizado.'
+                : settings.logoMode === 'custom'
+                  ? settings.customLogoUrl
+                    ? 'Se usará el logo personalizado.'
+                    : 'Subí un logo personalizado.'
+                  : 'La boleta se enviará sin logo.'}
+            </div>
+          </div>
+        </div>
+
+        <Switch
+          label="Mostrar dirección del negocio"
+          description="Incluye la dirección configurada en Mi negocio dentro del PDF."
+          checked={settings.showBusinessAddress}
+          onChange={(e) =>
+            setSettings((prev) => ({
+              ...prev,
+              showBusinessAddress: e.target.checked,
+            }))
+          }
+        />
+
+        <Button onClick={() => { void handleSave(); }} isLoading={isSaving}>
+          Guardar configuración
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // STOCK SETTINGS (Commerce only)
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -2849,6 +3203,14 @@ export default function SettingsPage(): JSX.Element {
             <Routes>
               <Route index element={<ProfileSettings />} />
               <Route path="business" element={<BusinessSettings />} />
+              <Route
+                path="receipts"
+                element={
+                  workspace?.businessType === 'commerce'
+                    ? <ReceiptSettings />
+                    : <Navigate to="/settings" replace />
+                }
+              />
               <Route
                 path="stock"
                 element={
