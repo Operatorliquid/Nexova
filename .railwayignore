@@ -1,0 +1,14 @@
+.git
+.github
+.turbo
+.logs
+node_modules
+.pnpm-store
+coverage
+dist
+build
+tmp
+temp
+.tmp
+.DS_Store
+*.log
