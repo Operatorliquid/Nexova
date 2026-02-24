@@ -5690,7 +5690,16 @@ export class RetailAgent {
 
       if (selection === 'catalog') {
         await this.storeMessage(sessionId, 'user', message, messageId);
+
+        if (fsm.canTransition(AgentState.COLLECTING_ORDER)) {
+          fsm.transition(AgentState.COLLECTING_ORDER);
+          await this.memoryManager.updateState(sessionId, AgentState.COLLECTING_ORDER);
+        }
+
+        memory.state = fsm.getState();
         memory.context.activeFlow = 'catalog';
+        memory.context.lastMenu = undefined;
+        memory.context.pendingCatalogOffer = undefined;
         await this.memoryManager.saveSession(memory);
 
         const execution = await toolRegistry.execute(
@@ -5702,13 +5711,13 @@ export class RetailAgent {
         toolsUsed.push(execution);
 
         const response = execution.result.success
-          ? '📒 Ahora te envío el catálogo. Decime qué querés agregar a tu pedido.'
+          ? '📒 Te envié el catálogo. Si querés hacer un pedido, decime producto y cantidad.'
           : execution.result.error || 'No pude enviar el catálogo.';
 
         await this.storeMessage(sessionId, 'assistant', response);
         await this.prisma.agentSession.updateMany({
           where: { id: sessionId, workspaceId },
-          data: { lastActivityAt: new Date(), agentActive: true },
+          data: { currentState: fsm.getState(), lastActivityAt: new Date(), agentActive: true },
         });
 
         return {
@@ -10625,25 +10634,27 @@ function detectConversationFlow(memory: SessionMemory): FlowKind {
   ) {
     return 'active_orders';
   }
-  if (
-    memory.context.pendingCatalogOffer ||
-    memory.context.lastMenu === 'secondary'
-  ) {
-    return 'catalog';
-  }
-  if (
-    memory.context.pendingProductSelection ||
-    memory.context.pendingStockAdjustment ||
-    memory.context.pendingOrderDecision ||
-    memory.context.pendingCancelOrderId ||
-    memory.context.editingOrderId ||
-    memory.cart?.items.length ||
+  const hasOrderContext =
+    Boolean(memory.context.pendingProductSelection) ||
+    Boolean(memory.context.pendingStockAdjustment) ||
+    Boolean(memory.context.pendingOrderDecision) ||
+    Boolean(memory.context.pendingCancelOrderId) ||
+    Boolean(memory.context.editingOrderId) ||
+    Boolean(memory.cart?.items.length) ||
     memory.state === AgentState.COLLECTING_ORDER ||
     memory.state === AgentState.AWAITING_CONFIRMATION ||
     memory.state === AgentState.NEEDS_DETAILS ||
-    memory.state === AgentState.EXECUTING
+    memory.state === AgentState.EXECUTING;
+  if (
+    memory.context.pendingCatalogOffer
   ) {
+    return 'catalog';
+  }
+  if (hasOrderContext) {
     return 'order';
+  }
+  if (memory.context.lastMenu === 'secondary') {
+    return 'catalog';
   }
   return 'menu';
 }
