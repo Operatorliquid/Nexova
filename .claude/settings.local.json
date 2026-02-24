@@ -71,7 +71,8 @@
       "Bash(pnpm tsc:*)",
       "Bash(pnpm --filter dashboard build:*)",
       "Bash(pnpm --filter landing add:*)",
-      "Bash(pnpm --filter landing build:*)"
+      "Bash(pnpm --filter landing build:*)",
+      "Bash(head:*)"
     ]
   }
 }

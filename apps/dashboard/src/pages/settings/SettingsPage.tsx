@@ -5,6 +5,7 @@ import { NavLink, Routes, Route, Navigate, useSearchParams } from 'react-router-
 import {
   Button,
   Input,
+  Label,
   Textarea,
   Switch,
   Dialog,
@@ -2701,8 +2702,8 @@ function ReceiptSettings(): JSX.Element {
           hint='Ejemplo: "BOLETA", "RESUMEN DE PEDIDO"'
         />
 
-        <div>
-          <label className="block text-sm font-medium text-foreground mb-2">Texto de pie</label>
+        <div className="space-y-2">
+          <Label>Texto de pie</Label>
           <Textarea
             value={settings.footerText}
             onChange={(e) => setSettings((prev) => ({ ...prev, footerText: e.target.value }))}
@@ -2710,12 +2711,12 @@ function ReceiptSettings(): JSX.Element {
             maxLength={220}
             placeholder="Gracias por tu compra."
           />
-          <p className="mt-1 text-xs text-muted-foreground">Se muestra al final del PDF.</p>
+          <p className="text-xs text-muted-foreground">Se muestra al final del PDF.</p>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label className="text-sm font-medium text-foreground mb-2 block">Color principal</label>
+          <div className="space-y-2">
+            <Label>Color principal</Label>
             <input
               type="color"
               value={settings.primaryColor}
@@ -2725,11 +2726,11 @@ function ReceiptSettings(): JSX.Element {
                   primaryColor: normalizeHexColor(e.target.value, DEFAULT_RECEIPT_SETTINGS.primaryColor),
                 }))
               }
-              className="h-10 w-full rounded-xl border border-input bg-background px-2"
+              className="h-10 w-full rounded-xl border border-input cursor-pointer p-0 [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:rounded-[10px] [&::-webkit-color-swatch]:border-0 [&::-moz-color-swatch]:rounded-[10px] [&::-moz-color-swatch]:border-0"
             />
           </div>
-          <div>
-            <label className="text-sm font-medium text-foreground mb-2 block">Color del encabezado de tabla</label>
+          <div className="space-y-2">
+            <Label>Color del encabezado de tabla</Label>
             <input
               type="color"
               value={settings.tableHeaderColor}
@@ -2739,13 +2740,13 @@ function ReceiptSettings(): JSX.Element {
                   tableHeaderColor: normalizeHexColor(e.target.value, DEFAULT_RECEIPT_SETTINGS.tableHeaderColor),
                 }))
               }
-              className="h-10 w-full rounded-xl border border-input bg-background px-2"
+              className="h-10 w-full rounded-xl border border-input cursor-pointer p-0 [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:rounded-[10px] [&::-webkit-color-swatch]:border-0 [&::-moz-color-swatch]:rounded-[10px] [&::-moz-color-swatch]:border-0"
             />
           </div>
         </div>
 
-        <div className="space-y-3">
-          <label className="text-sm font-medium text-foreground">Logo en boleta</label>
+        <div className="space-y-2">
+          <Label>Logo en boleta</Label>
           <Select
             value={settings.logoMode}
             onValueChange={(value) => setSettings((prev) => ({ ...prev, logoMode: value as ReceiptLogoMode }))}

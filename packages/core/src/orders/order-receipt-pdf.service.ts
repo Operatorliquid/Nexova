@@ -173,7 +173,9 @@ export class OrderReceiptPdfService {
 
     const pdfBytes = await pdfDoc.save();
     const buffer = Buffer.from(pdfBytes);
-    const filename = `boleta_${order.orderNumber}.pdf`;
+    const safeOrderNumber = this.sanitizeFilenamePart(order.orderNumber || 'pedido');
+    const generatedAt = this.formatTimestampForFilename(new Date());
+    const filename = `boleta_${safeOrderNumber}_${generatedAt}.pdf`;
 
     return { buffer, filename };
   }
@@ -470,6 +472,24 @@ export class OrderReceiptPdfService {
       }
     }
     return text;
+  }
+
+  private sanitizeFilenamePart(value: string): string {
+    return value
+      .trim()
+      .replace(/\s+/g, '_')
+      .replace(/[^a-zA-Z0-9._-]/g, '_')
+      .slice(0, 80) || 'pedido';
+  }
+
+  private formatTimestampForFilename(date: Date): string {
+    const yyyy = date.getUTCFullYear();
+    const mm = String(date.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(date.getUTCDate()).padStart(2, '0');
+    const hh = String(date.getUTCHours()).padStart(2, '0');
+    const min = String(date.getUTCMinutes()).padStart(2, '0');
+    const sec = String(date.getUTCSeconds()).padStart(2, '0');
+    return `${yyyy}${mm}${dd}-${hh}${min}${sec}`;
   }
 
   private drawFooter(page: PDFPage, font: PDFFont, footerText: string, palette: ReceiptPalette): void {
