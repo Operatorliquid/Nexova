@@ -3466,9 +3466,16 @@ export class RetailAgent {
       }
 
       const quantityOnlyFollowUp = extractStandaloneQuantity(message);
+      const canHandleQuantityFollowUpState =
+        fsm.getState() === AgentState.IDLE ||
+        fsm.getState() === AgentState.COLLECTING_ORDER ||
+        (
+          fsm.getState() === AgentState.AWAITING_CONFIRMATION &&
+          (!memory.cart || memory.cart.items.length === 0)
+        );
       if (
         quantityOnlyFollowUp &&
-        (fsm.getState() === AgentState.IDLE || fsm.getState() === AgentState.COLLECTING_ORDER) &&
+        canHandleQuantityFollowUpState &&
         !memory.context.pendingOrderDecision &&
         !memory.context.pendingProductSelection &&
         !memory.context.pendingCancelOrderId &&
@@ -5697,7 +5704,7 @@ export class RetailAgent {
         }
 
         memory.state = fsm.getState();
-        memory.context.activeFlow = 'catalog';
+        memory.context.activeFlow = 'order';
         memory.context.lastMenu = undefined;
         memory.context.pendingCatalogOffer = undefined;
         await this.memoryManager.saveSession(memory);
@@ -10700,17 +10707,17 @@ function parseMenuSelection(message: string, lastMenu?: 'primary' | 'secondary')
   }
 
   // Numeric selections (exact or short)
-  if (/^1([.)-]?)$/.test(normalized) || /^opcion\\s*1$/.test(normalized)) {
-    return lastMenu === 'secondary' ? 'catalog' : 'order';
+  if (lastMenu) {
+    if (/^1([.)-]?)$/.test(normalized) || /^opcion\\s*1$/.test(normalized)) {
+      return lastMenu === 'secondary' ? 'catalog' : 'order';
+    }
+    if (/^2([.)-]?)$/.test(normalized) || /^opcion\\s*2$/.test(normalized)) {
+      return lastMenu === 'secondary' ? 'repeat' : 'active';
+    }
+    if (/^3([.)-]?)$/.test(normalized) || /^opcion\\s*3$/.test(normalized)) {
+      return lastMenu === 'secondary' ? 'other' : 'more';
+    }
   }
-  if (/^2([.)-]?)$/.test(normalized) || /^opcion\\s*2$/.test(normalized)) {
-    return lastMenu === 'secondary' ? 'repeat' : 'active';
-  }
-  if (/^3([.)-]?)$/.test(normalized) || /^opcion\\s*3$/.test(normalized)) {
-    return lastMenu === 'secondary' ? 'other' : 'more';
-  }
-  if (/^4([.)-]?)$/.test(normalized) || /^opcion\\s*4$/.test(normalized)) return 'catalog';
-  if (/^5([.)-]?)$/.test(normalized) || /^opcion\\s*5$/.test(normalized)) return 'other';
 
   if (wasCatalogExplicitlyRequested(message)) {
     return 'catalog';
