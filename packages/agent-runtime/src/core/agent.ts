@@ -1094,6 +1094,7 @@ export class RetailAgent {
       const wantsAccountStatementPdf =
         wasAccountStatementExplicitlyRequested(message) ||
         await this.isAccountStatementPdfFollowUp({ message, sessionId });
+      const wantsPromotionList = wasPromotionInquiryRequested(message);
 
       const normalizedMessage = message.toLowerCase().trim();
       const wantsHuman = HANDOFF_KEYWORDS.some((keyword) => normalizedMessage.includes(keyword));
@@ -1548,6 +1549,37 @@ export class RetailAgent {
           memory.context.otherInquiry = undefined;
           await this.memoryManager.saveSession(memory);
           return respondWithPrimaryMenu();
+        }
+
+        if (wantsPromotionList) {
+          await this.storeMessage(sessionId, 'user', message, messageId);
+
+          const execution = await toolRegistry.execute(
+            'list_active_promotions',
+            { limit: 10 },
+            toolContext
+          );
+          toolsUsed.push(execution);
+
+          const toolMessage = extractToolMessage(execution.result.data);
+          const response = execution.result.success
+            ? toolMessage || 'No hay promociones activas en este momento.'
+            : execution.result.error || 'No pude consultar las promociones ahora mismo.';
+
+          await this.storeMessage(sessionId, 'assistant', response);
+
+          await this.prisma.agentSession.updateMany({
+            where: { id: sessionId, workspaceId },
+            data: { lastActivityAt: new Date(), agentActive: true },
+          });
+
+          return {
+            response,
+            state: fsm.getState(),
+            toolsUsed,
+            tokensUsed: 0,
+            shouldSendMessage: true,
+          };
         }
 
         if (wasCatalogExplicitlyRequested(message)) {
@@ -3429,6 +3461,188 @@ export class RetailAgent {
                 shouldSendMessage: true,
               };
             }
+          }
+        }
+      }
+
+      const quantityOnlyFollowUp = extractStandaloneQuantity(message);
+      if (
+        quantityOnlyFollowUp &&
+        (fsm.getState() === AgentState.IDLE || fsm.getState() === AgentState.COLLECTING_ORDER) &&
+        !memory.context.pendingOrderDecision &&
+        !memory.context.pendingProductSelection &&
+        !memory.context.pendingCancelOrderId &&
+        !memory.context.activeOrdersPrompt &&
+        !memory.context.pendingCatalogOffer &&
+        !memory.context.pendingStockAdjustment &&
+        !memory.context.paymentStage &&
+        !memory.context.editingOrderId &&
+        !memory.context.orderViewAwaitingAck &&
+        !memory.context.orderViewAwaitingNumber
+      ) {
+        let baseName = '';
+        if (memory.context.lastProductInquiry && isRecentProductInquiry(memory.context.lastProductInquiry)) {
+          baseName = (
+            memory.context.lastProductInquiry.displayName ||
+            memory.context.lastProductInquiry.name ||
+            ''
+          ).trim();
+        }
+
+        if (!baseName) {
+          const lastAssistant = await this.prisma.agentMessage.findFirst({
+            where: { sessionId, role: 'assistant' },
+            orderBy: { createdAt: 'desc' },
+            select: { content: true },
+          });
+          baseName = extractQuantityPromptProductName(lastAssistant?.content || '') || '';
+        }
+
+        if (baseName) {
+          const candidates = await this.loadProductCandidates(memory.workspaceId);
+          const matchResult = matchSegmentToProduct({ quantity: quantityOnlyFollowUp, name: baseName }, candidates);
+
+          if (matchResult.type === 'ambiguous') {
+            const options = matchResult.options.slice(0, 10);
+            const latest = (await this.memoryManager.getSession(memory.sessionId)) || memory;
+            latest.context.pendingProductSelection = {
+              quantity: quantityOnlyFollowUp,
+              requestedName: baseName,
+              options,
+            };
+            await this.memoryManager.saveSession(latest);
+
+            const selectionContent = buildProductSelectionContent(
+              baseName,
+              quantityOnlyFollowUp,
+              options
+            );
+
+            await this.storeMessage(sessionId, 'user', message, messageId);
+            await this.storeMessage(sessionId, 'assistant', selectionContent.text);
+
+            return {
+              response: selectionContent.text,
+              responseType: selectionContent.responseType,
+              responsePayload: selectionContent.responsePayload,
+              state: fsm.getState(),
+              toolsUsed: [],
+              tokensUsed: 0,
+              shouldSendMessage: true,
+            };
+          }
+
+          if (matchResult.type === 'match') {
+            const requestedSecondaryUnit = extractRequestedSecondaryUnit(baseName);
+            const multiplier = resolveSecondaryUnitMultiplier(
+              requestedSecondaryUnit,
+              matchResult.match.secondaryUnit,
+              matchResult.match.secondaryUnitValue
+            );
+            const adjustedQuantity = multiplier
+              ? quantityOnlyFollowUp * multiplier
+              : quantityOnlyFollowUp;
+
+            const execution = await toolRegistry.execute(
+              'add_to_cart',
+              {
+                productId: matchResult.match.productId,
+                variantId: matchResult.match.variantId,
+                quantity: adjustedQuantity,
+              },
+              toolContext
+            );
+            toolsUsed.push(execution);
+
+            if (!execution.result.success) {
+              const shortages = extractInsufficientStock(execution.result.data);
+              if (shortages.length > 0 && shortages.some((detail) => detail.available > 0)) {
+                memory.context.pendingStockAdjustment = { items: shortages };
+                await this.memoryManager.saveSession(memory);
+                const response = buildInsufficientStockMessage(shortages);
+                await this.storeMessage(sessionId, 'user', message, messageId);
+                await this.storeMessage(sessionId, 'assistant', response);
+                return {
+                  response,
+                  state: fsm.getState(),
+                  toolsUsed,
+                  tokensUsed: 0,
+                  shouldSendMessage: true,
+                };
+              }
+
+              const response = execution.result.error || 'No pude agregar ese producto.';
+              await this.storeMessage(sessionId, 'user', message, messageId);
+              await this.storeMessage(sessionId, 'assistant', response);
+              return {
+                response,
+                state: fsm.getState(),
+                toolsUsed,
+                tokensUsed: 0,
+                shouldSendMessage: true,
+              };
+            }
+
+            const cart = await this.memoryManager.getCart(sessionId);
+            if (!cart || cart.items.length === 0) {
+              const response = 'No pude agregar ese producto.';
+              await this.storeMessage(sessionId, 'user', message, messageId);
+              await this.storeMessage(sessionId, 'assistant', response);
+              return {
+                response,
+                state: fsm.getState(),
+                toolsUsed,
+                tokensUsed: 0,
+                shouldSendMessage: true,
+              };
+            }
+
+            const isEditingExistingOrder = !!memory.context.editingOrderId;
+            const actions = isEditingExistingOrder ? buildEditOrderActionsContent() : buildOrderActionsContent();
+            const shouldSendPdf = cart.items.length > LONG_ORDER_SUMMARY_THRESHOLD;
+            let response = '';
+
+            if (shouldSendPdf) {
+              const pdfExecution = await toolRegistry.execute(
+                'send_order_pdf',
+                {
+                  summary: buildCartSummaryPayload(cart, memory.context.editingOrderNumber),
+                },
+                toolContext
+              );
+              toolsUsed.push(pdfExecution);
+              response = pdfExecution.result.success
+                ? '🛒 Te envié el resumen del pedido en PDF.'
+                : buildOrderSummaryMessage(cart);
+            } else {
+              response = buildOrderSummaryMessage(cart);
+            }
+
+            await this.storeMessage(sessionId, 'user', message, messageId);
+            await this.storeMessage(sessionId, 'assistant', response);
+
+            if (fsm.canTransition(AgentState.AWAITING_CONFIRMATION)) {
+              fsm.transition(AgentState.AWAITING_CONFIRMATION);
+              await this.memoryManager.updateState(sessionId, AgentState.AWAITING_CONFIRMATION);
+            }
+
+            await this.prisma.agentSession.updateMany({
+              where: { id: sessionId, workspaceId },
+              data: {
+                currentState: fsm.getState(),
+                lastActivityAt: new Date(),
+              },
+            });
+
+            return {
+              response,
+              responseType: 'interactive-buttons',
+              responsePayload: actions.interactive,
+              state: fsm.getState(),
+              toolsUsed,
+              tokensUsed: 0,
+              shouldSendMessage: true,
+            };
           }
         }
       }
@@ -6739,6 +6953,39 @@ export class RetailAgent {
         };
       }
 
+      if (wantsPromotionList) {
+        await this.storeMessage(sessionId, 'user', message, messageId);
+
+        const execution = await toolRegistry.execute(
+          'list_active_promotions',
+          { limit: 10 },
+          toolContext
+        );
+        toolsUsed.push(execution);
+
+        const toolMessage = extractToolMessage(execution.result.data);
+        const response = execution.result.success
+          ? toolMessage || 'No hay promociones activas en este momento.'
+          : execution.result.error || 'No pude consultar las promociones ahora mismo.';
+
+        await this.storeMessage(sessionId, 'assistant', response);
+        await this.prisma.agentSession.updateMany({
+          where: { id: sessionId, workspaceId },
+          data: {
+            currentState: fsm.getState(),
+            lastActivityAt: new Date(),
+          },
+        });
+
+        return {
+          response,
+          state: fsm.getState(),
+          toolsUsed,
+          tokensUsed: 0,
+          shouldSendMessage: true,
+        };
+      }
+
       // Get conversation history (respect context reset)
       const contextStartAt = await this.getSessionContextStartAt(sessionId, workspaceId);
       const history = await this.getConversationHistory(sessionId, contextStartAt);
@@ -6863,6 +7110,23 @@ export class RetailAgent {
                 content: JSON.stringify({
                   success: false,
                   error: 'Tool not allowed in this context',
+                }),
+              });
+              continue;
+            }
+
+            const blockAutoHandoffForQuantityFollowUp =
+              block.name === 'request_handoff' &&
+              quantityOnlyFollowUp !== null &&
+              (fsm.getState() === AgentState.IDLE || fsm.getState() === AgentState.COLLECTING_ORDER) &&
+              !wantsHuman &&
+              !isNegativeSentiment(normalizedMessage);
+            if (blockAutoHandoffForQuantityFollowUp) {
+              pendingToolResults.push({
+                tool_use_id: block.id,
+                content: JSON.stringify({
+                  success: false,
+                  error: 'El cliente respondió una cantidad para continuar el pedido. No corresponde handoff automático.',
                 }),
               });
               continue;
@@ -9683,6 +9947,33 @@ function wasCatalogExplicitlyRequested(message: string): boolean {
   return phrases.some((phrase) => normalized.includes(phrase));
 }
 
+function wasPromotionInquiryRequested(message: string): boolean {
+  const normalized = normalizeSimpleText(message);
+  if (!normalized) return false;
+
+  const promotionTokens = [
+    'promo',
+    'promos',
+    'promocion',
+    'promoción',
+    'promociones',
+    'oferta',
+    'ofertas',
+    'beneficio',
+    'beneficios',
+    'descuento',
+    'descuentos',
+  ];
+
+  const asksPromotion = promotionTokens.some((token) => normalized.includes(token));
+  if (!asksPromotion) return false;
+
+  // Avoid stealing pure order-confirmation flow with numeric replies like "1", "2", etc.
+  if (/^\d{1,2}$/.test(normalized)) return false;
+
+  return true;
+}
+
 function wasAccountStatementExplicitlyRequested(message: string): boolean {
   const normalized = normalizeSimpleText(message);
   if (!normalized) return false;
@@ -9911,6 +10202,39 @@ const UNIT_FOLLOWUP_UNITS = new Set([
   'paquetes',
 ]);
 
+const QUANTITY_FOLLOWUP_STOPWORDS = new Set([
+  'quiero',
+  'queria',
+  'quería',
+  'serian',
+  'serían',
+  'seria',
+  'sería',
+  'son',
+  'me',
+  'agrega',
+  'agregame',
+  'agregar',
+  'poneme',
+  'poner',
+  'de',
+  'del',
+  'la',
+  'el',
+  'los',
+  'las',
+  'por',
+  'favor',
+  'x',
+]);
+
+const QUANTITY_PROMPT_PATTERNS = [
+  'cuantos queres agregar',
+  'cuantas queres agregar',
+  'cuantos queres',
+  'cuantas queres',
+];
+
 function extractUnitValueFromMessage(message: string): string | null {
   const match = message.match(/(\d+(?:[.,]\d+)?)/);
   if (!match) return null;
@@ -9930,6 +10254,66 @@ function isUnitOnlyFollowUp(message: string): boolean {
     return true;
   });
   return remaining.length === 0;
+}
+
+function extractStandaloneQuantity(message: string): number | null {
+  const normalized = normalizeSimpleText(message);
+  if (!normalized) return null;
+
+  const tokens = normalized.split(' ').filter(Boolean);
+  if (tokens.length === 0) return null;
+
+  let quantity: number | null = null;
+  for (const token of tokens) {
+    if (/^\d{1,5}$/.test(token)) {
+      if (quantity !== null) return null;
+      quantity = Number.parseInt(token, 10);
+      continue;
+    }
+    if (UNIT_FOLLOWUP_UNITS.has(token) || QUANTITY_FOLLOWUP_STOPWORDS.has(token)) {
+      continue;
+    }
+    return null;
+  }
+
+  if (!quantity || !Number.isFinite(quantity) || quantity <= 0) return null;
+  return quantity;
+}
+
+function wasQuantityPrompt(content: string): boolean {
+  const normalized = normalizeSimpleText(content);
+  if (!normalized) return false;
+  return QUANTITY_PROMPT_PATTERNS.some((pattern) => normalized.includes(pattern));
+}
+
+function extractQuantityPromptProductName(content: string): string | null {
+  if (!content || !wasQuantityPrompt(content)) return null;
+
+  const boldMatches = Array.from(content.matchAll(/\*\*([^*\n]{2,180})\*\*/g));
+  if (boldMatches.length > 0) {
+    const candidate = (boldMatches[0]?.[1] || '').trim();
+    if (candidate.length > 0) return candidate;
+  }
+
+  const lines = content
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  for (const line of lines) {
+    const cleaned = line
+      .replace(/^[•\-–—\s]+/, '')
+      .replace(/\*/g, '')
+      .trim();
+    if (!cleaned) continue;
+    const normalized = normalizeSimpleText(cleaned);
+    if (!normalized) continue;
+    if (normalized.includes('precio') || normalized.includes('disponible')) continue;
+    if (normalized.length < 3) continue;
+    return cleaned;
+  }
+
+  return null;
 }
 
 const LAST_PRODUCT_INQUIRY_MAX_AGE_MS = 15 * 60 * 1000;

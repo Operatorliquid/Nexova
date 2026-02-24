@@ -57,18 +57,6 @@ const CATALOG_KEYWORDS = [
   'catalogo pdf',
 ];
 
-const PROMOTION_KEYWORDS = [
-  'promo',
-  'promos',
-  'promocion',
-  'promoción',
-  'promociones',
-  'oferta',
-  'ofertas',
-  'descuento',
-  'descuentos',
-];
-
 const ORDER_KEYWORDS = [
   'nuevo pedido',
   'hacer pedido',
@@ -141,14 +129,15 @@ export function parseGlobalFlowIntent(message: string): GlobalFlowIntent {
   const paymentIntent = hasAnyKeyword(normalized, PAYMENT_KEYWORDS);
   const activeOrdersIntent = hasAnyKeyword(normalized, ACTIVE_ORDERS_KEYWORDS);
   const catalogIntent = hasAnyKeyword(normalized, CATALOG_KEYWORDS);
-  const promotionsIntent = hasAnyKeyword(normalized, PROMOTION_KEYWORDS);
   const orderIntent = hasAnyKeyword(normalized, ORDER_KEYWORDS);
 
   if (paymentIntent) return 'payment';
   if (activeOrdersIntent) return 'active_orders';
-  if ((catalogIntent || promotionsIntent) && !orderIntent) return 'catalog';
+  // Promotions should not force "catalog" flow.
+  // Let the agent resolve them via promotions tools.
+  if (catalogIntent && !orderIntent) return 'catalog';
   if (orderIntent) return 'order';
-  if (catalogIntent || promotionsIntent) return 'catalog';
+  if (catalogIntent) return 'catalog';
 
   return null;
 }
