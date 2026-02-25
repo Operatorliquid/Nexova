@@ -72,7 +72,8 @@
       "Bash(pnpm --filter dashboard build:*)",
       "Bash(pnpm --filter landing add:*)",
       "Bash(pnpm --filter landing build:*)",
-      "Bash(head:*)"
+      "Bash(head:*)",
+      "WebFetch(domain:pocketchangethe.world)"
     ]
   }
 }

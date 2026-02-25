@@ -62,3 +62,4 @@ apps/worker/apps/api/uploads/
 *.pem
 *.key
 secrets/
+apps/landing/src/pages/IndexPage.tsx

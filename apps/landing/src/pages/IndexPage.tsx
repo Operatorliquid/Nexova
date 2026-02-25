@@ -1,899 +1,794 @@
-import {
-  MessageSquare,
-  ShoppingCart,
-  BarChart3,
-  Package,
-  Users,
-  CreditCard,
-  Bot,
-  Zap,
-  Shield,
-  Clock,
-  TrendingUp,
-  FileText,
-  Bell,
-  ChevronDown,
-  ArrowRight,
-  Check,
-  Star,
-  Sparkles,
-  Send,
-  Globe,
-  Layers,
-  Receipt,
-  Store,
-} from 'lucide-react';
-import {
-  motion,
-  useScroll,
-  useSpring,
-  useInView as useMotionInView,
-  AnimatePresence,
-} from 'motion/react';
-import { useEffect, useRef, useState, useCallback, type ReactNode } from 'react';
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
-} from 'recharts';
+import { type LucideIcon, Apple, Play, ArrowDown, CheckCircle2, MessageCircle, BarChart3, Zap, Shield, Smartphone, Globe } from 'lucide-react';
+import { motion, useScroll, useTransform } from 'motion/react';
+import { Fragment, useRef } from 'react';
 
-/* ───────────────────────── helpers ───────────────────────── */
+type StoreButtonProps = {
+  icon: LucideIcon;
+  store: string;
+  topText: string;
+};
 
-function Reveal({
-  children,
-  className = '',
-  delay = 0,
-}: {
-  children: ReactNode;
-  className?: string;
-  delay?: number;
-}): JSX.Element {
-  const ref = useRef<HTMLDivElement>(null);
-  const isInView = useMotionInView(ref, { once: true, margin: '-60px' });
+function StoreButton({ icon: Icon, store, topText }: StoreButtonProps): JSX.Element {
   return (
-    <motion.div
-      ref={ref}
-      initial={{ opacity: 0, y: 30 }}
-      animate={isInView ? { opacity: 1, y: 0 } : { opacity: 0, y: 30 }}
-      transition={{ duration: 0.6, ease: [0.25, 0.46, 0.45, 0.94], delay: delay / 1000 }}
-      className={className}
-    >
-      {children}
-    </motion.div>
-  );
-}
-
-function useCountUp(target: number, duration = 2000, active = true): number {
-  const [value, setValue] = useState(0);
-  useEffect(() => {
-    if (!active) return;
-    const start = performance.now();
-    const tick = (now: number): void => {
-      const elapsed = now - start;
-      const progress = Math.min(elapsed / duration, 1);
-      const eased = 1 - Math.pow(1 - progress, 3);
-      setValue(Math.floor(eased * target));
-      if (progress < 1) requestAnimationFrame(tick);
-    };
-    requestAnimationFrame(tick);
-  }, [target, duration, active]);
-  return value;
-}
-
-/* ───────────────────────── data ───────────────────────── */
-
-const salesData = [
-  { name: 'Lun', ventas: 245000 },
-  { name: 'Mar', ventas: 312000 },
-  { name: 'Mié', ventas: 287000 },
-  { name: 'Jue', ventas: 398000 },
-  { name: 'Vie', ventas: 456000 },
-  { name: 'Sáb', ventas: 523000 },
-  { name: 'Dom', ventas: 189000 },
-];
-
-const monthlyGrowth = [
-  { name: 'Ene', actual: 1850000, anterior: 1420000 },
-  { name: 'Feb', actual: 2100000, anterior: 1580000 },
-  { name: 'Mar', actual: 2340000, anterior: 1750000 },
-  { name: 'Abr', actual: 2680000, anterior: 1890000 },
-  { name: 'May', actual: 3150000, anterior: 2050000 },
-  { name: 'Jun', actual: 3520000, anterior: 2280000 },
-];
-
-const paymentMethodData = [
-  { name: 'Efectivo', value: 45, color: '#34d399' },
-  { name: 'Transferencia', value: 30, color: '#60A5FA' },
-  { name: 'Link de pago', value: 20, color: '#4D7CFF' },
-  { name: 'Otros', value: 5, color: '#6b7280' },
-];
-
-const features = [
-  { icon: Bot, title: 'Agente IA 24/7', description: 'Un asistente inteligente que atiende a tus clientes por WhatsApp, toma pedidos y procesa pagos sin descanso.', color: 'from-emerald-500 to-teal-600', bg: 'bg-emerald-500/15', iconColor: 'text-emerald-400' },
-  { icon: ShoppingCart, title: 'Gestión de pedidos', description: 'Desde la conversación hasta la entrega. Control total del ciclo de venta con seguimiento en tiempo real.', color: 'from-blue-500 to-indigo-600', bg: 'bg-blue-500/15', iconColor: 'text-blue-400' },
-  { icon: Package, title: 'Control de stock', description: 'Inventario en tiempo real con alertas de stock bajo, múltiples unidades y categorías inteligentes.', color: 'from-amber-500 to-orange-600', bg: 'bg-amber-500/15', iconColor: 'text-amber-400' },
-  { icon: Users, title: 'CRM integrado', description: 'Base de clientes con historial de compras, scoring de pago, notas y seguimiento de deudas.', color: 'from-indigo-500 to-indigo-700', bg: 'bg-indigo-500/15', iconColor: 'text-indigo-400' },
-  { icon: BarChart3, title: 'Analytics con IA', description: 'Métricas de ventas, insights generados por IA, tendencias y recomendaciones accionables.', color: 'from-blue-400 to-blue-600', bg: 'bg-blue-400/15', iconColor: 'text-blue-400' },
-  { icon: CreditCard, title: 'Pagos y facturación', description: 'Integración con MercadoPago, procesamiento de comprobantes con visión IA y facturación ARCA/AFIP.', color: 'from-blue-300 to-blue-500', bg: 'bg-blue-300/15', iconColor: 'text-blue-300' },
-];
-
-const solutions = [
-  { icon: Store, title: 'Comercios minoristas', description: 'Almacenes, kioscos, distribuidoras y comercios de barrio que quieren automatizar la atención y profesionalizar sus ventas.', items: ['Catálogo digital por WhatsApp', 'Pedidos automáticos', 'Control de fiado y deudas'] },
-  { icon: Globe, title: 'E-commerce', description: 'Tiendas online que necesitan un canal conversacional potente para aumentar conversiones y fidelizar clientes.', items: ['Atención 24/7 sin RRHH extra', 'Integración con medios de pago', 'Seguimiento automatizado'] },
-  { icon: Layers, title: 'Equipos de venta', description: 'Empresas con múltiples vendedores que necesitan centralizar operaciones y tener visibilidad total.', items: ['Roles y permisos granulares', 'Dashboard de métricas por equipo', 'Inbox colaborativo'] },
-];
-
-const dashboardUrlRaw: unknown = import.meta.env.VITE_DASHBOARD_URL;
-const DASHBOARD_URL =
-  typeof dashboardUrlRaw === 'string' && dashboardUrlRaw.trim().length > 0
-    ? dashboardUrlRaw
-    : 'http://localhost:5173';
-
-const plans = [
-  { code: 'basic', name: 'Basic', price: '47,72', period: '/mes', description: 'Para negocios que arrancan con WhatsApp commerce.', features: ['Agente IA básico', 'Hasta 500 conversaciones/mes', 'Gestión de pedidos', 'Control de stock', 'CRM de clientes', '1 número WhatsApp', 'Soporte por email'], cta: 'Elegir Basic', highlighted: false },
-  { code: 'standard', name: 'Standard', price: '112,05', period: '/mes', description: 'Para negocios en crecimiento que necesitan más.', features: ['Todo de Starter +', 'Conversaciones ilimitadas', 'Analytics con IA', 'Facturación ARCA/AFIP', 'Control de deudas', 'MercadoPago integrado', 'Roles y permisos', '3 números WhatsApp', 'Soporte prioritario'], cta: 'Elegir Standard', highlighted: true },
-  { code: 'pro', name: 'Pro', price: '174,03', period: '/mes', description: 'Para operaciones avanzadas con todo habilitado.', features: ['Todo de Standard +', 'Quick actions completas', 'Owner asistido por WhatsApp', 'Automatizaciones avanzadas', 'Soporte prioritario', 'Escalabilidad total'], cta: 'Elegir Pro', highlighted: false },
-];
-
-const faqs = [
-  { q: '¿Cómo funciona el agente de IA?', a: 'Nuestro agente usa inteligencia artificial avanzada (Claude) para entender mensajes de WhatsApp, buscar productos, armar pedidos, procesar pagos y responder consultas. Todo en español argentino y de forma natural. Si algo se complica, escala automáticamente a un humano.' },
-  { q: '¿Necesito conocimientos técnicos?', a: 'No. Nexova está diseñado para que cualquier comerciante pueda configurarlo en minutos. Solo necesitás cargar tus productos, conectar tu número de WhatsApp y el agente empieza a trabajar.' },
-  { q: '¿Puedo conectar mi número de WhatsApp actual?', a: 'Sí. Usamos la API oficial de WhatsApp Business a través de Infobip, lo que garantiza que tu número siga funcionando normalmente mientras el agente atiende las conversaciones.' },
-  { q: '¿Qué pasa con los comprobantes de pago?', a: 'Cuando un cliente envía una foto o PDF de un comprobante, nuestra IA con visión artificial extrae automáticamente el monto, la fecha y los datos relevantes. Vos solo confirmás y se registra el pago.' },
-  { q: '¿Funciona con facturación electrónica?', a: 'Sí. Tenemos integración directa con ARCA (ex-AFIP) para generar facturas electrónicas automáticamente desde los pedidos, con CAE, punto de venta y todo lo necesario.' },
-  { q: '¿Puedo probarlo gratis?', a: 'Absolutamente. Ofrecemos 14 días gratis en cualquier plan sin necesidad de tarjeta de crédito. Configurá tu negocio, probá el agente y decidí si es para vos.' },
-];
-
-const testimonials = [
-  { name: 'María González', role: 'Dueña de distribuidora', text: 'Desde que activamos el agente, las ventas por WhatsApp subieron un 40%. Mis clientes hacen pedidos a cualquier hora y yo solo verifico por la mañana.', stars: 5 },
-  { name: 'Carlos Méndez', role: 'E-commerce de indumentaria', text: 'Lo que más me gustó es el dashboard de métricas. Ahora tomo decisiones con datos, no con intuición. Y la integración con MercadoPago es perfecta.', stars: 5 },
-  { name: 'Laura Sánchez', role: 'Kiosco y almacén', text: 'El control de fiado es un antes y un después. Mis clientes pagan a tiempo porque les llega el recordatorio automático por WhatsApp.', stars: 5 },
-  { name: 'Rodrigo Peralta', role: 'Mayorista de alimentos', text: 'Procesamos más de 200 pedidos semanales sin contratar personal extra. El agente IA maneja todo y el stock se actualiza solo.', stars: 5 },
-  { name: 'Florencia Ruiz', role: 'Tienda de cosmética', text: 'La facturación automática con ARCA nos ahorra horas por semana. Y los insights de IA nos ayudan a planificar las compras.', stars: 5 },
-  { name: 'Diego Martínez', role: 'Ferretería industrial', text: 'Mis clientes ahora consultan precios y hacen pedidos por WhatsApp las 24hs. Las ventas nocturnas representan un 25% del total.', stars: 5 },
-];
-
-/* ── SVG logo (shared) ── */
-const NexovaLogo = ({
-  className = 'h-6 w-auto',
-  fill = 'white',
-}: {
-  className?: string;
-  fill?: string;
-}): JSX.Element => (
-  <svg className={className} viewBox="0 0 878 171" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M258.65 92.31L183.53 167.43H183.51C181.12 169.14 178.18 170.14 175.02 170.14C167.16 170.14 160.75 163.97 160.38 156.2V95.84H160.35C160.36 95.72 160.36 95.6 160.36 95.48C160.36 87.82 154.15 81.61 146.48 81.61C142.64 81.61 139.16 83.17 136.65 85.69L58.6 164.12L55.44 167.3L55.41 167.33C52.99 169.1 50.01 170.14 46.78 170.14C39.47 170.14 33.41 164.8 32.3 157.8V95.24L32.21 95.21C32.19 87.42 25.87 81.11 18.07 81.11C13.82 81.11 10 82.99 7.42 85.96L0 78.24L1.45 76.78L73.43 4.8L73.69 4.53C76.36 1.74 80.12 0 84.29 0C92.39 0 98.95 6.56 98.95 14.66V74.03C98.95 75.14 99.08 76.22 99.33 77.25C100.78 83.36 106.28 87.91 112.83 87.91C116.34 87.91 119.16 86.96 121.6 84.82H121.61L121.71 84.72C122.08 84.39 122.44 84.03 122.78 83.65L202.47 3.95L202.49 3.93C205.11 1.47 208.66 0 212.54 0C220.64 0 227.2 6.56 227.2 14.66V71.07C227.2 72.04 227.24 73 227.32 73.97C227.35 74.22 227.37 74.48 227.38 74.81C227.73 81.91 233.15 87.88 240.24 88.37C244.51 88.66 247.97 87.09 250.7 84.37L258.65 92.31Z" fill={fill}/>
-    <path d="M834.333 134.627C847.75 134.627 858.236 125.386 858.236 113.212V105.837L835.221 107.259C823.758 108.059 817.272 113.124 817.272 121.121C817.272 129.296 824.025 134.627 834.333 134.627ZM829.001 149.822C810.696 149.822 797.901 138.448 797.901 121.654C797.901 105.304 810.43 95.263 832.644 94.019L858.236 92.5084V85.3108C858.236 74.9144 851.216 68.6943 839.486 68.6943C828.379 68.6943 821.448 74.0258 819.76 82.3785H801.633C802.699 65.4954 817.094 53.0552 840.197 53.0552C862.856 53.0552 877.34 65.0511 877.34 83.8002V148.223H858.946V132.85H858.502C853.082 143.247 841.264 149.822 829.001 149.822Z" fill={fill}/>
-    <path d="M792.569 54.7437L759.069 148.223H738.454L704.777 54.7437H725.214L748.673 129.474H749.028L772.487 54.7437H792.569Z" fill={fill}/>
-    <path d="M656.082 150C629.336 150 611.742 131.606 611.742 101.483C611.742 71.4489 629.425 53.0552 656.082 53.0552C682.74 53.0552 700.423 71.4489 700.423 101.483C700.423 131.606 682.829 150 656.082 150ZM656.082 134.183C671.188 134.183 680.874 122.276 680.874 101.483C680.874 80.779 671.099 68.872 656.082 68.872C641.065 68.872 631.291 80.779 631.291 101.483C631.291 122.276 641.065 134.183 656.082 134.183Z" fill={fill}/>
-    <path d="M563.847 113.835H563.403L542.699 148.223H521.906L552.74 101.572L522.35 54.7437H543.854L564.292 88.5987H564.647L584.818 54.7437H605.966L575.31 100.95L605.611 148.223H584.462L563.847 113.835Z" fill={fill}/>
-    <path d="M473.389 68.5166C459.972 68.5166 450.553 78.7353 449.575 92.8638H496.315C495.871 78.5576 486.807 68.5166 473.389 68.5166ZM496.226 120.765H514.442C511.776 137.826 495.604 150 474.189 150C446.732 150 430.115 131.428 430.115 101.927C430.115 72.604 446.998 53.0552 473.389 53.0552C499.336 53.0552 515.508 71.36 515.508 99.7059V106.281H449.486V107.437C449.486 123.698 459.261 134.45 474.633 134.45C485.563 134.45 493.649 128.94 496.226 120.765Z" fill={fill}/>
-    <path d="M327.661 148.223H308.29V20H326.328L392.794 114.545H393.505V20H412.877V148.223H394.927L328.461 53.7662H327.661V148.223Z" fill={fill}/>
-  </svg>
-);
-
-/* ───────────────────────── components ───────────────────────── */
-
-function Navbar(): JSX.Element {
-  const [scrolled, setScrolled] = useState(false);
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const { scrollYProgress } = useScroll();
-  const scaleX = useSpring(scrollYProgress, { stiffness: 100, damping: 30, restDelta: 0.001 });
-
-  useEffect(() => {
-    const onScroll = (): void => setScrolled(window.scrollY > 20);
-    window.addEventListener('scroll', onScroll);
-    return () => window.removeEventListener('scroll', onScroll);
-  }, []);
-
-  const links = [
-    { label: 'Funciones', href: '#features' },
-    { label: 'Soluciones', href: '#solutions' },
-    { label: 'Precios', href: '#pricing' },
-    { label: 'FAQ', href: '#faq' },
-  ];
-
-  return (
-    <>
-      <motion.div className="fixed top-0 left-0 right-0 h-[2px] z-[60] origin-left bg-gradient-to-r from-[#60A5FA] via-[#4D7CFF] via-60% via-[#2563EB] to-[#93C5FD]" style={{ scaleX }} />
-      <nav className={`fixed top-0 left-0 right-0 z-50 transition-all duration-500 ${scrolled ? 'bg-[#0a0a0f]/80 backdrop-blur-xl border-b border-white/[0.06] shadow-2xl' : 'bg-transparent'}`}>
-        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-          <a href="#hero" className="flex items-center gap-2 group">
-            <NexovaLogo />
-          </a>
-          <div className="hidden md:flex items-center gap-8">
-            {links.map((l) => (
-              <a key={l.href} href={l.href} className="text-sm text-white/60 hover:text-white transition-colors duration-200">{l.label}</a>
-            ))}
-          </div>
-          <div className="hidden md:flex items-center gap-3">
-            <a href={`${DASHBOARD_URL}/login`} className="text-sm text-white/70 hover:text-white transition-colors px-4 py-2">Iniciar sesión</a>
-            <a href="/cart?plan=standard" className="text-sm font-medium text-white bg-gradient-to-r from-[#4D7CFF] to-[#2563EB] px-5 py-2.5 rounded-xl transition-all duration-200 shadow-lg shadow-[#2563EB]/25 hover:shadow-[#2563EB]/40 hover:brightness-110">Empezar gratis</a>
-          </div>
-          <button className="md:hidden p-2 text-white/70" onClick={() => setMobileOpen(!mobileOpen)}>
-            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              {mobileOpen ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /> : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />}
-            </svg>
-          </button>
-        </div>
-        <AnimatePresence>
-          {mobileOpen && (
-            <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="md:hidden bg-[#0a0a0f]/95 backdrop-blur-xl border-t border-white/[0.06] px-6 py-4 space-y-3 overflow-hidden">
-              {links.map((l) => (<a key={l.href} href={l.href} onClick={() => setMobileOpen(false)} className="block text-sm text-white/60 hover:text-white py-2">{l.label}</a>))}
-              <div className="flex gap-3 pt-3 border-t border-white/[0.06]">
-                <a href={`${DASHBOARD_URL}/login`} className="text-sm text-white/70 py-2">Iniciar sesión</a>
-                <a href="/cart?plan=standard" className="text-sm font-medium text-white bg-gradient-to-r from-[#4D7CFF] to-[#2563EB] px-5 py-2.5 rounded-xl">Empezar gratis</a>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </nav>
-    </>
-  );
-}
-
-function HeroSection(): JSX.Element {
-  const heroRef = useRef<HTMLDivElement>(null);
-  const heroVisible = useMotionInView(heroRef, { once: true, margin: '-10%' });
-
-  const salesCount = useCountUp(523400, 2200, !!heroVisible);
-  const ordersCount = useCountUp(42, 1800, !!heroVisible);
-  const responseRate = useCountUp(98, 2000, !!heroVisible);
-
-  const [notifs, setNotifs] = useState<number[]>([]);
-  useEffect(() => {
-    if (!heroVisible) return;
-    const timers = [
-      setTimeout(() => setNotifs((p) => [...p, 1]), 1200),
-      setTimeout(() => setNotifs((p) => [...p, 2]), 2800),
-      setTimeout(() => setNotifs((p) => [...p, 3]), 4200),
-    ];
-    return () => timers.forEach(clearTimeout);
-  }, [heroVisible]);
-
-  const wordVariants = {
-    hidden: { opacity: 0, y: 20 },
-    visible: (i: number) => ({ opacity: 1, y: 0, transition: { duration: 0.5, ease: [0.25, 0.46, 0.45, 0.94] as [number, number, number, number], delay: 0.2 + i * 0.09 } }),
-  };
-
-  return (
-    <section id="hero" ref={heroRef} className="relative min-h-screen flex items-center overflow-hidden pt-20 pb-16 lg:pt-24">
-      <div className="absolute inset-0 overflow-hidden">
-        <div className="absolute w-[700px] h-[700px] bg-[#4D7CFF]/[0.20] rounded-full blur-[140px] top-[-10%] left-[-10%]" style={{ animation: 'float 12s ease-in-out infinite' }} />
-        <div className="absolute w-[500px] h-[500px] bg-blue-700/[0.18] rounded-full blur-[120px] bottom-[-5%] right-[-5%]" style={{ animation: 'float 10s ease-in-out infinite reverse' }} />
-        <div className="absolute w-[400px] h-[400px] bg-emerald-500/[0.12] rounded-full blur-[100px] top-[40%] right-[20%]" style={{ animation: 'float 14s ease-in-out infinite', animationDelay: '3s' }} />
-        <div className="absolute w-[500px] h-[500px] bg-[#60A5FA]/[0.12] rounded-full blur-[130px] top-[-5%] right-[5%]" style={{ animation: 'float 11s ease-in-out infinite', animationDelay: '1s' }} />
-        <div className="absolute w-[400px] h-[400px] bg-[#93C5FD]/[0.08] rounded-full blur-[110px] bottom-[10%] left-[5%]" style={{ animation: 'float 13s ease-in-out infinite', animationDelay: '5s' }} />
-        <div className="absolute inset-0 opacity-[0.08]" style={{ backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.6) 1px, transparent 1px)', backgroundSize: '32px 32px' }} />
-        <div className="absolute inset-0 opacity-20" style={{ background: 'conic-gradient(from 0deg at 50% 50%, #60A5FA, #4D7CFF, #2563EB, #93C5FD, #60A5FA)', filter: 'blur(120px)', animation: 'aurora 20s linear infinite' }} />
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_0%,#08080d_75%)]" />
+    <button className="flex items-center gap-3 bg-black text-white hover:bg-[#1a1a1a] transition-all px-6 py-3.5 rounded-2xl shadow-xl hover:shadow-2xl hover:-translate-y-1" type="button">
+      <Icon className="w-8 h-8" />
+      <div className="text-left">
+        <span className="block text-[9px] font-bold uppercase tracking-[0.15em] text-white/70">{topText}</span>
+        <span className="block text-base font-semibold leading-tight">{store}</span>
       </div>
+    </button>
+  );
+}
 
-      <div className="relative max-w-7xl mx-auto px-6 w-full">
-        <div className="grid lg:grid-cols-[1fr,1.1fr] gap-12 lg:gap-8 items-center">
-          <div className="max-w-xl">
-            <motion.div initial={{ opacity: 0, y: 20 }} animate={heroVisible ? { opacity: 1, y: 0 } : {}} transition={{ duration: 0.6 }} className="gradient-border inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/[0.04] backdrop-blur-sm mb-6">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#60A5FA] opacity-75" />
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-[#60A5FA]" />
-              </span>
-              <span className="text-sm bg-gradient-to-r from-[#60A5FA] to-[#4D7CFF] bg-clip-text text-transparent font-medium">Potenciado por IA</span>
+export default function IndexPage(): JSX.Element {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  const heroRef = useRef<HTMLElement | null>(null);
+  const stickyRef = useRef<HTMLElement | null>(null);
+  const cardsRef = useRef<HTMLElement | null>(null);
+  const reasonalRef = useRef<HTMLElement | null>(null);
+
+  const { scrollYProgress: heroScroll } = useScroll({
+    target: heroRef,
+    offset: ['start start', 'end start'],
+  });
+  const phoneFrontY = useTransform(heroScroll, [0, 1], [0, 300]);
+  const phoneFrontRotate = useTransform(heroScroll, [0, 1], [-12, -20]);
+  const phoneBackY = useTransform(heroScroll, [0, 1], [50, 150]);
+  const phoneBackRotate = useTransform(heroScroll, [0, 1], [10, 25]);
+  const heroTextY = useTransform(heroScroll, [0, 1], [0, 150]);
+  const heroOpacity = useTransform(heroScroll, [0, 0.8], [1, 0]);
+
+  const { scrollYProgress: stickyProgress } = useScroll({
+    target: stickyRef,
+    offset: ['start start', 'end end'],
+  });
+  const step1Opacity = useTransform(stickyProgress, [0, 0.2, 0.3], [1, 1, 0]);
+  const step2Opacity = useTransform(stickyProgress, [0.25, 0.4, 0.6, 0.7], [0, 1, 1, 0]);
+  const step3Opacity = useTransform(stickyProgress, [0.65, 0.8, 1], [0, 1, 1]);
+  const mockupsY = useTransform(stickyProgress, [0, 0.8], ['0%', '-66.66%']);
+
+  const { scrollYProgress: cardsProgress } = useScroll({
+    target: cardsRef,
+    offset: ['start end', 'end start'],
+  });
+  const card1Y = useTransform(cardsProgress, [0, 1], [250, -150]);
+  const card2Y = useTransform(cardsProgress, [0, 1], [400, -50]);
+  const card3Y = useTransform(cardsProgress, [0, 1], [300, -250]);
+
+  const { scrollYProgress: reasonalProgress } = useScroll({
+    target: reasonalRef,
+    offset: ['start end', 'end start'],
+  });
+  const rEl1 = useTransform(reasonalProgress, [0, 1], [150, -200]);
+  const rEl2 = useTransform(reasonalProgress, [0, 1], [300, -100]);
+  const rEl3 = useTransform(reasonalProgress, [0, 1], [50, -300]);
+  const rEl4 = useTransform(reasonalProgress, [0, 1], [250, -150]);
+  const rEl5 = useTransform(reasonalProgress, [0, 1], [350, -50]);
+
+  return (
+    <div
+      ref={containerRef}
+      className="bg-[#cc1100] text-white min-h-screen font-sans overflow-x-hidden selection:bg-black selection:text-white"
+    >
+      <nav className="fixed top-0 w-full z-50 p-6 lg:px-12 backdrop-blur-sm bg-gradient-to-b from-black/20 to-transparent">
+        <div className="max-w-[1400px] mx-auto flex justify-between items-center">
+          <div className="flex items-center gap-2 font-bold text-2xl tracking-tighter">
+            <div className="w-8 h-8 bg-white text-red-600 rounded-lg flex items-center justify-center shadow-lg">
+              <span className="text-xl">N</span>
+            </div>
+            Nexova
+          </div>
+          <div className="hidden lg:flex gap-10 text-[13px] font-bold tracking-widest uppercase text-white/90">
+            <a href="#" className="hover:text-white transition-colors">
+              Vision
+            </a>
+            <a href="#" className="hover:text-white transition-colors">
+              Sistema
+            </a>
+            <a href="#" className="hover:text-white transition-colors">
+              Impacto
+            </a>
+          </div>
+          <div className="flex items-center gap-4">
+            <button
+              className="bg-white/10 hover:bg-white/20 border border-white/20 px-6 py-2.5 rounded-full text-sm font-bold transition-all backdrop-blur-md"
+              type="button"
+            >
+              Acceso
+            </button>
+          </div>
+        </div>
+      </nav>
+
+      <section
+        ref={heroRef}
+        className="relative min-h-[120vh] w-full pt-32 lg:pt-40 overflow-hidden flex flex-col items-center"
+      >
+        <div className="absolute inset-0 z-0 pointer-events-none bg-[#cc1100]">
+          <motion.div
+            animate={{ scale: [1, 1.2, 1], rotate: [0, 90, 0] }}
+            transition={{ duration: 25, repeat: Infinity, ease: 'linear' }}
+            className="absolute -top-[20%] -left-[10%] w-[70vw] h-[70vw] rounded-full bg-[#ff4d00] mix-blend-screen opacity-70 blur-[130px]"
+          />
+          <motion.div
+            animate={{ scale: [1, 1.3, 1], x: [0, -100, 0] }}
+            transition={{ duration: 30, repeat: Infinity, ease: 'easeInOut' }}
+            className="absolute bottom-[-10%] right-[-10%] w-[80vw] h-[80vw] rounded-full bg-[#ff8800] mix-blend-screen opacity-50 blur-[160px]"
+          />
+          <div className="absolute top-[30%] left-[30%] w-[40vw] h-[40vw] rounded-full bg-[#800000] mix-blend-multiply opacity-80 blur-[120px]" />
+        </div>
+
+        <motion.div
+          style={{ y: heroTextY, opacity: heroOpacity }}
+          className="relative z-10 w-full max-w-[1400px] mx-auto px-6 lg:px-12 grid lg:grid-cols-2 gap-12 items-center flex-1"
+        >
+          <div className="flex flex-col gap-8 lg:pr-10">
+            <motion.div
+              initial={{ opacity: 0, y: 30 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 1, ease: 'easeOut' }}
+            >
+              <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/10 backdrop-blur-md border border-white/20 mb-8">
+                <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+                <span className="text-[11px] font-bold tracking-[0.2em] uppercase">Agente IA en linea</span>
+              </div>
+              <h1 className="text-[4.5rem] lg:text-[7.5rem] font-medium tracking-tight leading-[0.9] mb-6">
+                Revolucion en <br />
+                tu bolsillo.
+              </h1>
+              <p className="text-[18px] lg:text-[20px] font-light text-white/80 max-w-lg leading-relaxed">
+                Joyas locales. Marcas con proposito. Un ecosistema inteligente que transforma tu
+                WhatsApp en una maquina de ventas 24/7.
+              </p>
             </motion.div>
 
-            <h1 className="text-4xl sm:text-5xl lg:text-[3.5rem] xl:text-6xl font-bold tracking-tight leading-[1.08] mb-6">
-              {['Vendé', 'más.', 'Atendé', 'mejor.', 'Crecé', 'sin', 'límites.'].map((word, i) => (
-                <motion.span key={i} custom={i} initial="hidden" animate={heroVisible ? 'visible' : 'hidden'} variants={wordVariants} className={`inline-block mr-[0.3em] ${[0, 2, 4].includes(i) ? 'bg-gradient-to-r from-[#60A5FA] via-[#4D7CFF] to-[#93C5FD] bg-clip-text text-transparent' : 'text-white'}`}>
-                  {word}
-                </motion.span>
-              ))}
-            </h1>
-
-            <motion.p initial={{ opacity: 0, y: 20 }} animate={heroVisible ? { opacity: 1, y: 0 } : {}} transition={{ duration: 0.6, delay: 0.8 }} className="text-base sm:text-lg text-white/45 leading-relaxed mb-8 max-w-md">
-              Nexova conecta un agente de IA a tu WhatsApp para atender clientes, tomar pedidos y cobrar por vos. Vos solo mirás el dashboard.
-            </motion.p>
-
-            <motion.div initial={{ opacity: 0, y: 20 }} animate={heroVisible ? { opacity: 1, y: 0 } : {}} transition={{ duration: 0.6, delay: 0.95 }} className="flex flex-col sm:flex-row gap-3 mb-10">
-              <a href="/cart?plan=standard" className="group relative flex items-center justify-center gap-2 text-white font-medium px-7 py-3.5 rounded-2xl text-sm transition-all duration-300 shadow-[0_0_40px_rgba(59,130,246,0.3)] hover:shadow-[0_0_60px_rgba(59,130,246,0.4)] hover:-translate-y-0.5 overflow-hidden" style={{ background: 'linear-gradient(90deg, #60A5FA, #4D7CFF, #2563EB)', backgroundSize: '200% 100%', animation: 'gradient-shift 4s ease-in-out infinite' }}>
-                <div className="absolute inset-0 -translate-x-full group-hover:translate-x-full transition-transform duration-700 bg-gradient-to-r from-transparent via-white/25 to-transparent" />
-                <span className="relative">Empezar gratis</span>
-                <ArrowRight className="relative w-4 h-4 group-hover:translate-x-1 transition-transform" />
-              </a>
-              <a href="#features" className="gradient-border flex items-center justify-center gap-2 text-white/60 hover:text-white font-medium px-7 py-3.5 rounded-2xl text-sm hover:bg-white/[0.04] transition-all duration-300">
-                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3" /></svg>
-                Ver demo
-              </a>
-            </motion.div>
-
-            <motion.div initial={{ opacity: 0, y: 20 }} animate={heroVisible ? { opacity: 1, y: 0 } : {}} transition={{ duration: 0.6, delay: 1.1 }} className="flex items-center gap-4">
-              <div className="flex -space-x-2.5">
-                {['bg-gradient-to-br from-blue-400 to-indigo-500', 'bg-gradient-to-br from-emerald-400 to-teal-500', 'bg-gradient-to-br from-blue-400 to-indigo-500', 'bg-gradient-to-br from-amber-400 to-orange-500'].map((bg, i) => (
-                  <div key={i} className={`w-8 h-8 rounded-full border-2 border-[#08080d] ${bg} flex items-center justify-center`}>
-                    <span className="text-[10px] font-bold text-white">{['MG', 'CS', 'LS', 'JP'][i]}</span>
-                  </div>
-                ))}
-              </div>
-              <div>
-                <div className="flex items-center gap-1">{Array.from({ length: 5 }).map((_, i) => <Star key={i} className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />)}</div>
-                <p className="text-xs text-white/30 mt-0.5">Comercios que ya confían en Nexova</p>
-              </div>
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.3, duration: 0.8 }}
+              className="flex flex-wrap gap-4 mt-4"
+            >
+              <StoreButton icon={Apple} store="App Store" topText="Consiguelo en el" />
+              <StoreButton icon={Play} store="Google Play" topText="Disponible en" />
             </motion.div>
           </div>
 
-          {/* Bento Grid - Responsive */}
-          <motion.div initial={{ opacity: 0, x: 40, scale: 0.95 }} animate={heroVisible ? { opacity: 1, x: 0, scale: 1 } : {}} transition={{ duration: 0.8, delay: 0.3 }} className="relative">
-            <div className="absolute -inset-8 bg-gradient-to-br from-[#4D7CFF]/10 via-transparent to-blue-700/10 rounded-[2rem] blur-2xl pointer-events-none" />
-            <div className="relative grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 lg:grid-rows-5 gap-3 lg:min-h-[480px]">
-              {/* Revenue card */}
-              <div className="lg:col-span-3 lg:row-span-2 rounded-2xl border border-white/[0.10] bg-white/[0.05] backdrop-blur-md p-5 flex flex-col justify-between overflow-hidden group hover:border-white/[0.20] transition-all duration-500 relative">
-                <div>
-                  <div className="flex items-center gap-2 mb-1"><div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" /><span className="text-[11px] text-white/30 font-medium uppercase tracking-wider">En vivo</span></div>
-                  <p className="text-xs text-white/40 mb-2">Ventas del día</p>
-                </div>
-                <div>
-                  <span className="text-3xl font-bold text-white tabular-nums">${salesCount.toLocaleString('es-AR')}</span>
-                  <div className="flex items-center gap-1.5 mt-1.5"><TrendingUp className="w-3.5 h-3.5 text-emerald-400" /><span className="text-xs text-emerald-400 font-semibold">+18.3%</span><span className="text-[11px] text-white/20">vs ayer</span></div>
-                </div>
-                <svg className="absolute bottom-0 right-0 w-32 h-16 opacity-20" viewBox="0 0 120 50" fill="none"><path d="M0 45 Q20 40 30 30 T60 20 T90 10 T120 5" stroke="#4D7CFF" strokeWidth="2" fill="none" /><path d="M0 45 Q20 40 30 30 T60 20 T90 10 T120 5 V50 H0Z" fill="url(#sparkFill)" /><defs><linearGradient id="sparkFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#4D7CFF" stopOpacity="0.3" /><stop offset="100%" stopColor="#4D7CFF" stopOpacity="0" /></linearGradient></defs></svg>
-              </div>
+          <div className="relative h-[700px] lg:h-[850px] w-full flex justify-center items-center perspective-[2000px] mt-20 lg:mt-0">
+            <motion.div
+              style={{ y: phoneBackY, rotateZ: phoneBackRotate, rotateX: 5, rotateY: 15 }}
+              className="absolute right-[0%] lg:right-[10%] top-[10%] w-[320px] lg:w-[360px] h-[640px] lg:h-[720px] bg-[#E5B869] rounded-[48px] border-[12px] border-[#c09955] shadow-[0_30px_60px_rgba(0,0,0,0.6)] overflow-hidden z-10"
+            >
+              <div className="w-full h-full bg-[#111] relative overflow-hidden flex flex-col pt-16">
+                <div className="absolute top-4 left-1/2 -translate-x-1/2 w-[120px] h-[35px] bg-black rounded-full z-30" />
+                <div className="p-6">
+                  <h3 className="text-white text-3xl font-bold mb-2">Resumen</h3>
+                  <p className="text-gray-400 text-sm mb-8">Ventas generadas por IA</p>
 
-              {/* Orders */}
-              <div className="lg:col-span-3 lg:row-span-1 rounded-2xl border border-white/[0.10] bg-white/[0.05] backdrop-blur-md p-4 flex items-center gap-4 overflow-hidden hover:border-white/[0.20] transition-all duration-500">
-                <div className="w-11 h-11 rounded-xl bg-[#4D7CFF]/10 flex items-center justify-center flex-shrink-0"><ShoppingCart className="w-5 h-5 text-[#4D7CFF]" /></div>
-                <div className="flex-1 min-w-0"><p className="text-xs text-white/35">Pedidos hoy</p><span className="text-2xl font-bold text-white tabular-nums">{ordersCount}</span></div>
-                <div className="flex gap-0.5 h-8 items-end">{[40, 65, 50, 80, 60, 90, 75].map((h, i) => <div key={i} className="w-1.5 rounded-full bg-[#4D7CFF]/40 transition-all duration-1000" style={{ height: heroVisible ? `${h}%` : '10%', transitionDelay: `${800 + i * 100}ms` }} />)}</div>
-              </div>
+                  <div className="w-full aspect-square bg-gradient-to-br from-yellow-500/20 to-yellow-900/40 rounded-full border-4 border-yellow-600/30 flex items-center justify-center mb-8 relative">
+                    <div className="absolute inset-4 border-2 border-dashed border-yellow-500/50 rounded-full animate-[spin_20s_linear_infinite]" />
+                    <div className="text-center">
+                      <p className="text-yellow-500 text-sm font-bold tracking-widest uppercase mb-1">
+                        Total
+                      </p>
+                      <p className="text-white text-5xl font-bold">$12.4k</p>
+                    </div>
+                  </div>
 
-              {/* AI Agent */}
-              <div className="lg:col-span-3 lg:row-span-1 rounded-2xl border border-emerald-500/15 bg-emerald-500/[0.05] backdrop-blur-md p-4 flex items-center gap-3 overflow-hidden hover:border-emerald-500/25 transition-all duration-500">
-                <div className="w-11 h-11 rounded-xl bg-emerald-500/10 flex items-center justify-center flex-shrink-0 relative"><Bot className="w-5 h-5 text-emerald-400" /><div className="absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full bg-emerald-400 border-2 border-[#0d0d14]" /></div>
-                <div className="flex-1 min-w-0"><p className="text-xs text-emerald-400/60">Agente IA</p><div className="flex items-center gap-2"><span className="text-sm font-semibold text-emerald-400">Activo</span><span className="text-[11px] text-white/20">·</span><span className="text-xs text-white/30">{responseRate}% respuestas</span></div></div>
-                <div className="flex gap-1 items-center">{[0, 1, 2].map((i) => <div key={i} className="w-1.5 h-1.5 rounded-full bg-emerald-400/60" style={{ animation: 'pulse-dot 1.4s ease-in-out infinite', animationDelay: `${i * 200}ms` }} />)}</div>
-              </div>
-
-              {/* Chat preview */}
-              <div className="lg:col-span-4 lg:row-span-3 rounded-2xl border border-white/[0.10] bg-white/[0.05] backdrop-blur-md overflow-hidden flex flex-col hover:border-white/[0.20] transition-all duration-500">
-                <div className="flex items-center gap-2.5 px-4 py-3 border-b border-white/[0.05] bg-white/[0.02]">
-                  <div className="w-8 h-8 rounded-full bg-emerald-500/15 flex items-center justify-center"><MessageSquare className="w-3.5 h-3.5 text-emerald-400" /></div>
-                  <div className="flex-1 min-w-0"><p className="text-xs font-medium text-white/70 truncate">WhatsApp Business</p><p className="text-[10px] text-emerald-400/60">3 conversaciones activas</p></div>
-                </div>
-                <div className="flex-1 px-4 py-3 space-y-2.5 overflow-hidden">
-                  <div className="flex justify-end"><div className="max-w-[80%] rounded-xl rounded-tr-sm bg-[#4D7CFF]/10 border border-[#4D7CFF]/[0.06] px-3 py-2"><p className="text-xs text-white/80">Hola, quiero 3 Coca 2L y 2 packs de agua</p><span className="text-[9px] text-white/20 block text-right mt-0.5">14:23</span></div></div>
-                  <div className="flex gap-2">
-                    <div className="w-6 h-6 rounded-full bg-emerald-500/15 flex items-center justify-center flex-shrink-0 mt-0.5"><Bot className="w-3 h-3 text-emerald-400" /></div>
-                    <div className="space-y-1.5">
-                      <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-white/[0.02] border border-white/[0.04] w-fit"><div className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse" /><span className="text-[10px] text-white/25 font-mono">search_products → 2 items</span></div>
-                      <div className="max-w-[85%] rounded-xl rounded-tl-sm bg-white/[0.03] border border-white/[0.05] px-3 py-2"><p className="text-xs text-white/80 leading-relaxed">¡Listo! Tu pedido:<br />3x Coca Cola 2L — <span className="text-emerald-400">$9.000</span><br />2x Agua Pack x6 — <span className="text-emerald-400">$9.600</span><br /><span className="font-semibold text-white/90 mt-1 inline-block">Total: $18.600</span></p></div>
+                  <div className="bg-white/5 rounded-2xl p-4 border border-white/10 backdrop-blur-md">
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="text-white/60 text-sm">Conversion</span>
+                      <span className="text-green-400 font-bold">+14%</span>
+                    </div>
+                    <div className="h-2 bg-white/10 rounded-full overflow-hidden">
+                      <div className="h-full w-[78%] bg-gradient-to-r from-yellow-600 to-yellow-400 rounded-full" />
                     </div>
                   </div>
                 </div>
               </div>
-
-              {/* Mini chart - desktop only */}
-              <div className="hidden lg:flex lg:col-span-2 lg:row-span-2 rounded-2xl border border-white/[0.10] bg-white/[0.05] backdrop-blur-md p-4 flex-col justify-between overflow-hidden hover:border-white/[0.20] transition-all duration-500">
-                <div><p className="text-[10px] text-white/30 uppercase tracking-wider font-medium">Semana</p><p className="text-xs text-white/50 mt-0.5">Ingresos</p></div>
-                <div className="flex-1 mt-3"><ResponsiveContainer width="100%" height="100%"><BarChart data={salesData} barSize={6}><Bar dataKey="ventas" fill="#60A5FA" radius={[3, 3, 0, 0]} opacity={0.6} /></BarChart></ResponsiveContainer></div>
-              </div>
-
-              {/* Quick stat - desktop only */}
-              <div className="hidden lg:flex lg:col-span-2 lg:row-span-1 rounded-2xl border border-white/[0.10] bg-white/[0.05] backdrop-blur-md p-4 items-center gap-3 overflow-hidden hover:border-white/[0.20] transition-all duration-500">
-                <div className="w-9 h-9 rounded-xl bg-amber-500/10 flex items-center justify-center flex-shrink-0"><Users className="w-4 h-4 text-amber-400" /></div>
-                <div><p className="text-[10px] text-white/30">Clientes</p><span className="text-lg font-bold text-white">+8</span><span className="text-[10px] text-emerald-400/70 ml-1">hoy</span></div>
-              </div>
-            </div>
-
-            {/* Floating notifications - desktop only */}
-            <div className="absolute -left-4 top-0 bottom-0 w-64 pointer-events-none hidden lg:block">
-              {notifs.includes(1) && (<div className="absolute top-12 -left-2" style={{ animation: 'slide-in-notification 0.5s ease-out forwards' }}><div className="flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl bg-[#0d0d14]/90 border border-emerald-500/15 backdrop-blur-xl shadow-2xl"><div className="w-7 h-7 rounded-lg bg-emerald-500/15 flex items-center justify-center flex-shrink-0"><ShoppingCart className="w-3.5 h-3.5 text-emerald-400" /></div><div><p className="text-[10px] text-emerald-400/70 font-medium">Nuevo pedido</p><p className="text-xs text-white/70 font-medium">ORD-00042 · $18.600</p></div></div></div>)}
-              {notifs.includes(2) && (<div className="absolute top-32 -left-6" style={{ animation: 'slide-in-notification 0.5s ease-out forwards' }}><div className="flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl bg-[#0d0d14]/90 border border-[#4D7CFF]/15 backdrop-blur-xl shadow-2xl"><div className="w-7 h-7 rounded-lg bg-[#4D7CFF]/15 flex items-center justify-center flex-shrink-0"><CreditCard className="w-3.5 h-3.5 text-[#4D7CFF]" /></div><div><p className="text-[10px] text-[#4D7CFF]/70 font-medium">Pago recibido</p><p className="text-xs text-white/70 font-medium">MercadoPago · $12.400</p></div></div></div>)}
-              {notifs.includes(3) && (<div className="absolute top-52 -left-3" style={{ animation: 'slide-in-notification 0.5s ease-out forwards' }}><div className="flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl bg-[#0d0d14]/90 border border-blue-500/15 backdrop-blur-xl shadow-2xl"><div className="w-7 h-7 rounded-lg bg-blue-500/15 flex items-center justify-center flex-shrink-0"><Users className="w-3.5 h-3.5 text-blue-400" /></div><div><p className="text-[10px] text-blue-400/70 font-medium">Cliente nuevo</p><p className="text-xs text-white/70 font-medium">Laura Méndez registrada</p></div></div></div>)}
-            </div>
-          </motion.div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function StatsBar(): JSX.Element {
-  const ref = useRef<HTMLDivElement>(null);
-  const isInView = useMotionInView(ref, { once: true, margin: '-60px' });
-  const stats = [
-    { value: '2.400+', label: 'Pedidos procesados' },
-    { value: '98%', label: 'Respuestas automáticas' },
-    { value: '24/7', label: 'Atención continua' },
-    { value: '<3s', label: 'Tiempo de respuesta' },
-  ];
-
-  return (
-    <section ref={ref} className="relative py-16">
-      <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-[#4D7CFF]/20 to-transparent" />
-      <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-[#4D7CFF]/20 to-transparent" />
-      <div className="max-w-7xl mx-auto px-6">
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-8">
-          {stats.map((s, i) => (
-            <motion.div key={i} initial={{ opacity: 0, y: 20 }} animate={isInView ? { opacity: 1, y: 0 } : {}} transition={{ duration: 0.5, delay: i * 0.1 }} className="text-center">
-              <div className="text-3xl sm:text-4xl font-bold bg-gradient-to-r from-[#60A5FA] via-[#4D7CFF] to-[#2563EB] bg-clip-text text-transparent mb-2">{s.value}</div>
-              <p className="text-sm text-white/40">{s.label}</p>
             </motion.div>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
 
-function FeatureCard({ f, index }: { f: (typeof features)[0]; index: number }): JSX.Element {
-  const cardRef = useRef<HTMLDivElement>(null);
-  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    const card = cardRef.current;
-    if (!card) return;
-    const rect = card.getBoundingClientRect();
-    card.style.setProperty('--mouse-x', `${e.clientX - rect.left}px`);
-    card.style.setProperty('--mouse-y', `${e.clientY - rect.top}px`);
-  }, []);
+            <motion.div
+              style={{ y: phoneFrontY, rotateZ: phoneFrontRotate, rotateX: 5, rotateY: -10 }}
+              className="absolute left-[0%] lg:left-[15%] top-[15%] w-[340px] lg:w-[380px] h-[680px] lg:h-[760px] bg-[#2A0808] rounded-[50px] border-[14px] border-[#902A22] shadow-[-40px_40px_80px_rgba(0,0,0,0.7)] overflow-hidden z-20"
+            >
+              <div className="w-full h-full relative overflow-hidden bg-white">
+                <div className="absolute top-4 left-1/2 -translate-x-1/2 w-[120px] h-[35px] bg-black rounded-full z-30" />
 
-  return (
-    <motion.div ref={cardRef} initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: '-40px' }} transition={{ duration: 0.5, delay: index * 0.1 }} whileHover={{ y: -4, transition: { duration: 0.2 } }} onMouseMove={handleMouseMove} className="group relative rounded-2xl border border-white/[0.08] bg-white/[0.04] backdrop-blur-sm p-6 hover:border-[#60A5FA]/20 transition-all duration-500 hover:shadow-2xl">
-      <div className="pointer-events-none absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-500" style={{ background: 'radial-gradient(300px circle at var(--mouse-x, 50%) var(--mouse-y, 50%), rgba(59,130,246,0.08), transparent 60%)' }} />
-      <div className={`absolute inset-0 rounded-2xl bg-gradient-to-br ${f.color} opacity-0 group-hover:opacity-[0.03] transition-opacity duration-500`} />
-      <motion.div initial={{ scale: 0 }} whileInView={{ scale: 1 }} viewport={{ once: true }} transition={{ type: 'spring', stiffness: 300, damping: 20, delay: index * 0.1 + 0.2 }} className={`relative w-12 h-12 rounded-xl ${f.bg} flex items-center justify-center mb-4`}>
-        <f.icon className={`w-6 h-6 ${f.iconColor}`} />
-      </motion.div>
-      <h3 className="relative text-lg font-semibold text-white mb-2">{f.title}</h3>
-      <p className="relative text-sm text-white/40 leading-relaxed">{f.description}</p>
-    </motion.div>
-  );
-}
+                <div className="h-[75%] w-full relative">
+                  <img
+                    src="https://images.unsplash.com/photo-1551288049-bebda4e38f71?q=80&w=800&auto=format&fit=crop"
+                    className="w-full h-full object-cover filter contrast-125 brightness-75 sepia-[0.5] hue-rotate-[-30deg]"
+                    alt="Silhouette"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-[#cc1100] via-[#cc1100]/60 to-transparent" />
 
-function FeaturesSection(): JSX.Element {
-  return (
-    <section id="features" className="relative py-24 overflow-hidden">
-      <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-[#4D7CFF]/5 rounded-full blur-[120px]" />
-      <div className="relative max-w-7xl mx-auto px-6">
-        <Reveal>
-          <div className="text-center mb-16">
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-[#4D7CFF]/20 bg-[#4D7CFF]/5 text-xs text-[#4D7CFF] font-medium mb-4"><Zap className="w-3.5 h-3.5" />Funciones</div>
-            <h2 className="text-3xl sm:text-4xl lg:text-5xl font-bold text-white mb-4">Todo lo que tu negocio necesita</h2>
-            <p className="text-lg text-white/40 max-w-2xl mx-auto">Un ecosistema completo para gestionar ventas, clientes e inventario con inteligencia artificial.</p>
-          </div>
-        </Reveal>
-        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">{features.map((f, i) => <FeatureCard key={i} f={f} index={i} />)}</div>
-      </div>
-    </section>
-  );
-}
+                  <div className="absolute bottom-8 w-full flex flex-col items-center">
+                    <div className="w-20 h-20 bg-white rounded-full mb-4 shadow-[0_0_40px_rgba(255,255,255,0.4)] flex items-center justify-center">
+                      <span className="text-[#cc1100] text-3xl font-black">N</span>
+                    </div>
+                    <p className="text-[11px] font-bold tracking-widest uppercase text-white/80 mb-2">
+                      Agente Nexova
+                    </p>
+                    <h2 className="text-3xl font-bold text-white mb-6">En linea</h2>
 
-function AIShowcase(): JSX.Element {
-  const ref = useRef<HTMLDivElement>(null);
-  const isInView = useMotionInView(ref, { once: true, margin: '-100px' });
-  const [visibleMessages, setVisibleMessages] = useState(0);
-
-  useEffect(() => {
-    if (!isInView) return;
-    const timers = [
-      setTimeout(() => setVisibleMessages(1), 300),
-      setTimeout(() => setVisibleMessages(2), 1100),
-      setTimeout(() => setVisibleMessages(3), 1900),
-      setTimeout(() => setVisibleMessages(4), 2700),
-      setTimeout(() => setVisibleMessages(5), 3500),
-    ];
-    return () => timers.forEach(clearTimeout);
-  }, [isInView]);
-
-  return (
-    <section ref={ref} className="relative py-24 overflow-hidden">
-      <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-emerald-600/5 rounded-full blur-[120px]" />
-      <div className="relative max-w-7xl mx-auto px-6">
-        <div className="grid lg:grid-cols-2 gap-16 items-center">
-          <Reveal>
-            <div className="relative">
-              <div className="absolute -inset-4 bg-gradient-to-br from-emerald-500/10 to-transparent rounded-3xl blur-xl" />
-              <div className="relative rounded-2xl border border-white/[0.10] bg-[#0d0d14]/90 backdrop-blur-xl overflow-hidden">
-                <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-[#60A5FA]/40 to-transparent" />
-                <div className="flex items-center gap-3 px-5 py-4 border-b border-white/[0.06] bg-emerald-500/5">
-                  <div className="w-10 h-10 rounded-full bg-emerald-500/20 flex items-center justify-center"><Bot className="w-5 h-5 text-emerald-400" /></div>
-                  <div><p className="text-sm font-semibold text-white">Nexova AI</p><p className="text-xs text-emerald-400">En línea</p></div>
-                  <div className="ml-auto flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" /><span className="text-xs text-emerald-400/60">activo</span></div>
-                </div>
-                <div className="p-5 space-y-4 min-h-[360px]">
-                  {visibleMessages >= 1 && (
-                    <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="flex justify-end">
-                      <div className="max-w-[75%] rounded-2xl rounded-tr-md bg-[#4D7CFF]/15 border border-[#4D7CFF]/10 px-4 py-3"><p className="text-sm text-white/90">Hola, quiero pedir 2 cajas de Coca Cola 2L y 1 pack de agua mineral</p><span className="text-[10px] text-white/30 mt-1 block text-right">14:23</span></div>
-                    </motion.div>
-                  )}
-                  {visibleMessages >= 2 && (
-                    <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="flex gap-2">
-                      <div className="w-7 h-7 rounded-full bg-emerald-500/20 flex items-center justify-center flex-shrink-0 mt-1"><Bot className="w-3.5 h-3.5 text-emerald-400" /></div>
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/[0.03] border border-white/[0.04] w-fit"><div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" /><span className="text-[11px] text-white/30 font-mono">search_products → 2 resultados</span></div>
-                        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/[0.03] border border-white/[0.04] w-fit"><div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" /><span className="text-[11px] text-white/30 font-mono">add_to_cart → OK</span></div>
+                    <div className="flex gap-4">
+                      <div className="w-14 h-14 rounded-full bg-white/20 backdrop-blur-md border border-white/30 flex items-center justify-center">
+                        <MessageCircle className="w-6 h-6 text-white" />
                       </div>
-                    </motion.div>
-                  )}
-                  {visibleMessages === 2 && (
-                    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex gap-2 items-center pl-9">
-                      {[0, 1, 2].map((i) => <div key={i} className="w-1.5 h-1.5 rounded-full bg-[#60A5FA]/40" style={{ animation: 'pulse-dot 1.4s ease-in-out infinite', animationDelay: `${i * 200}ms` }} />)}
-                    </motion.div>
-                  )}
-                  {visibleMessages >= 3 && (
-                    <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="flex gap-2">
-                      <div className="w-7 h-7 rounded-full bg-emerald-500/20 flex items-center justify-center flex-shrink-0 mt-1"><Bot className="w-3.5 h-3.5 text-emerald-400" /></div>
-                      <div className="max-w-[85%] rounded-2xl rounded-tl-md bg-white/[0.04] border border-white/[0.06] px-4 py-3">
-                        <p className="text-sm text-white/90 leading-relaxed">¡Perfecto! Te armé el pedido:<br /><br /><span className="text-white/60">2x</span> Coca Cola 2L — <span className="text-emerald-400 font-medium">$6.000</span><br /><span className="text-white/60">1x</span> Agua Mineral Pack x6 — <span className="text-emerald-400 font-medium">$4.800</span><br /><br /><span className="font-semibold text-white">Total: $10.800</span><br /><br />¿Confirmás el pedido?</p>
-                        <span className="text-[10px] text-white/30 mt-1 block">14:23</span>
+                      <div className="w-14 h-14 rounded-full bg-black flex items-center justify-center shadow-2xl">
+                        <Zap className="w-6 h-6 text-yellow-400" />
                       </div>
-                    </motion.div>
-                  )}
-                  {visibleMessages >= 4 && (
-                    <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="flex justify-end">
-                      <div className="max-w-[75%] rounded-2xl rounded-tr-md bg-[#4D7CFF]/15 border border-[#4D7CFF]/10 px-4 py-3"><p className="text-sm text-white/90">Sí, confirmado!</p><span className="text-[10px] text-white/30 mt-1 block text-right">14:24</span></div>
-                    </motion.div>
-                  )}
-                  {visibleMessages >= 5 && (
-                    <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="flex gap-2">
-                      <div className="w-7 h-7 rounded-full bg-emerald-500/20 flex items-center justify-center flex-shrink-0 mt-1"><Bot className="w-3.5 h-3.5 text-emerald-400" /></div>
-                      <div className="max-w-[85%] rounded-2xl rounded-tl-md bg-emerald-500/5 border border-emerald-500/10 px-4 py-3"><p className="text-sm text-white/90">¡Pedido <span className="font-semibold text-emerald-400">ORD-00042</span> confirmado! Te avisamos cuando esté listo.</p><span className="text-[10px] text-white/30 mt-1 block">14:24</span></div>
-                    </motion.div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </Reveal>
-
-          <div>
-            <Reveal><div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/5 text-xs text-emerald-400 font-medium mb-4"><Bot className="w-3.5 h-3.5" />Agente inteligente</div></Reveal>
-            <Reveal delay={100}><h2 className="text-3xl sm:text-4xl font-bold text-white mb-6">Un vendedor que nunca duerme</h2></Reveal>
-            <Reveal delay={200}><p className="text-lg text-white/40 mb-8 leading-relaxed">Nuestro agente de IA entiende mensajes naturales, busca productos, arma pedidos, procesa comprobantes de pago y escala a humanos cuando es necesario. Todo en español argentino y de forma conversacional.</p></Reveal>
-            <div className="space-y-4">
-              {[
-                { icon: MessageSquare, text: 'Entiende lenguaje natural en WhatsApp' },
-                { icon: Receipt, text: 'Procesa comprobantes con visión IA' },
-                { icon: Shield, text: 'Escala automáticamente ante problemas' },
-                { icon: Clock, text: 'Responde en menos de 3 segundos' },
-                { icon: Bell, text: 'Notifica al equipo en tiempo real' },
-              ].map((item, i) => (
-                <Reveal key={i} delay={300 + i * 80}>
-                  <div className="flex items-center gap-3 group"><div className="w-9 h-9 rounded-xl bg-emerald-500/10 flex items-center justify-center group-hover:bg-emerald-500/20 transition-colors"><item.icon className="w-4.5 h-4.5 text-emerald-400" /></div><span className="text-sm text-white/60 group-hover:text-white/80 transition-colors">{item.text}</span></div>
-                </Reveal>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function AnalyticsSection(): JSX.Element {
-  return (
-    <section className="relative py-24 overflow-hidden">
-      <div className="absolute right-0 top-1/3 w-[500px] h-[500px] bg-blue-600/5 rounded-full blur-[120px]" />
-      <div className="relative max-w-7xl mx-auto px-6">
-        <div className="grid lg:grid-cols-2 gap-16 items-center">
-          <div>
-            <Reveal><div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-blue-500/20 bg-blue-500/5 text-xs text-blue-400 font-medium mb-4"><BarChart3 className="w-3.5 h-3.5" />Analytics</div></Reveal>
-            <Reveal delay={100}><h2 className="text-3xl sm:text-4xl font-bold text-white mb-6">Decisiones basadas en datos reales</h2></Reveal>
-            <Reveal delay={200}><p className="text-lg text-white/40 mb-8 leading-relaxed">Dashboard de métricas en tiempo real con insights generados por IA. Entendé qué vende más, quiénes son tus mejores clientes y dónde está la oportunidad de crecer.</p></Reveal>
-            <div className="space-y-4">
-              {[
-                { icon: TrendingUp, text: 'Tendencias de ventas diarias, semanales y mensuales' },
-                { icon: Sparkles, text: 'Insights y recomendaciones generados por IA' },
-                { icon: Users, text: 'Ranking de clientes por facturación y frecuencia' },
-                { icon: FileText, text: 'Facturación electrónica ARCA/AFIP integrada' },
-              ].map((item, i) => (
-                <Reveal key={i} delay={300 + i * 80}>
-                  <div className="flex items-center gap-3 group"><div className="w-9 h-9 rounded-xl bg-blue-500/10 flex items-center justify-center group-hover:bg-blue-500/20 transition-colors"><item.icon className="w-4.5 h-4.5 text-blue-400" /></div><span className="text-sm text-white/60 group-hover:text-white/80 transition-colors">{item.text}</span></div>
-                </Reveal>
-              ))}
-            </div>
-          </div>
-
-          <Reveal delay={200}>
-            <div className="space-y-4">
-              <div className="rounded-2xl border border-white/[0.12] bg-white/[0.04] backdrop-blur-sm p-5">
-                <div className="flex items-center justify-between mb-4">
-                  <div><p className="text-sm font-medium text-white">Crecimiento mensual</p><p className="text-xs text-white/30">Comparado con el período anterior</p></div>
-                  <div className="flex items-center gap-4 text-xs"><span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-[#60A5FA]" /><span className="text-white/40">Actual</span></span><span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-white/10" /><span className="text-white/40">Anterior</span></span></div>
-                </div>
-                <div className="h-52">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={monthlyGrowth} barGap={4}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
-                      <XAxis dataKey="name" stroke="rgba(255,255,255,0.2)" tick={{ fontSize: 12 }} />
-                      <YAxis stroke="rgba(255,255,255,0.2)" tick={{ fontSize: 12 }} tickFormatter={(v) => `${(v / 1000000).toFixed(1)}M`} />
-                      <Tooltip contentStyle={{ background: '#1a1a2e', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', fontSize: '13px' }} labelStyle={{ color: 'rgba(255,255,255,0.5)' }} itemStyle={{ color: 'rgba(255,255,255,0.8)' }} formatter={(value) => [`$${(Number(value) / 100).toLocaleString('es-AR')}`, '']} />
-                      <Bar dataKey="anterior" fill="rgba(255,255,255,0.06)" radius={[6, 6, 0, 0]} />
-                      <Bar dataKey="actual" fill="#60A5FA" radius={[6, 6, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="rounded-2xl border border-white/[0.12] bg-white/[0.04] backdrop-blur-sm p-5">
-                  <p className="text-sm font-medium text-white mb-3">Cobros por método</p>
-                  <div className="h-36">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart><Pie data={paymentMethodData} cx="50%" cy="50%" innerRadius={35} outerRadius={55} paddingAngle={4} dataKey="value" strokeWidth={0}>{paymentMethodData.map((entry, index) => <Cell key={index} fill={entry.color} />)}</Pie><Tooltip contentStyle={{ background: '#1a1a2e', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', fontSize: '13px' }} labelStyle={{ color: 'rgba(255,255,255,0.5)' }} itemStyle={{ color: 'rgba(255,255,255,0.8)' }} formatter={(value) => { const pct = typeof value === 'number' ? value : Number(value ?? 0); return [`${pct}%`, '']; }} /></PieChart>
-                    </ResponsiveContainer>
+                    </div>
                   </div>
-                  <div className="space-y-1.5 mt-2">{paymentMethodData.map((c, i) => (<div key={i} className="flex items-center justify-between text-xs"><span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full" style={{ background: c.color }} /><span className="text-white/40">{c.name}</span></span><span className="text-white/60 font-medium">{c.value}%</span></div>))}</div>
                 </div>
 
-                <div className="rounded-2xl border border-white/[0.12] bg-white/[0.04] backdrop-blur-sm p-5 flex flex-col justify-between">
-                  <div><p className="text-sm font-medium text-white mb-1">Insight IA</p><div className="flex items-center gap-1 mb-3"><Sparkles className="w-3 h-3 text-blue-400" /><span className="text-[11px] text-blue-400 font-medium">Generado automáticamente</span></div></div>
-                  <div className="space-y-3">
-                    <div className="px-3 py-2 rounded-lg bg-emerald-500/5 border border-emerald-500/10"><p className="text-[11px] text-emerald-400/70 mb-0.5">Oportunidad</p><p className="text-xs text-white/60">Los sábados representan un 22% de las ventas semanales. Considerá ampliar stock.</p></div>
-                    <div className="px-3 py-2 rounded-lg bg-amber-500/5 border border-amber-500/10"><p className="text-[11px] text-amber-400/70 mb-0.5">Riesgo</p><p className="text-xs text-white/60">3 productos con stock bajo necesitan reposición esta semana.</p></div>
+                <div className="h-[25%] bg-white w-full rounded-t-[2.5rem] -mt-8 relative z-10 p-6 flex flex-col justify-center border-t-4 border-white">
+                  <div className="bg-gray-100 rounded-2xl p-4 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 bg-[#cc1100] rounded-full flex items-center justify-center">
+                        <Apple className="w-5 h-5 text-white" />
+                      </div>
+                      <div>
+                        <p className="text-black font-bold text-sm">Pago recibido</p>
+                        <p className="text-gray-500 text-xs">Hace 2 minutos</p>
+                      </div>
+                    </div>
+                    <p className="text-black font-bold text-lg">+$145</p>
                   </div>
                 </div>
               </div>
-            </div>
-          </Reveal>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function SolutionsSection(): JSX.Element {
-  return (
-    <section id="solutions" className="relative py-24 overflow-hidden">
-      <div className="absolute left-1/2 -translate-x-1/2 bottom-0 w-[800px] h-[400px] bg-[#4D7CFF]/5 rounded-full blur-[120px]" />
-      <div className="relative max-w-7xl mx-auto px-6">
-        <Reveal>
-          <div className="text-center mb-16">
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-[#4D7CFF]/20 bg-[#4D7CFF]/5 text-xs text-[#4D7CFF] font-medium mb-4"><Globe className="w-3.5 h-3.5" />Soluciones</div>
-            <h2 className="text-3xl sm:text-4xl lg:text-5xl font-bold text-white mb-4">Diseñado para tu industria</h2>
-            <p className="text-lg text-white/40 max-w-2xl mx-auto">No importa el tamaño de tu negocio. Nexova se adapta a tus necesidades.</p>
-          </div>
-        </Reveal>
-        <div className="grid md:grid-cols-3 gap-6">
-          {solutions.map((s, i) => (
-            <motion.div key={i} initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: '-40px' }} transition={{ duration: 0.5, delay: i * 0.12 }} whileHover={{ y: -4, transition: { duration: 0.2 } }} className="group relative h-full rounded-2xl border border-white/[0.08] bg-white/[0.04] backdrop-blur-sm p-7 hover:border-[#60A5FA]/20 transition-all duration-500">
-              <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-[#60A5FA]/[0.04] to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-              <div className="relative">
-                <div className="w-14 h-14 rounded-2xl bg-[#4D7CFF]/10 flex items-center justify-center mb-5"><s.icon className="w-7 h-7 text-[#4D7CFF]" /></div>
-                <h3 className="text-xl font-semibold text-white mb-3">{s.title}</h3>
-                <p className="text-sm text-white/40 leading-relaxed mb-5">{s.description}</p>
-                <ul className="space-y-2.5">{s.items.map((item, j) => <li key={j} className="flex items-center gap-2.5 text-sm text-white/50"><Check className="w-4 h-4 text-[#4D7CFF] flex-shrink-0" />{item}</li>)}</ul>
-              </div>
             </motion.div>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function PricingSection(): JSX.Element {
-  return (
-    <section id="pricing" className="relative py-24 overflow-hidden">
-      <div className="absolute top-0 left-1/4 w-[600px] h-[600px] bg-[#4D7CFF]/5 rounded-full blur-[120px]" />
-      <div className="relative max-w-7xl mx-auto px-6">
-        <Reveal>
-          <div className="text-center mb-16">
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-[#4D7CFF]/20 bg-[#4D7CFF]/5 text-xs text-[#4D7CFF] font-medium mb-4"><CreditCard className="w-3.5 h-3.5" />Precios</div>
-            <h2 className="text-3xl sm:text-4xl lg:text-5xl font-bold text-white mb-4">Simple y transparente</h2>
-            <p className="text-lg text-white/40 max-w-2xl mx-auto">Sin sorpresas. Elegí el plan que mejor se adapte a tu negocio. Todos incluyen 14 días de prueba gratis.</p>
           </div>
-        </Reveal>
-        <div className="grid md:grid-cols-3 gap-6 max-w-5xl mx-auto">
-          {plans.map((p, i) => (
-            <motion.div key={i} initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: '-40px' }} transition={{ duration: 0.5, delay: i * 0.12 }} whileHover={{ y: -6, boxShadow: p.highlighted ? '0 25px 60px -12px rgba(59,130,246,0.2), 0 0 40px rgba(37,99,235,0.15)' : '0 25px 60px -12px rgba(0,0,0,0.3)', transition: { duration: 0.2 } }} className={`relative h-full rounded-2xl border p-7 transition-colors duration-500 flex flex-col ${p.highlighted ? 'gradient-border border-transparent bg-gradient-to-b from-white/[0.06] to-transparent shadow-2xl shadow-[#2563EB]/10' : 'border-white/[0.08] bg-white/[0.04] hover:border-white/[0.15]'}`}>
-              {p.highlighted && <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-4 py-1 rounded-full bg-gradient-to-r from-[#60A5FA] to-[#4D7CFF] text-xs font-semibold text-white shadow-lg shadow-[#60A5FA]/30">Más popular</div>}
-              <div className="mb-6">
-                <h3 className="text-lg font-semibold text-white mb-1">{p.name}</h3>
-                <p className="text-sm text-white/30 mb-4">{p.description}</p>
-                <div className="flex items-baseline gap-1"><span className="text-sm text-white/40">USD</span><span className={`text-4xl font-bold ${p.highlighted ? 'bg-gradient-to-r from-[#60A5FA] to-[#2563EB] bg-clip-text text-transparent' : 'text-white'}`}>{p.price}</span><span className="text-sm text-white/40">{p.period}</span></div>
+        </motion.div>
+
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 1 }}
+          className="absolute bottom-10 left-6 lg:left-12 flex items-center gap-3 text-[13px] font-bold uppercase tracking-[0.2em] opacity-80 z-20"
+        >
+          <ArrowDown className="w-4 h-4 animate-bounce" /> Haz scroll
+        </motion.div>
+      </section>
+
+      <div className="w-full py-6 bg-black border-y border-white/10 overflow-hidden relative z-20 flex items-center">
+        <div className="absolute left-0 w-40 h-full bg-gradient-to-r from-black to-transparent z-10" />
+        <div className="absolute right-0 w-40 h-full bg-gradient-to-l from-black to-transparent z-10" />
+        <motion.div
+          animate={{ x: ['0%', '-50%'] }}
+          transition={{ duration: 30, repeat: Infinity, ease: 'linear' }}
+          className="flex whitespace-nowrap gap-16 px-10 items-center opacity-40 font-bold text-2xl tracking-[0.2em] uppercase"
+        >
+          {[...Array(4)].map((_, i) => (
+            <Fragment key={i}>
+              <span>Shopify</span>
+              <span className="text-red-600">✦</span>
+              <span>MercadoPago</span>
+              <span className="text-red-600">✦</span>
+              <span>WhatsApp API</span>
+              <span className="text-red-600">✦</span>
+              <span>Stripe</span>
+              <span className="text-red-600">✦</span>
+            </Fragment>
+          ))}
+        </motion.div>
+      </div>
+
+      <section className="bg-[#F8F8F8] text-[#111] pt-40 pb-52 flex flex-col items-center text-center px-6 relative z-10">
+        <motion.h2
+          initial={{ opacity: 0, y: 50 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          transition={{ duration: 0.8 }}
+          className="text-4xl lg:text-[5.5rem] font-light leading-[1.05] mb-8 tracking-tight"
+        >
+          Esto no es solo software.
+          <br />
+          <span className="text-[#cc1100] font-medium">Es tu mejor vendedor.</span>
+        </motion.h2>
+
+        <motion.p
+          initial={{ opacity: 0, y: 30 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          transition={{ duration: 0.8, delay: 0.2 }}
+          className="text-[18px] lg:text-[22px] font-medium text-[#555] max-w-3xl mb-16 leading-relaxed"
+        >
+          Deja de perder ventas por responder tarde. Nexova automatiza las conversaciones,
+          gestiona objeciones y cobra en piloto automatico, para que tu te enfoques en crecer.
+        </motion.p>
+
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9 }}
+          whileInView={{ opacity: 1, scale: 1 }}
+          viewport={{ once: true }}
+          className="flex gap-4"
+        >
+          <StoreButton icon={Apple} store="App Store" topText="Descargar en" />
+        </motion.div>
+      </section>
+
+      <section ref={stickyRef} className="relative bg-[#111] text-white h-[300vh] z-20">
+        <div className="sticky top-0 h-screen flex items-center overflow-hidden">
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(204,17,0,0.15)_0%,rgba(17,17,17,1)_100%)]" />
+
+          <div className="max-w-[1400px] mx-auto px-6 lg:px-12 w-full grid lg:grid-cols-2 gap-20 items-center relative z-10">
+            <div className="relative h-[400px]">
+              <motion.div style={{ opacity: step1Opacity }} className="absolute inset-0 flex flex-col justify-center">
+                <span className="text-[#cc1100] font-bold tracking-[0.2em] uppercase text-sm mb-6 flex items-center gap-2">
+                  <div className="w-8 h-[1px] bg-[#cc1100]" /> Fase 01
+                </span>
+                <h3 className="text-5xl lg:text-7xl font-medium tracking-tight mb-6">
+                  Sincronizacion Total.
+                </h3>
+                <p className="text-xl text-white/60 leading-relaxed max-w-md">
+                  Conecta tu inventario en un clic. La IA lee y aprende todos tus productos,
+                  precios y variables al instante.
+                </p>
+              </motion.div>
+
+              <motion.div style={{ opacity: step2Opacity }} className="absolute inset-0 flex flex-col justify-center">
+                <span className="text-[#cc1100] font-bold tracking-[0.2em] uppercase text-sm mb-6 flex items-center gap-2">
+                  <div className="w-8 h-[1px] bg-[#cc1100]" /> Fase 02
+                </span>
+                <h3 className="text-5xl lg:text-7xl font-medium tracking-tight mb-6">
+                  Atencion Empatica.
+                </h3>
+                <p className="text-xl text-white/60 leading-relaxed max-w-md">
+                  El cliente escribe a tu WhatsApp. El agente de IA responde con naturalidad,
+                  resuelve dudas y recomienda productos.
+                </p>
+              </motion.div>
+
+              <motion.div style={{ opacity: step3Opacity }} className="absolute inset-0 flex flex-col justify-center">
+                <span className="text-[#cc1100] font-bold tracking-[0.2em] uppercase text-sm mb-6 flex items-center gap-2">
+                  <div className="w-8 h-[1px] bg-[#cc1100]" /> Fase 03
+                </span>
+                <h3 className="text-5xl lg:text-7xl font-medium tracking-tight mb-6">Cierre & Cobro.</h3>
+                <p className="text-xl text-white/60 leading-relaxed max-w-md">
+                  Genera enlaces de pago automaticamente. Una vez procesado, actualiza el stock y
+                  te notifica. Magia pura.
+                </p>
+              </motion.div>
+            </div>
+
+            <div className="relative h-[600px] w-full bg-white/5 border border-white/10 rounded-[3rem] overflow-hidden flex justify-center backdrop-blur-sm">
+              <motion.div
+                style={{ y: mockupsY }}
+                className="absolute top-0 w-full flex flex-col items-center gap-[200px] py-[100px]"
+              >
+                <div className="w-[80%] bg-[#222] border border-white/10 p-6 rounded-3xl shadow-2xl">
+                  <div className="flex justify-between items-center border-b border-white/10 pb-4 mb-4">
+                    <div className="flex items-center gap-2">
+                      <Globe className="w-5 h-5 text-gray-400" />{' '}
+                      <span className="font-bold">Shopify Sync</span>
+                    </div>
+                    <span className="bg-green-500/20 text-green-400 text-xs font-bold px-3 py-1 rounded-full">
+                      Activo
+                    </span>
+                  </div>
+                  <div className="space-y-4">
+                    {[1, 2, 3].map((i) => (
+                      <div key={i} className="flex gap-4 items-center bg-black/40 p-3 rounded-xl">
+                        <div className="w-12 h-12 bg-white/10 rounded-lg animate-pulse" />
+                        <div className="flex-1">
+                          <div className="h-3 bg-white/20 rounded w-full mb-2" />
+                          <div className="h-3 bg-white/10 rounded w-1/2" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="w-[80%] bg-[#F0F2F5] text-black p-6 rounded-3xl shadow-2xl flex flex-col gap-4 relative">
+                  <div className="absolute -left-4 -top-4 w-12 h-12 bg-green-500 rounded-full flex items-center justify-center shadow-lg">
+                    <MessageCircle className="w-6 h-6 text-white" />
+                  </div>
+                  <div className="bg-white p-4 rounded-2xl rounded-tl-sm self-start max-w-[85%] shadow-sm">
+                    ¿Tienen talla M de la chaqueta negra?
+                  </div>
+                  <div className="bg-[#E7FFDB] p-4 rounded-2xl rounded-tr-sm self-end max-w-[85%] shadow-sm relative">
+                    ¡Hola! Sí, nos quedan 2 unidades en talla M. Cuesta $85. ¿Te separo una?
+                    <span className="absolute bottom-1 right-2 text-[10px] text-gray-400">12:04 ✓✓</span>
+                  </div>
+                </div>
+
+                <div className="w-[80%] bg-gradient-to-br from-green-400 to-green-600 text-white p-8 rounded-3xl shadow-[0_20px_50px_rgba(74,222,128,0.4)] flex flex-col items-center text-center">
+                  <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center mb-6 shadow-inner">
+                    <CheckCircle2 className="w-10 h-10 text-green-500" />
+                  </div>
+                  <h4 className="text-3xl font-bold mb-2">$85.00</h4>
+                  <p className="text-green-100 mb-8 text-lg font-medium">Pago Exitoso - Orden #8942</p>
+                  <div className="w-full h-2 bg-black/20 rounded-full overflow-hidden">
+                    <div className="w-full h-full bg-white animate-[pulse_1.5s_ease-in-out_infinite]" />
+                  </div>
+                </div>
+              </motion.div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section ref={cardsRef} className="relative min-h-[160vh] bg-[#cc1100] py-40 overflow-hidden z-20">
+        <div className="absolute inset-0 pointer-events-none opacity-80">
+          <div className="absolute w-[80vw] h-[80vw] top-[0%] left-[-20%] bg-[#ff5500] blur-[150px] mix-blend-screen rounded-full" />
+          <div className="absolute w-[60vw] h-[60vw] bottom-[-10%] right-[-10%] bg-[#800000] blur-[150px] mix-blend-multiply rounded-full" />
+        </div>
+
+        <div className="max-w-[1400px] mx-auto px-6 lg:px-12 grid lg:grid-cols-2 gap-10 relative z-10">
+          <div className="relative h-[800px] hidden lg:block perspective-[1000px]">
+            <motion.div
+              style={{ y: card1Y }}
+              className="absolute left-0 top-[10%] w-[280px] bg-[#1a1a1a] p-2 pb-6 rounded-3xl shadow-[0_20px_50px_rgba(0,0,0,0.6)] border border-white/20 rotate-[-8deg] z-10"
+            >
+              <div className="relative w-full h-[320px] rounded-2xl overflow-hidden mb-4">
+                <img
+                  src="https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?auto=format&fit=crop&w=600&q=80"
+                  alt="Retail"
+                  className="w-full h-full object-cover filter contrast-125"
+                />
+                <div className="absolute top-4 left-4 bg-[#cc1100] rounded-full p-1.5 shadow-lg">
+                  <CheckCircle2 className="w-5 h-5 text-white" />
+                </div>
               </div>
-              <ul className="space-y-3 mb-8 flex-1">{p.features.map((f, j) => <li key={j} className="flex items-start gap-2.5 text-sm text-white/50"><Check className={`w-4 h-4 mt-0.5 flex-shrink-0 ${p.highlighted ? 'text-[#4D7CFF]' : 'text-white/20'}`} />{f}</li>)}</ul>
-              <a href={`/cart?plan=${encodeURIComponent(p.code)}`} className={`group relative w-full py-3 rounded-xl text-sm font-medium transition-all duration-300 flex items-center justify-center gap-2 overflow-hidden ${p.highlighted ? 'text-white shadow-lg shadow-[#60A5FA]/20 hover:shadow-[#60A5FA]/35' : 'border border-white/10 text-white/60 hover:text-white hover:border-white/20 hover:bg-white/[0.03]'}`} style={p.highlighted ? { background: 'linear-gradient(90deg, #60A5FA, #4D7CFF, #2563EB)', backgroundSize: '200% 100%', animation: 'gradient-shift 4s ease-in-out infinite' } : undefined}>
-                <div className="absolute inset-0 -translate-x-full group-hover:translate-x-full transition-transform duration-700 bg-gradient-to-r from-transparent via-white/20 to-transparent" />
-                <span className="relative">{p.cta}</span>
-                <ArrowRight className="relative w-4 h-4 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300" />
-              </a>
+              <p className="text-center font-medium text-white/90 text-xl px-2 leading-tight">
+                Tiendas de
+                <br />
+                Ropa y Moda
+              </p>
             </motion.div>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
 
-function TestimonialsSection(): JSX.Element {
-  const doubled = [...testimonials, ...testimonials];
-  return (
-    <section className="relative py-24 overflow-hidden">
-      <div className="relative max-w-7xl mx-auto px-6">
-        <Reveal>
-          <div className="text-center mb-16">
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-amber-500/20 bg-amber-500/5 text-xs text-amber-400 font-medium mb-4"><Star className="w-3.5 h-3.5" />Testimonios</div>
-            <h2 className="text-3xl sm:text-4xl font-bold text-white mb-4">Lo que dicen nuestros clientes</h2>
-          </div>
-        </Reveal>
-      </div>
-
-      {/* Marquee row 1 */}
-      <div className="relative mb-4">
-        <div className="absolute left-0 top-0 bottom-0 w-24 bg-gradient-to-r from-[#08080d] to-transparent z-10 pointer-events-none" />
-        <div className="absolute right-0 top-0 bottom-0 w-24 bg-gradient-to-l from-[#08080d] to-transparent z-10 pointer-events-none" />
-        <div className="flex gap-4 hover:[animation-play-state:paused]" style={{ animation: 'marquee 40s linear infinite', width: 'max-content' }}>
-          {doubled.map((t, i) => (
-            <div key={i} className="w-[360px] flex-shrink-0 rounded-2xl border border-white/[0.08] bg-white/[0.04] backdrop-blur-sm p-6 relative overflow-hidden">
-              <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-[#4D7CFF]/30 to-transparent" />
-              <div className="flex gap-0.5 mb-4">{Array.from({ length: t.stars }).map((_, j) => <Star key={j} className="w-4 h-4 text-amber-400 fill-amber-400" />)}</div>
-              <p className="text-sm text-white/50 leading-relaxed mb-5 italic">"{t.text}"</p>
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#4D7CFF]/30 to-[#2563EB]/30 flex items-center justify-center"><span className="text-sm font-semibold text-white">{t.name[0]}</span></div>
-                <div><p className="text-sm font-medium text-white">{t.name}</p><p className="text-xs text-white/30">{t.role}</p></div>
+            <motion.div
+              style={{ y: card2Y }}
+              className="absolute left-[30%] top-[20%] w-[320px] bg-[#1a1a1a] p-2 pb-6 rounded-3xl shadow-[0_30px_70px_rgba(0,0,0,0.8)] border border-white/20 rotate-[4deg] z-30"
+            >
+              <div className="relative w-full h-[380px] rounded-2xl overflow-hidden mb-4">
+                <img
+                  src="https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=600&q=80"
+                  alt="Emprendedoras"
+                  className="w-full h-full object-cover filter contrast-125"
+                />
+                <div className="absolute top-4 left-4 bg-[#cc1100] rounded-full p-1.5 shadow-lg">
+                  <CheckCircle2 className="w-5 h-5 text-white" />
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Marquee row 2 (reverse) */}
-      <div className="relative">
-        <div className="absolute left-0 top-0 bottom-0 w-24 bg-gradient-to-r from-[#08080d] to-transparent z-10 pointer-events-none" />
-        <div className="absolute right-0 top-0 bottom-0 w-24 bg-gradient-to-l from-[#08080d] to-transparent z-10 pointer-events-none" />
-        <div className="flex gap-4 hover:[animation-play-state:paused]" style={{ animation: 'marquee 40s linear infinite reverse', width: 'max-content' }}>
-          {[...doubled].reverse().map((t, i) => (
-            <div key={i} className="w-[360px] flex-shrink-0 rounded-2xl border border-white/[0.08] bg-white/[0.04] backdrop-blur-sm p-6 relative overflow-hidden">
-              <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-[#4D7CFF]/30 to-transparent" />
-              <div className="flex gap-0.5 mb-4">{Array.from({ length: t.stars }).map((_, j) => <Star key={j} className="w-4 h-4 text-amber-400 fill-amber-400" />)}</div>
-              <p className="text-sm text-white/50 leading-relaxed mb-5 italic">"{t.text}"</p>
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#4D7CFF]/30 to-[#2563EB]/30 flex items-center justify-center"><span className="text-sm font-semibold text-white">{t.name[0]}</span></div>
-                <div><p className="text-sm font-medium text-white">{t.name}</p><p className="text-xs text-white/30">{t.role}</p></div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function FAQSection(): JSX.Element {
-  const [openIndex, setOpenIndex] = useState<number | null>(null);
-  return (
-    <section id="faq" className="relative py-24 overflow-hidden">
-      <div className="relative max-w-3xl mx-auto px-6">
-        <Reveal>
-          <div className="text-center mb-16">
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-white/10 bg-white/[0.03] text-xs text-white/50 font-medium mb-4">Preguntas frecuentes</div>
-            <h2 className="text-3xl sm:text-4xl font-bold text-white mb-4">¿Tenés dudas?</h2>
-          </div>
-        </Reveal>
-        <div className="space-y-3">
-          {faqs.map((faq, i) => (
-            <motion.div key={i} initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: '-20px' }} transition={{ duration: 0.4, delay: i * 0.06 }} className={`rounded-2xl border transition-colors duration-300 overflow-hidden relative ${openIndex === i ? 'border-[#60A5FA]/20 bg-[#60A5FA]/[0.03]' : 'border-white/[0.08] bg-white/[0.03] hover:border-white/[0.12]'}`}>
-              {openIndex === i && <div className="absolute left-0 top-0 bottom-0 w-[3px] bg-gradient-to-b from-[#60A5FA] via-[#4D7CFF] to-[#2563EB]" />}
-              <button className="w-full flex items-center justify-between p-5 text-left" onClick={() => setOpenIndex(openIndex === i ? null : i)}>
-                <span className="text-sm font-medium text-white pr-4">{faq.q}</span>
-                <motion.div animate={{ rotate: openIndex === i ? 180 : 0 }} transition={{ duration: 0.3 }}><ChevronDown className={`w-5 h-5 flex-shrink-0 transition-colors duration-300 ${openIndex === i ? 'text-[#60A5FA]' : 'text-white/30'}`} /></motion.div>
-              </button>
-              <AnimatePresence initial={false}>
-                {openIndex === i && (
-                  <motion.div key="content" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.3, ease: [0.25, 0.46, 0.45, 0.94] }} className="overflow-hidden">
-                    <p className="px-5 pb-5 text-sm text-white/40 leading-relaxed">{faq.a}</p>
-                  </motion.div>
-                )}
-              </AnimatePresence>
+              <p className="text-center font-medium text-white/90 text-xl px-2 leading-tight">
+                Agencias y
+                <br />
+                Servicios Digitales
+              </p>
             </motion.div>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
 
-function CTASection(): JSX.Element {
-  return (
-    <section className="relative py-24 overflow-hidden">
-      <div className="absolute inset-0">
-        <div className="absolute w-[700px] h-[700px] bg-[#3B82F6]/20 rounded-full blur-[180px] top-[-25%] left-[5%]" style={{ animation: 'float 14s ease-in-out infinite' }} />
-        <div className="absolute w-[500px] h-[500px] bg-[#2563EB]/20 rounded-full blur-[160px] bottom-[-15%] right-[5%]" style={{ animation: 'float 12s ease-in-out infinite reverse' }} />
-        <div className="absolute inset-0 opacity-[0.03]" style={{ backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.5) 1px, transparent 1px)', backgroundSize: '32px 32px' }} />
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_0%,#08080d_70%)]" />
-      </div>
-      <div className="relative max-w-4xl mx-auto px-6 text-center">
-        <Reveal><h2 className="text-3xl sm:text-4xl lg:text-5xl font-bold text-white mb-6">Llevá tu negocio al siguiente nivel</h2></Reveal>
-        <Reveal delay={100}><p className="text-lg text-white/50 mb-10 max-w-2xl mx-auto">Sumate a los comercios que ya usan inteligencia artificial para vender más, atender mejor y crecer sin límites.</p></Reveal>
-        <Reveal delay={200}>
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <a href="/cart?plan=standard" className="group relative flex items-center gap-2 text-white font-medium px-8 py-4 rounded-2xl text-base transition-all duration-300 shadow-[0_0_50px_rgba(59,130,246,0.3)] hover:shadow-[0_0_70px_rgba(59,130,246,0.4)] hover:-translate-y-0.5 overflow-hidden" style={{ background: 'linear-gradient(90deg, #60A5FA, #4D7CFF, #2563EB)', backgroundSize: '200% 100%', animation: 'gradient-shift 4s ease-in-out infinite' }}>
-              <div className="absolute inset-0 -translate-x-full group-hover:translate-x-full transition-transform duration-700 bg-gradient-to-r from-transparent via-white/25 to-transparent" />
-              <span className="relative">Empezar ahora — Es gratis</span>
-              <ArrowRight className="relative w-4 h-4 group-hover:translate-x-1 transition-transform" />
-            </a>
+            <motion.div
+              style={{ y: card3Y }}
+              className="absolute left-[55%] top-[45%] w-[260px] bg-[#1a1a1a] p-2 pb-6 rounded-3xl shadow-[0_20px_50px_rgba(0,0,0,0.6)] border border-white/20 rotate-[-3deg] z-20"
+            >
+              <div className="relative w-full h-[280px] rounded-2xl overflow-hidden mb-4">
+                <img
+                  src="https://images.unsplash.com/photo-1573497019940-1c28c88b4f3e?auto=format&fit=crop&w=600&q=80"
+                  alt="Profesional"
+                  className="w-full h-full object-cover filter contrast-125"
+                />
+                <div className="absolute top-4 left-4 bg-[#cc1100] rounded-full p-1.5 shadow-lg">
+                  <CheckCircle2 className="w-5 h-5 text-white" />
+                </div>
+              </div>
+              <p className="text-center font-medium text-white/90 text-xl px-2 leading-tight">
+                Consultoras
+                <br />
+                y B2B
+              </p>
+            </motion.div>
           </div>
-        </Reveal>
-      </div>
-    </section>
-  );
-}
 
-function NewsletterSection(): JSX.Element {
-  const [email, setEmail] = useState('');
-  return (
-    <section className="relative py-16 border-t border-white/[0.04]">
-      <div className="max-w-2xl mx-auto px-6 text-center">
-        <Reveal>
-          <div className="flex items-center justify-center gap-2 mb-3"><Send className="w-4 h-4 text-[#4D7CFF]" /><span className="text-sm font-medium text-white/50">Newsletter</span></div>
-          <h3 className="text-xl font-semibold text-white mb-2">Novedades y tips para tu negocio</h3>
-          <p className="text-sm text-white/30 mb-6">Recibí actualizaciones sobre nuevas funciones, guías y mejores prácticas. Sin spam.</p>
-        </Reveal>
-        <Reveal delay={100}>
-          <form className="flex flex-col sm:flex-row gap-3 max-w-md mx-auto" onSubmit={(e) => e.preventDefault()}>
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="tu@email.com" className="flex-1 h-12 px-4 bg-white/[0.04] border border-white/[0.08] rounded-xl text-sm text-white placeholder:text-white/25 focus:outline-none focus:border-[#4D7CFF]/40 focus:ring-1 focus:ring-[#4D7CFF]/20 transition-all" />
-            <button type="submit" className="h-12 px-6 bg-[#4D7CFF] hover:bg-[#3D6BEE] text-white text-sm font-medium rounded-xl transition-all duration-200 shadow-lg shadow-[#4D7CFF]/20 whitespace-nowrap">Suscribirme</button>
-          </form>
-        </Reveal>
-      </div>
-    </section>
-  );
-}
-
-function Footer(): JSX.Element {
-  const year = new Date().getFullYear();
-  const links = {
-    Producto: [{ label: 'Funciones', href: '#features' }, { label: 'Precios', href: '#pricing' }, { label: 'Soluciones', href: '#solutions' }, { label: 'FAQ', href: '#faq' }],
-    Empresa: [{ label: 'Nosotros', href: '#' }, { label: 'Blog', href: '#' }, { label: 'Contacto', href: '#' }],
-    Legal: [{ label: 'Términos de servicio', href: '#' }, { label: 'Política de privacidad', href: '#' }],
-  };
-
-  return (
-    <footer className="relative py-16">
-      <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-[#4D7CFF]/20 to-transparent" />
-      <div className="max-w-7xl mx-auto px-6">
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-10 mb-12">
-          <div className="sm:col-span-2 md:col-span-1">
-            <NexovaLogo className="h-5 w-auto mb-4" fill="rgba(255,255,255,0.4)" />
-            <p className="text-sm text-white/30 leading-relaxed">Plataforma de commerce inteligente con IA para negocios que quieren crecer.</p>
-          </div>
-          {Object.entries(links).map(([title, items]) => (
-            <div key={title}>
-              <p className="text-sm font-medium text-white/60 mb-4">{title}</p>
-              <ul className="space-y-2.5">{items.map((item) => <li key={item.label}><a href={item.href} className="text-sm text-white/30 hover:text-white/60 transition-colors">{item.label}</a></li>)}</ul>
+          <div className="flex flex-col justify-center h-full pt-20 lg:pt-0 lg:pl-10">
+            <div className="inline-block border border-white/40 rounded-full px-6 py-2 text-[13px] font-bold mb-10 w-max tracking-widest uppercase">
+              El sistema favorece a los grandes.
             </div>
-          ))}
+            <h2 className="text-5xl lg:text-[6rem] font-medium tracking-tight mb-8 leading-[0.95]">
+              Estamos <br /> cambiando eso.
+            </h2>
+            <p className="text-xl lg:text-[22px] text-white/90 font-light leading-relaxed max-w-lg">
+              Diseñado para los comercios locales y fundadores que mantienen viva a la comunidad.
+              Te damos la tecnologia de las multinacionales, para que compitas de igual a igual.
+            </p>
+          </div>
         </div>
-        <div className="flex flex-col sm:flex-row items-center justify-between pt-8 border-t border-white/[0.04] gap-4">
-          <p className="text-xs text-white/20">&copy; {year} Nexova. Todos los derechos reservados.</p>
-          <div className="flex items-center gap-4"><span className="text-xs text-white/20">Hecho con IA en Argentina</span></div>
+      </section>
+
+      <section
+        ref={reasonalRef}
+        className="relative bg-[#FFDFD1] text-[#1a1a1a] py-48 overflow-hidden z-30 rounded-t-[4rem] -mt-20 shadow-[0_-20px_50px_rgba(0,0,0,0.2)]"
+      >
+        <div className="max-w-5xl mx-auto text-center relative z-20 px-6">
+          <p className="text-[12px] font-bold uppercase tracking-[0.3em] mb-12 text-[#cc1100]">
+            La Filosofia Nexova
+          </p>
+
+          <h2 className="text-4xl md:text-[3.5rem] font-medium leading-[1.2] mb-12 tracking-tight">
+            Como dueños de negocio, se espera que vendamos, gestionemos stock, respondamos rapido
+            y <span className="italic font-serif text-[#cc1100]">nunca durmamos</span>.
+          </h2>
+
+          <p className="text-2xl md:text-[2.2rem] font-light leading-[1.4] mb-16 text-[#444]">
+            Curiosamente, rara vez nos enseñan a automatizar esto sistematicamente.
+          </p>
+
+          <div className="w-10 h-10 mx-auto border-2 border-[#1a1a1a] grid grid-cols-2 gap-1 p-1.5 mb-16">
+            <div className="bg-[#1a1a1a]" />
+            <div className="bg-[#1a1a1a]" />
+            <div className="bg-[#1a1a1a]" />
+            <div className="bg-[#1a1a1a]" />
+          </div>
+
+          <p className="text-3xl md:text-[3rem] font-medium text-[#1a1a1a]">
+            Con Nexova, recuperas tu tiempo.
+          </p>
+        </div>
+
+        <motion.div
+          style={{ y: rEl1 }}
+          className="absolute left-[2%] top-[30%] w-36 h-36 lg:w-48 lg:h-48 bg-[#f8f8f8] rounded-[2rem] border-8 border-white shadow-2xl overflow-hidden p-2 rotate-[-6deg]"
+        >
+          <img
+            src="https://images.unsplash.com/photo-1590602847861-f357a9332bbc?q=80&w=400&auto=format&fit=crop"
+            className="w-full h-full object-cover filter grayscale contrast-150 sepia-[0.2]"
+            alt="Vintage"
+          />
+        </motion.div>
+
+        <motion.div
+          style={{ y: rEl2 }}
+          className="absolute left-[10%] top-[70%] w-28 h-28 lg:w-36 lg:h-36 bg-[#f8f8f8] rounded-[1.5rem] border-8 border-white shadow-2xl overflow-hidden p-2 rotate-[12deg]"
+        >
+          <img
+            src="https://images.unsplash.com/photo-1587145820266-a5951ee6f620?q=80&w=400&auto=format&fit=crop"
+            className="w-full h-full object-cover filter grayscale contrast-150 sepia-[0.2]"
+            alt="Vintage"
+          />
+        </motion.div>
+
+        <motion.div
+          style={{ y: rEl3 }}
+          className="absolute right-[-2%] top-[10%] w-56 h-56 lg:w-72 lg:h-72 bg-[#f8f8f8] rounded-bl-[4rem] border-l-8 border-b-8 border-white shadow-2xl overflow-hidden p-4"
+        >
+          <img
+            src="https://images.unsplash.com/photo-1504221507732-5246c045949b?q=80&w=400&auto=format&fit=crop"
+            className="w-full h-full object-cover filter grayscale contrast-150 sepia-[0.2]"
+            alt="Vintage"
+          />
+        </motion.div>
+
+        <motion.div
+          style={{ y: rEl4 }}
+          className="absolute right-[5%] top-[60%] w-40 h-40 lg:w-48 lg:h-48 bg-[#f8f8f8] rounded-tl-[3rem] border-8 border-white shadow-2xl overflow-hidden p-2 rotate-[-15deg]"
+        >
+          <img
+            src="https://images.unsplash.com/photo-1511379938547-c1f69419868d?q=80&w=400&auto=format&fit=crop"
+            className="w-full h-full object-cover filter grayscale contrast-150 sepia-[0.2]"
+            alt="Vintage"
+          />
+        </motion.div>
+
+        <motion.div
+          style={{ y: rEl5 }}
+          className="absolute right-[25%] bottom-[5%] w-32 h-32 lg:w-40 lg:h-40 bg-[#f8f8f8] rounded-[2rem] border-8 border-white shadow-2xl overflow-hidden p-2 rotate-[8deg]"
+        >
+          <img
+            src="https://images.unsplash.com/photo-1506461803738-94dbf06b6f00?q=80&w=400&auto=format&fit=crop"
+            className="w-full h-full object-cover filter grayscale contrast-200 sepia-[0.3]"
+            alt="Vintage"
+          />
+        </motion.div>
+      </section>
+
+      <section className="bg-[#0a0a0f] text-white py-40 px-6 lg:px-12 relative z-40 rounded-t-[4rem] -mt-10">
+        <div className="max-w-[1400px] mx-auto">
+          <div className="text-center mb-24">
+            <h2 className="text-5xl lg:text-[5rem] font-medium tracking-tight mb-6">
+              Poder absoluto, <br />
+              <span className="text-[#cc1100]">diseño simple.</span>
+            </h2>
+            <p className="text-xl text-white/50 max-w-2xl mx-auto">
+              Todo lo que necesitas para operar un imperio digital desde tu navegador.
+            </p>
+          </div>
+
+          <div className="grid lg:grid-cols-3 gap-6 auto-rows-[350px]">
+            <div className="lg:col-span-2 bg-gradient-to-br from-[#1a1a24] to-[#0a0a0f] border border-white/10 rounded-[2.5rem] p-10 overflow-hidden relative group hover:border-white/20 transition-colors">
+              <div className="absolute top-0 right-0 w-[400px] h-[400px] bg-[#cc1100]/10 blur-[100px] rounded-full group-hover:bg-[#cc1100]/20 transition-colors" />
+              <Shield className="w-10 h-10 text-[#cc1100] mb-6" />
+              <h3 className="text-3xl font-bold mb-3">CRM Integrado</h3>
+              <p className="text-white/60 text-lg max-w-md">
+                Cada cliente, cada chat y cada compra guardada automaticamente. Sin Excel, sin
+                estres.
+              </p>
+              <div className="absolute bottom-[-20%] right-[-10%] w-[80%] h-[70%] bg-[#111] border border-white/10 rounded-tl-3xl shadow-2xl p-6 rotate-[-5deg] group-hover:rotate-[-2deg] transition-transform duration-500">
+                <div className="h-4 w-1/3 bg-white/10 rounded mb-4" />
+                <div className="flex gap-4">
+                  <div className="w-10 h-10 bg-white/5 rounded-full" />
+                  <div className="flex-1 space-y-2">
+                    <div className="h-3 w-full bg-white/5 rounded" />
+                    <div className="h-3 w-1/2 bg-white/5 rounded" />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-gradient-to-bl from-[#2A0808] to-[#0a0a0f] border border-red-900/30 rounded-[2.5rem] p-10 relative group hover:border-red-500/50 transition-colors flex flex-col">
+              <Zap className="w-10 h-10 text-[#ff4d00] mb-6" />
+              <h3 className="text-3xl font-bold mb-3">Modelos IA</h3>
+              <p className="text-white/60 text-lg flex-1">
+                Usamos los modelos linguisticos mas avanzados para que el bot suene 100% humano.
+              </p>
+              <div className="mt-auto flex gap-2">
+                <span className="bg-[#cc1100]/20 text-[#ff4d00] px-3 py-1 rounded-full text-xs font-bold border border-[#cc1100]/30">
+                  GPT-4 Turbo
+                </span>
+                <span className="bg-[#cc1100]/20 text-[#ff4d00] px-3 py-1 rounded-full text-xs font-bold border border-[#cc1100]/30">
+                  Claude 3.5
+                </span>
+              </div>
+            </div>
+
+            <div className="bg-[#111] border border-white/10 rounded-[2.5rem] p-10 group flex flex-col justify-center items-center text-center hover:bg-[#151515] transition-colors">
+              <Smartphone className="w-16 h-16 text-white/20 mb-6 group-hover:text-white transition-colors duration-500" />
+              <h3 className="text-2xl font-bold mb-2">Web & Movil</h3>
+              <p className="text-white/50">
+                Gestiona todo desde el PC en tu tienda, o desde la App en tu bolsillo.
+              </p>
+            </div>
+
+            <div className="lg:col-span-2 bg-[#111] border border-white/10 rounded-[2.5rem] p-10 overflow-hidden relative group">
+              <BarChart3 className="w-10 h-10 text-white mb-6" />
+              <h3 className="text-3xl font-bold mb-3">Analitica Profunda</h3>
+              <p className="text-white/60 text-lg">
+                Descubre que productos traen mas consultas y cuales generan mas dinero real.
+              </p>
+              <div className="absolute bottom-0 right-10 flex items-end gap-3 h-32 opacity-30 group-hover:opacity-100 transition-opacity duration-500">
+                <motion.div
+                  initial={{ height: '20%' }}
+                  whileInView={{ height: '60%' }}
+                  className="w-10 bg-white rounded-t-lg"
+                />
+                <motion.div
+                  initial={{ height: '20%' }}
+                  whileInView={{ height: '40%' }}
+                  className="w-10 bg-white rounded-t-lg"
+                />
+                <motion.div
+                  initial={{ height: '20%' }}
+                  whileInView={{ height: '80%' }}
+                  className="w-10 bg-[#cc1100] rounded-t-lg"
+                />
+                <motion.div
+                  initial={{ height: '20%' }}
+                  whileInView={{ height: '100%' }}
+                  className="w-10 bg-[#ff4d00] rounded-t-lg"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <footer className="bg-black text-white pt-40 pb-12 px-6 lg:px-12 relative overflow-hidden z-50">
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[100vw] h-[1px] bg-gradient-to-r from-transparent via-[#cc1100] to-transparent opacity-50" />
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[50vw] h-[300px] bg-[#cc1100] blur-[150px] opacity-20 pointer-events-none" />
+
+        <div className="max-w-[1400px] mx-auto text-center mb-32 relative z-10">
+          <motion.h2
+            initial={{ opacity: 0, scale: 0.9 }}
+            whileInView={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 1 }}
+            className="text-[4.5rem] md:text-[8rem] lg:text-[12rem] font-bold tracking-tighter leading-[0.85] mb-8"
+          >
+            Usa <span className="text-[#cc1100]">Nexova.</span>
+          </motion.h2>
+          <p className="text-2xl lg:text-3xl text-white/50 font-light max-w-2xl mx-auto">
+            El comercio conversacional es ahora. <br />Empieza a vender en automatico hoy mismo.
+          </p>
+
+          <div className="mt-16 flex justify-center">
+            <button
+              className="bg-white text-black hover:bg-[#cc1100] hover:text-white text-xl font-bold px-12 py-6 rounded-full transition-all duration-300 shadow-[0_0_40px_rgba(255,255,255,0.2)] hover:shadow-[0_0_60px_rgba(204,17,0,0.6)] hover:scale-105"
+              type="button"
+            >
+              Crear cuenta gratis
+            </button>
+          </div>
+        </div>
+
+        <div className="max-w-[1400px] mx-auto grid grid-cols-2 md:grid-cols-4 gap-12 border-t border-white/10 pt-16 relative z-10">
+          <div className="col-span-2 md:col-span-1">
+            <div className="flex items-center gap-2 font-bold text-2xl mb-6 tracking-tight">
+              <div className="w-6 h-6 bg-[#cc1100] rounded flex items-center justify-center">
+                <span className="text-white text-xs">N</span>
+              </div>
+              Nexova
+            </div>
+            <p className="text-white/40 text-sm leading-relaxed max-w-xs">
+              Software construido con pasion para negocios que importan.
+            </p>
+          </div>
+
+          <div>
+            <h4 className="font-bold mb-6 text-lg tracking-wide">Plataforma</h4>
+            <ul className="space-y-4 text-sm font-medium text-white/50">
+              <li>
+                <a href="#" className="hover:text-white transition-colors">
+                  Agente IA
+                </a>
+              </li>
+              <li>
+                <a href="#" className="hover:text-white transition-colors">
+                  Dashboard CRM
+                </a>
+              </li>
+              <li>
+                <a href="#" className="hover:text-white transition-colors">
+                  Integraciones
+                </a>
+              </li>
+            </ul>
+          </div>
+
+          <div>
+            <h4 className="font-bold mb-6 text-lg tracking-wide">Compañia</h4>
+            <ul className="space-y-4 text-sm font-medium text-white/50">
+              <li>
+                <a href="#" className="hover:text-white transition-colors">
+                  Nuestra Mision
+                </a>
+              </li>
+              <li>
+                <a href="#" className="hover:text-white transition-colors">
+                  Contacto
+                </a>
+              </li>
+              <li>
+                <a href="#" className="hover:text-white transition-colors">
+                  Blog
+                </a>
+              </li>
+            </ul>
+          </div>
+
+          <div>
+            <h4 className="font-bold mb-6 text-lg tracking-wide">Legal</h4>
+            <ul className="space-y-4 text-sm font-medium text-white/50">
+              <li>
+                <a href="#" className="hover:text-white transition-colors">
+                  Privacidad
+                </a>
+              </li>
+              <li>
+                <a href="#" className="hover:text-white transition-colors">
+                  Terminos
+                </a>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </footer>
+
+      <div className="fixed bottom-6 right-6 lg:bottom-8 lg:right-8 z-[100]">
+        <div className="bg-[#3b0b08] border-b-4 border-[#250503] shadow-[0_10px_30px_rgba(0,0,0,0.5)] rounded-[20px] p-4 pr-6 flex items-center gap-5 max-w-[420px]">
+          <div className="text-4xl bg-[#cc1100]/10 p-2 rounded-full">🍪</div>
+          <p className="text-[13px] font-medium leading-tight text-white/90 tracking-wide">
+            Utilizamos cookies para
+            <br />
+            mejorar tu experiencia
+          </p>
+          <button
+            className="bg-[#cc1100] hover:bg-red-600 text-white font-bold py-2.5 px-6 rounded-xl text-[13px] ml-auto transition-colors shadow-md"
+            type="button"
+          >
+            Aceptar
+          </button>
         </div>
       </div>
-    </footer>
-  );
-}
-
-/* ───────────────────────── MAIN ───────────────────────── */
-
-export default function IndexPage(): JSX.Element {
-  return (
-    <div className="min-h-screen bg-[#08080d] text-white font-sans antialiased overflow-x-hidden" style={{ scrollBehavior: 'smooth' }}>
-      <Navbar />
-      <HeroSection />
-      <StatsBar />
-      <FeaturesSection />
-      <AIShowcase />
-      <AnalyticsSection />
-      <SolutionsSection />
-      <PricingSection />
-      <TestimonialsSection />
-      <FAQSection />
-      <CTASection />
-      <NewsletterSection />
-      <Footer />
     </div>
   );
 }
