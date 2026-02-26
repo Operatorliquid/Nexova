@@ -273,12 +273,27 @@ function extractToolMessage(data: unknown): string | undefined {
 
 function normalizeCommercePromptProfile(input: unknown): CommercePromptProfile {
   const settings = toRecord(input) ?? {};
+  const rawPaymentMethodsEnabled = toRecord(settings.paymentMethodsEnabled);
 
   return {
     businessAddress: toTrimmedString(settings.businessAddress) ?? toTrimmedString(settings.address),
     whatsappContact: toTrimmedString(settings.whatsappContact),
     paymentAlias: toTrimmedString(settings.paymentAlias),
     paymentCbu: toTrimmedString(settings.paymentCbu),
+    paymentMethodsEnabled: {
+      mpLink:
+        typeof rawPaymentMethodsEnabled?.mpLink === 'boolean'
+          ? rawPaymentMethodsEnabled.mpLink
+          : true,
+      transfer:
+        typeof rawPaymentMethodsEnabled?.transfer === 'boolean'
+          ? rawPaymentMethodsEnabled.transfer
+          : true,
+      cash:
+        typeof rawPaymentMethodsEnabled?.cash === 'boolean'
+          ? rawPaymentMethodsEnabled.cash
+          : true,
+    },
     workingDays: toStringArray(settings.workingDays),
     continuousHours: toOptionalBoolean(settings.continuousHours),
     workingHoursStart: toTrimmedString(settings.workingHoursStart),
@@ -331,9 +346,9 @@ export class RetailAgent {
 
     const ledgerService = new LedgerService(this.prisma);
     const mpConfig = getMercadoPagoConfig();
-    const mpService = mpConfig.clientId && mpConfig.clientSecret
-      ? new MercadoPagoIntegrationService(this.prisma, mpConfig)
-      : undefined;
+    // Keep MP tools available in worker even when OAuth app creds are not present
+    // in this runtime. Connected workspace tokens can still be used to generate links.
+    const mpService = new MercadoPagoIntegrationService(this.prisma, mpConfig);
 
     initializeRetailTools(this.prisma, this.memoryManager, toolRegistry, {
       ledgerService,
@@ -5953,6 +5968,29 @@ export class RetailAgent {
           await this.memoryManager.saveSession(memory);
           return await respondWithPrimaryMenu();
         }
+        if (isPaymentFlowAbortIntent(message)) {
+          clearPaymentContext(memory);
+          memory.context.lastMenu = 'primary';
+          await this.memoryManager.saveSession(memory);
+
+          const response = 'Perfecto, no hay problema. Cuando quieras pagar, estoy acá para ayudarte.';
+          const menuContent = buildPrimaryMenuContent();
+          await this.storeMessage(sessionId, 'user', message, messageId);
+          await this.storeMessage(sessionId, 'assistant', response);
+
+          return {
+            response,
+            responseType: 'interactive-buttons',
+            responsePayload: {
+              ...menuContent.interactive,
+              body: `${response}\n\n${menuContent.interactive.body}`,
+            },
+            state: fsm.getState(),
+            toolsUsed: [],
+            tokensUsed: 0,
+            shouldSendMessage: true,
+          };
+        }
 
         const stage = memory.context.paymentStage;
 
@@ -7513,10 +7551,25 @@ export class RetailAgent {
   private async loadCommerceProfile(workspaceId: string): Promise<CommercePromptProfile> {
     const workspace = await this.prisma.workspace.findUnique({
       where: { id: workspaceId },
-      select: { settings: true },
+      select: { plan: true, settings: true },
     });
+    const profile = normalizeCommercePromptProfile(workspace?.settings);
+    const settings = toRecord(workspace?.settings) ?? {};
+    const plan = resolveCommercePlan({
+      workspacePlan: workspace?.plan,
+      settingsPlan: settings.commercePlan,
+      fallback: 'pro',
+    });
+    const capabilities = getCommercePlanCapabilities(plan);
 
-    return normalizeCommercePromptProfile(workspace?.settings);
+    profile.paymentMethodsEnabled = {
+      ...profile.paymentMethodsEnabled,
+      mpLink: capabilities.showMercadoPagoIntegration
+        ? profile.paymentMethodsEnabled?.mpLink !== false
+        : false,
+    };
+
+    return profile;
   }
 
   private shouldClassifyOrderIntent(
@@ -11351,6 +11404,36 @@ function parsePaymentMethodSelection(message: string): PaymentMethodSelection {
   if (normalized.includes('volver') || normalized.includes('menu') || normalized.includes('menú') || normalized.includes('inicio')) return 'back';
 
   return null;
+}
+
+function isPaymentFlowAbortIntent(message: string): boolean {
+  const normalized = normalizeSimpleText(message);
+  if (!normalized) return false;
+
+  const exactMatches = new Set([
+    'no',
+    'n',
+    'no gracias',
+    'cancela',
+    'cancelar',
+    'cancelo',
+    'despues',
+    'mas tarde',
+    'otro momento',
+    'no ahora',
+  ]);
+  if (exactMatches.has(normalized)) return true;
+
+  if (normalized.includes('no quiero pagar')) return true;
+  if (normalized.includes('no lo quiero pagar')) return true;
+  if (normalized.includes('no quiero pagarlo')) return true;
+  if (normalized.includes('no quiero hacer el pago')) return true;
+  if (normalized.includes('cancela el pago')) return true;
+  if (normalized.includes('cancelar el pago')) return true;
+  if (normalized.includes('dejalo para despues')) return true;
+  if (normalized.includes('dejalo para mas tarde')) return true;
+
+  return false;
 }
 
 function isPaymentBack(message: string): boolean {

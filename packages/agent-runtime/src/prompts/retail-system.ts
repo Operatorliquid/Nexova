@@ -224,6 +224,11 @@ export function buildRetailSystemPrompt(
     whatsappContact?: string;
     paymentAlias?: string;
     paymentCbu?: string;
+    paymentMethodsEnabled?: {
+      mpLink?: boolean;
+      transfer?: boolean;
+      cash?: boolean;
+    };
     workingDays?: string[];
     continuousHours?: boolean;
     workingHoursStart?: string;

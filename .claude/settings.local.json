@@ -73,7 +73,10 @@
       "Bash(pnpm --filter landing add:*)",
       "Bash(pnpm --filter landing build:*)",
       "Bash(head:*)",
-      "WebFetch(domain:pocketchangethe.world)"
+      "WebFetch(domain:pocketchangethe.world)",
+      "Bash(tail:*)",
+      "Bash(grep IndexPage:*)",
+      "Bash(pnpm:*)"
     ]
   }
 }
