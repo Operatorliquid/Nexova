@@ -1470,6 +1470,7 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
    */
   app.post<{
     Params: { orderId: string };
+    Querystring: { preview?: string };
   }>('/arca/invoices/:orderId/send', {
     preHandler: [app.requirePermission('payments:update')],
     handler: async (request: FastifyRequest, reply: FastifyReply) => {
@@ -1483,6 +1484,9 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
       }
 
       const { orderId } = request.params as { orderId: string };
+      const query = request.query as { preview?: string } | undefined;
+      const previewFlag = String(query?.preview || '').toLowerCase();
+      const isPreviewOnly = previewFlag === '1' || previewFlag === 'true' || previewFlag === 'yes';
       if (!orderId) {
         return reply.status(400).send({ error: 'orderId required' });
       }
@@ -1524,11 +1528,6 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
         return reply.status(404).send({ error: 'NOT_FOUND', message: 'Order not found' });
       }
 
-      const customerPhone = order.customer?.phone;
-      if (!customerPhone) {
-        return reply.status(400).send({ error: 'NO_PHONE', message: 'Customer has no phone' });
-      }
-
       const invoice = await app.prisma.arcaInvoice.findFirst({
         where: { workspaceId, orderId, status: 'authorized' },
         orderBy: { createdAt: 'desc' },
@@ -1536,20 +1535,6 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
 
       if (!invoice) {
         return reply.status(404).send({ error: 'NOT_FOUND', message: 'Invoice not found' });
-      }
-
-      const whatsappNumber = await app.prisma.whatsAppNumber.findFirst({
-        where: { workspaceId, isActive: true },
-        select: { apiKeyEnc: true, apiKeyIv: true, apiUrl: true, phoneNumber: true, provider: true, providerConfig: true },
-      });
-
-      if (!whatsappNumber) {
-        return reply.status(400).send({ error: 'WHATSAPP_NOT_CONFIGURED', message: 'WhatsApp not configured' });
-      }
-
-      const apiKey = resolveWhatsAppApiKey(whatsappNumber);
-      if (!apiKey) {
-        return reply.status(400).send({ error: 'WHATSAPP_API_KEY_MISSING', message: 'WhatsApp API key missing' });
       }
 
       const formatCbteTipoLabel = (cbteTipo: number): string => {
@@ -1607,6 +1592,7 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
           readText(workspaceSettings?.businessName) ||
           order.workspace?.name ||
           'Nexova',
+        logoUrl: readText(workspaceSettings?.companyLogo) || null,
         issuerAddress: readText(workspaceSettings?.businessAddress) || null,
         issuerPhone:
           readText(workspaceSettings?.whatsappContact) ||
@@ -1621,7 +1607,7 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
         cae: invoice.cae,
         caeExpiresAt: invoice.caeExpiresAt,
         customerName,
-        customerPhone: customerPhone,
+        customerPhone: order.customer?.phone || '-',
         customerAddress,
         customerDocument,
         customerVatCondition,
@@ -1658,6 +1644,35 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
         filename: uniqueName,
         ttlSeconds: resolveSignedUploadTtlSeconds(),
       });
+
+      if (isPreviewOnly) {
+        return reply.send({
+          success: true,
+          preview: true,
+          mediaUrl,
+          filename: safeFilename,
+        });
+      }
+
+      const customerPhone = order.customer?.phone;
+      if (!customerPhone) {
+        return reply.status(400).send({ error: 'NO_PHONE', message: 'Customer has no phone' });
+      }
+
+      const whatsappNumber = await app.prisma.whatsAppNumber.findFirst({
+        where: { workspaceId, isActive: true },
+        select: { apiKeyEnc: true, apiKeyIv: true, apiUrl: true, phoneNumber: true, provider: true, providerConfig: true },
+      });
+
+      if (!whatsappNumber) {
+        return reply.status(400).send({ error: 'WHATSAPP_NOT_CONFIGURED', message: 'WhatsApp not configured' });
+      }
+
+      const apiKey = resolveWhatsAppApiKey(whatsappNumber);
+      if (!apiKey) {
+        return reply.status(400).send({ error: 'WHATSAPP_API_KEY_MISSING', message: 'WhatsApp API key missing' });
+      }
+
       const caption = `Te dejo la factura de tu ${order.orderNumber} gracias por tu compra!`;
 
       try {
@@ -1715,7 +1730,7 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
           // Non-fatal
         }
 
-        return reply.send({ success: true, sent: true, to });
+        return reply.send({ success: true, sent: true, to, mediaUrl, filename: safeFilename });
       } catch (error) {
         request.log.error(error, 'Failed to send invoice via WhatsApp');
         const message = error instanceof Error ? error.message : 'Failed to send invoice via WhatsApp';

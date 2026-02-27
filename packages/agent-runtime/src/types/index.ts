@@ -241,6 +241,22 @@ export interface ConversationContext {
   paymentPendingAmount?: number;
   paymentReceiptId?: string;
   paymentReceiptAmount?: number;
+  pausedPaymentContext?: {
+    stage?: 'select_order' | 'select_method' | 'select_method_more' | 'await_receipt' | 'await_receipt_amount' | 'confirm_receipt';
+    method?: 'transfer' | 'link' | 'cash';
+    orders?: Array<{
+      id: string;
+      orderNumber: string;
+      pendingAmount: number;
+    }>;
+    orderId?: string;
+    orderNumber?: string;
+    pendingAmount?: number;
+    receiptId?: string;
+    receiptAmount?: number;
+    pausedAt: string;
+    reason?: string;
+  };
   pendingProductSelection?: {
     quantity: number;
     requestedName?: string;

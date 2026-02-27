@@ -10,6 +10,7 @@ import {
   motion,
   useScroll,
   useTransform,
+  useSpring,
   AnimatePresence,
   type MotionValue,
 } from 'motion/react';
@@ -211,56 +212,55 @@ export default function IndexPage(): JSX.Element {
     target: containerRef,
     offset: ['start start', 'end end'],
   });
-  // Use scrollYProgress directly — no spring, animations are 100% linear (scroll speed = animation speed)
-  const smoothProgress = scrollYProgress;
+  // motion/react v12: useSpring intermediary required for useTransform propagation.
+  // stiffness:600 gives smooth interpolation between scroll ticks (no micro-jitter).
+  // mass:0.1 keeps response fast while avoiding the choppy snap of mass:0.01.
+  const smoothProgress = useSpring(scrollYProgress, { stiffness: 600, damping: 50, mass: 0.1 });
 
   // Card expande sobre 176vh (2×) en vez de 88vh — más gradual, no "snap"
-  const heroWidth = useTransform(scrollYProgress, [0, 0.08], ['94%', '100%']);
-  const heroHeight = useTransform(scrollYProgress, [0, 0.08], ['92%', '100%']);
-  const heroRadius = useTransform(scrollYProgress, [0, 0.08], ['3.5rem', '0rem']);
+  const heroWidth = useTransform(smoothProgress, [0, 0.08], ['94%', '100%']);
+  const heroHeight = useTransform(smoothProgress, [0, 0.08], ['92%', '100%']);
+  const heroRadius = useTransform(smoothProgress, [0, 0.08], ['3.5rem', '0rem']);
 
   // Phones: se mueven gradualmente (±1200px) pero se DESVANECEN antes de que sec2
   // aparezca en 0.10. phone1 tiene z-40 (> sec2 z-30), si no se desvanece se ve
   // colgado encima de la siguiente sección. El Y sigue hasta 0.18 pero invisible.
-  const phone1Y = useTransform(scrollYProgress, [0.02, 0.18], [0, -1200]);
-  const phone1Rotate = useTransform(scrollYProgress, [0.02, 0.18], [-15, -35]);
-  const phone1Opacity = useTransform(scrollYProgress, [0.02, 0.09], [1, 0]);
-  const phone2Y = useTransform(scrollYProgress, [0.02, 0.18], [0, 1200]);
-  const phone2Rotate = useTransform(scrollYProgress, [0.02, 0.18], [-15, 10]);
-  const phone2Opacity = useTransform(scrollYProgress, [0.02, 0.09], [1, 0]);
+  const phone1Y = useTransform(smoothProgress, [0.02, 0.18], [0, -1200]);
+  const phone1Rotate = useTransform(smoothProgress, [0.02, 0.18], [-15, -35]);
+  const phone1Opacity = useTransform(smoothProgress, [0.02, 0.09], [1, 0]);
+  const phone2Y = useTransform(smoothProgress, [0.02, 0.18], [0, 1200]);
+  const phone2Rotate = useTransform(smoothProgress, [0.02, 0.18], [-15, 10]);
+  const phone2Opacity = useTransform(smoothProgress, [0.02, 0.09], [1, 0]);
 
   // Texto hero: fade gradual pero terminado antes de sec2 (nav: 0.09, text: 0.12)
-  const textHeroX = useTransform(scrollYProgress, [0.03, 0.16], [0, -700]);
-  const textHeroOpacity = useTransform(scrollYProgress, [0.03, 0.12], [1, 0]);
-  // Nav debe desaparecer antes de 0.10 (sec2 entry) — igual que original
-  const navOpacity = useTransform(scrollYProgress, [0.02, 0.09], [1, 0]);
+  const textHeroX = useTransform(smoothProgress, [0.03, 0.16], [0, -700]);
+  const textHeroOpacity = useTransform(smoothProgress, [0.03, 0.12], [1, 0]);
+  const navOpacity = useTransform(smoothProgress, [0.02, 0.09], [1, 0]);
 
-  const sec2Y = useTransform(scrollYProgress, [0.1, 0.14], ['40vh', '0vh']);
-  const sec2Opacity = useTransform(scrollYProgress, [0.1, 0.12, 0.2, 0.24], [0, 1, 1, 0]);
+  const sec2Y = useTransform(smoothProgress, [0.1, 0.14], ['40vh', '0vh']);
+  const sec2Opacity = useTransform(smoothProgress, [0.1, 0.12, 0.2, 0.24], [0, 1, 1, 0]);
 
   const text1Lines = ['This isn\'t about who', 'shouts the loudest.'];
   const text2Lines = ['Wherever your money', 'goes, change follows.'];
-  const text1Opacity = useTransform(scrollYProgress, [0.63, 0.66], [1, 0]);
-  const text2Opacity = useTransform(scrollYProgress, [0.79, 0.83], [1, 0]);
+  const text1Opacity = useTransform(smoothProgress, [0.63, 0.66], [1, 0]);
+  const text2Opacity = useTransform(smoothProgress, [0.79, 0.83], [1, 0]);
 
-  // Circle: nudged to 0.76 so text2 (fully revealed at 0.75) stays visible longer,
-  // but still reaches scale 3 well before MacBook entry at 0.81.
-  const circleScale = useTransform(scrollYProgress, [0.76, 0.86], [0, 3]);
+  // Circle: wider range [0.74, 0.90] = 288vh at 1800vh ≈ original 220vh at 2200vh.
+  const circleScale = useTransform(smoothProgress, [0.74, 0.90], [0, 3]);
 
   // MacBook: compressed window [0.85 → 0.955] = 168vh at 1600vh total
   // Circle fully open at 0.86, so MacBook enters into clean white.
   const deviceTravelY = useTransform(
-    scrollYProgress,
+    smoothProgress,
     [0.85, 0.878, 0.925, 0.955],
     ['110vh', '0vh', '-30vh', '-140vh'],
   );
-  const deviceScale = useTransform(scrollYProgress, [0.878, 0.925], [1, 0.95]);
+  const deviceScale = useTransform(smoothProgress, [0.878, 0.925], [1, 0.95]);
 
-  // Mac text timings: compressed to match new entry/exit window.
-  const macText1Opacity = useTransform(scrollYProgress, [0.881, 0.900, 0.925, 0.955], [0, 1, 1, 0]);
-  const macText1Y = useTransform(scrollYProgress, [0.881, 0.900], [22, 0]);
-  const macText2Opacity = useTransform(scrollYProgress, [0.891, 0.910, 0.925, 0.955], [0, 1, 1, 0]);
-  const macText2Y = useTransform(scrollYProgress, [0.891, 0.910], [18, 0]);
+  const macText1Opacity = useTransform(smoothProgress, [0.881, 0.900, 0.925, 0.955], [0, 1, 1, 0]);
+  const macText1Y = useTransform(smoothProgress, [0.881, 0.900], [22, 0]);
+  const macText2Opacity = useTransform(smoothProgress, [0.891, 0.910, 0.925, 0.955], [0, 1, 1, 0]);
+  const macText2Y = useTransform(smoothProgress, [0.891, 0.910], [18, 0]);
 
   const renderRevealText = (
     lines: string[],
@@ -314,10 +314,11 @@ export default function IndexPage(): JSX.Element {
     target: phase8Ref,
     offset: ['start 60%', 'end end'],
   });
-  // Direct progress — linear, no spring
-  const p8BgColor = useTransform(p8Progress, [0.35, 0.65], ['#ffffff', '#000000']);
-  const p8MainColor = useTransform(p8Progress, [0.35, 0.65], ['#3e2723', '#ffffff']);
-  const p8SubColor = useTransform(p8Progress, [0.35, 0.65], ['#52525b', '#d4d4d8']);
+  // Spring required for CharReveal propagation in p8 reveal text
+  const p8Smooth = useSpring(p8Progress, { stiffness: 400, damping: 40, mass: 0.1 });
+  const p8BgColor = useTransform(p8Smooth, [0.35, 0.65], ['#ffffff', '#000000']);
+  const p8MainColor = useTransform(p8Smooth, [0.35, 0.65], ['#3e2723', '#ffffff']);
+  const p8SubColor = useTransform(p8Smooth, [0.35, 0.65], ['#52525b', '#d4d4d8']);
 
   const p8Text1 = [
     'Pocketchange will always be',
@@ -344,11 +345,13 @@ export default function IndexPage(): JSX.Element {
     target: phase12Ref,
     offset: ['start end', 'end end'],
   });
+  // Spring required: p12Smooth drives renderRevealText (CharReveal)
+  const p12Smooth = useSpring(p12Progress, { stiffness: 400, damping: 40, mass: 0.1 });
   const p12TextLines = ["Let's Pocketchange", 'the world'];
 
   return (
     <div className="bg-white">
-      <div ref={containerRef} className="relative w-full bg-black" style={{ height: '1600vh' }}>
+      <div ref={containerRef} className="relative w-full bg-black" style={{ height: '1800vh' }}>
         <div className="sticky top-0 h-screen w-full flex items-center justify-center overflow-hidden z-20">
           <motion.div
             style={{ width: heroWidth, height: heroHeight, borderRadius: heroRadius }}
@@ -572,7 +575,7 @@ export default function IndexPage(): JSX.Element {
         </div>
       </div>
 
-      <div ref={phase7Ref} className="relative w-full z-30 -mt-[120vh]" style={{ height: '100vh' }}>
+      <div ref={phase7Ref} className="relative w-full z-30 -mt-[120vh]" style={{ height: '200vh' }}>
         {/* bg-black fills the frame around the rounded card — no white bleeding */}
         <div className="sticky top-0 h-screen w-full flex items-center justify-center overflow-hidden bg-black">
           <motion.div
@@ -888,7 +891,7 @@ export default function IndexPage(): JSX.Element {
               0.15,
               0.5,
               'text-5xl md:text-[100px] font-light leading-[1.1] tracking-tight text-white drop-shadow-2xl',
-              p12Progress,
+              p12Smooth,
             )}
           </div>
 

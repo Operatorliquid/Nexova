@@ -8,11 +8,17 @@
 
 import { PDFDocument, type PDFFont, type PDFImage, type PDFPage, rgb, StandardFonts } from 'pdf-lib';
 import * as QRCode from 'qrcode';
+import sharp from 'sharp';
+import { existsSync } from 'node:fs';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
 
 const PAGE = { width: 595, height: 842 }; // A4
 const MARGIN = 36;
 const TABLE_ROW_HEIGHT = 20;
 const TABLE_MAX_ROWS = 14;
+const LOGO_MAX_WIDTH = 84;
+const LOGO_MAX_HEIGHT = 48;
 
 const COLORS = {
   pageBg: rgb(1, 1, 1),
@@ -36,6 +42,7 @@ export interface ArcaInvoicePdfItem {
 
 export interface ArcaInvoicePdfData {
   businessName: string;
+  logoUrl?: string | null;
   issuerAddress?: string | null;
   issuerPhone?: string | null;
   issuerVatCondition?: string | null;
@@ -63,12 +70,13 @@ export class ArcaInvoicePdfService {
     const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
     const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
     const qrImage = await this.buildQrImage(pdfDoc, data.arcaQrUrl || '');
+    const logo = await this.loadLogoImage(pdfDoc, data.logoUrl || '');
 
     const page = pdfDoc.addPage([PAGE.width, PAGE.height]);
     this.drawBackground(page);
 
     const contentTop = PAGE.height - MARGIN;
-    const headerBottom = this.drawHeader(page, font, fontBold, contentTop, data);
+    const headerBottom = this.drawHeader(page, font, fontBold, contentTop, data, logo);
     const infoBottom = this.drawInfoPanels(page, font, fontBold, headerBottom - 12, data);
     const tableBottom = this.drawItemsTable(page, font, fontBold, infoBottom - 12, data.items || []);
     this.drawTotalsPanel(page, font, fontBold, tableBottom - 6, data.totalCents, data.items || []);
@@ -98,7 +106,8 @@ export class ArcaInvoicePdfService {
     font: PDFFont,
     fontBold: PDFFont,
     topY: number,
-    data: ArcaInvoicePdfData
+    data: ArcaInvoicePdfData,
+    logo: { image: PDFImage | null; dims: { width: number; height: number } | null }
   ): number {
     const headerHeight = 122;
     const headerBottom = topY - headerHeight;
@@ -118,14 +127,25 @@ export class ArcaInvoicePdfService {
       color: COLORS.white,
     });
 
-    const logoText = this.truncateText(fontBold, this.readSafe(data.businessName).toUpperCase(), 18, logoBoxW - 18);
-    page.drawText(logoText || 'NEX', {
-      x: leftX + 10,
-      y: logoBoxY + 20,
-      size: 18,
-      font: fontBold,
-      color: rgb(0.82, 0.12, 0.13),
-    });
+    if (logo.image && logo.dims) {
+      const logoX = leftX + (logoBoxW - logo.dims.width) / 2;
+      const logoY = logoBoxY + (logoBoxH - logo.dims.height) / 2;
+      page.drawImage(logo.image, {
+        x: logoX,
+        y: logoY,
+        width: logo.dims.width,
+        height: logo.dims.height,
+      });
+    } else {
+      const logoText = this.truncateText(fontBold, this.readSafe(data.businessName).toUpperCase(), 18, logoBoxW - 18);
+      page.drawText(logoText || 'NEX', {
+        x: leftX + 10,
+        y: logoBoxY + 20,
+        size: 18,
+        font: fontBold,
+        color: rgb(0.82, 0.12, 0.13),
+      });
+    }
 
     const businessInfoX = leftX + logoBoxW + 10;
     const businessName = this.readSafe(data.businessName).toUpperCase() || 'COMERCIO';
@@ -199,7 +219,7 @@ export class ArcaInvoicePdfService {
 
     const issuedDateLabel = `Fecha: ${data.issuedAt.toLocaleDateString('es-AR')}`;
     const orderLabel = `Pedido: ${this.readSafe(data.orderNumber)}`;
-    const customerDocLabel = `Doc. receptor: ${this.readSafe(data.customerDocument) || '-'}`;
+    const customerDocLabel = `CUIT receptor: ${this.readSafe(data.customerDocument) || '-'}`;
     const cuitLabel = `CUIT emisor: ${issuerCuit}`;
 
     const rightRows = [issuedDateLabel, cuitLabel, orderLabel, customerDocLabel];
@@ -279,7 +299,7 @@ export class ArcaInvoicePdfService {
     const customerRows = [
       `Cliente: ${customerName}`,
       `Direccion: ${customerAddress}`,
-      `Documento: ${customerDoc}`,
+      `CUIT: ${customerDoc}`,
       `Telefono: ${phone}`,
       `Condicion: ${customerVat}`,
     ];
@@ -603,6 +623,136 @@ export class ArcaInvoicePdfService {
     } catch {
       return null;
     }
+  }
+
+  private async loadLogoImage(
+    pdfDoc: PDFDocument,
+    logoUrl: string
+  ): Promise<{ image: PDFImage | null; dims: { width: number; height: number } | null }> {
+    if (!logoUrl) return { image: null, dims: null };
+
+    const logoBuffer = await this.fetchAndProcessImage(logoUrl, LOGO_MAX_WIDTH * 2, LOGO_MAX_HEIGHT * 2);
+    if (!logoBuffer) return { image: null, dims: null };
+
+    const image = await pdfDoc.embedPng(logoBuffer);
+    const dims = this.scaleToFit(image.width, image.height, LOGO_MAX_WIDTH, LOGO_MAX_HEIGHT);
+    return { image, dims };
+  }
+
+  private scaleToFit(width: number, height: number, maxWidth: number, maxHeight: number): { width: number; height: number } {
+    const widthRatio = maxWidth / width;
+    const heightRatio = maxHeight / height;
+    const scale = Math.min(widthRatio, heightRatio);
+    return { width: width * scale, height: height * scale };
+  }
+
+  private async fetchAndProcessImage(url: string, maxWidth: number, maxHeight: number): Promise<Buffer | null> {
+    try {
+      const inputBuffer = await this.loadImageBuffer(url);
+      if (!inputBuffer) return null;
+      return await sharp(inputBuffer)
+        .resize(maxWidth, maxHeight, {
+          fit: 'inside',
+          withoutEnlargement: true,
+        })
+        .png()
+        .toBuffer();
+    } catch {
+      return null;
+    }
+  }
+
+  private async loadImageBuffer(url: string): Promise<Buffer | null> {
+    if (!url) return null;
+
+    if (url.startsWith('data:')) {
+      return this.bufferFromDataUrl(url);
+    }
+
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      return this.fetchBuffer(url);
+    }
+
+    if (url.startsWith('/uploads/')) {
+      const localPath = path.join(this.getUploadDir(), url.replace(/^\/uploads\//, ''));
+      try {
+        return await fs.readFile(localPath);
+      } catch {
+        const baseUrl = this.getPublicBaseUrlFromEnv();
+        if (baseUrl) {
+          return this.fetchBuffer(`${baseUrl}${url}`);
+        }
+      }
+    }
+
+    return null;
+  }
+
+  private async fetchBuffer(url: string): Promise<Buffer | null> {
+    try {
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!response.ok) return null;
+      return Buffer.from(await response.arrayBuffer());
+    } catch {
+      return null;
+    }
+  }
+
+  private bufferFromDataUrl(dataUrl: string): Buffer | null {
+    const match = dataUrl.match(/^data:[^;]+;base64,(.*)$/);
+    if (!match?.[1]) return null;
+    try {
+      return Buffer.from(match[1], 'base64');
+    } catch {
+      return null;
+    }
+  }
+
+  private getUploadDir(): string {
+    if (process.env.UPLOAD_DIR) {
+      return process.env.UPLOAD_DIR;
+    }
+
+    const repoRoot = this.findRepoRoot(process.cwd()) || process.cwd();
+    return path.join(repoRoot, 'apps', 'api', 'uploads');
+  }
+
+  private getPublicBaseUrlFromEnv(): string | null {
+    const candidates = [
+      process.env.API_BASE_URL,
+      process.env.PUBLIC_BASE_URL,
+      process.env.PUBLIC_API_URL,
+      process.env.API_PUBLIC_URL,
+      process.env.NGROK_URL,
+      process.env.BASE_URL,
+      process.env.API_URL,
+    ];
+
+    for (const candidate of candidates) {
+      if (candidate && candidate.trim()) {
+        return candidate.replace(/\/$/, '');
+      }
+    }
+
+    return null;
+  }
+
+  private findRepoRoot(startDir: string): string | null {
+    let current = startDir;
+    for (let i = 0; i < 8; i += 1) {
+      if (
+        existsSync(path.join(current, 'pnpm-workspace.yaml')) ||
+        existsSync(path.join(current, 'turbo.json'))
+      ) {
+        return current;
+      }
+      const parent = path.dirname(current);
+      if (parent === current) break;
+      current = parent;
+    }
+    return null;
   }
 
   private resolveInvoiceLetter(invoiceLabel: string): string {

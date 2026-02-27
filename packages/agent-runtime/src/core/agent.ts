@@ -5969,7 +5969,8 @@ export class RetailAgent {
           return await respondWithPrimaryMenu();
         }
         if (isPaymentFlowAbortIntent(message)) {
-          clearPaymentContext(memory);
+          stashPaymentContext(memory, 'payment_abort_intent');
+          clearPaymentContext(memory, { preservePausedContext: true });
           memory.context.lastMenu = 'primary';
           await this.memoryManager.saveSession(memory);
 
@@ -8727,6 +8728,8 @@ export class RetailAgent {
         return null;
       }
 
+      const resumedPayment = restorePausedPaymentContext(memory);
+
       if (currentFlow !== 'payment') {
         pushFlowStack(memory, currentFlow, 'explicit_payment_intent');
       }
@@ -8750,7 +8753,9 @@ export class RetailAgent {
       memory.context.activeOrdersSubmenu = undefined;
       memory.context.activeOrdersInvoiceOptions = undefined;
       memory.context.otherInquiry = undefined;
-      clearPaymentContext(memory);
+      if (!resumedPayment) {
+        clearPaymentContext(memory, { preservePausedContext: true });
+      }
 
       if (fsm.getState() !== AgentState.IDLE && fsm.canTransition(AgentState.IDLE)) {
         fsm.transition(AgentState.IDLE);
@@ -8758,7 +8763,7 @@ export class RetailAgent {
       }
       memory.state = fsm.getState();
       await this.memoryManager.saveSession(memory);
-      return 'active';
+      return resumedPayment ? null : 'active';
     }
 
     if (intent === 'active_orders') {
@@ -8767,7 +8772,10 @@ export class RetailAgent {
       }
       memory.context.activeFlow = 'active_orders';
 
-      clearPaymentContext(memory);
+      if (hasActivePaymentContext(memory)) {
+        stashPaymentContext(memory, 'switch_to_active_orders');
+      }
+      clearPaymentContext(memory, { preservePausedContext: true });
       memory.context.pendingCatalogOffer = undefined;
       memory.context.pendingProductSelection = undefined;
       memory.context.pendingStockAdjustment = undefined;
@@ -8796,7 +8804,10 @@ export class RetailAgent {
       }
       memory.context.activeFlow = 'catalog';
 
-      clearPaymentContext(memory);
+      if (hasActivePaymentContext(memory)) {
+        stashPaymentContext(memory, 'switch_to_catalog');
+      }
+      clearPaymentContext(memory, { preservePausedContext: true });
       memory.context.activeOrdersPrompt = undefined;
       memory.context.activeOrdersAction = undefined;
       memory.context.activeOrdersAwaiting = undefined;
@@ -8841,7 +8852,10 @@ export class RetailAgent {
       }
       memory.context.activeFlow = 'order';
 
-      clearPaymentContext(memory);
+      if (hasActivePaymentContext(memory)) {
+        stashPaymentContext(memory, 'switch_to_order');
+      }
+      clearPaymentContext(memory, { preservePausedContext: true });
       memory.context.activeOrdersPrompt = undefined;
       memory.context.activeOrdersAction = undefined;
       memory.context.activeOrdersAwaiting = undefined;
@@ -10648,7 +10662,52 @@ function buildOrderActionsContent(): { text: string; interactive: InteractiveBut
   };
 }
 
-function clearPaymentContext(memory: SessionMemory): void {
+function hasActivePaymentContext(memory: SessionMemory): boolean {
+  return Boolean(
+    memory.context.paymentStage ||
+      memory.context.paymentOrderId ||
+      (memory.context.paymentOrders && memory.context.paymentOrders.length > 0)
+  );
+}
+
+function stashPaymentContext(memory: SessionMemory, reason: string): void {
+  if (!hasActivePaymentContext(memory)) return;
+
+  memory.context.pausedPaymentContext = {
+    stage: memory.context.paymentStage,
+    method: memory.context.paymentMethod,
+    orders: memory.context.paymentOrders ? [...memory.context.paymentOrders] : undefined,
+    orderId: memory.context.paymentOrderId,
+    orderNumber: memory.context.paymentOrderNumber,
+    pendingAmount: memory.context.paymentPendingAmount,
+    receiptId: memory.context.paymentReceiptId,
+    receiptAmount: memory.context.paymentReceiptAmount,
+    pausedAt: new Date().toISOString(),
+    reason,
+  };
+}
+
+function restorePausedPaymentContext(memory: SessionMemory): boolean {
+  const paused = memory.context.pausedPaymentContext;
+  if (!paused) return false;
+
+  memory.context.paymentStage = paused.stage;
+  memory.context.paymentMethod = paused.method;
+  memory.context.paymentOrders = paused.orders ? [...paused.orders] : undefined;
+  memory.context.paymentOrderId = paused.orderId;
+  memory.context.paymentOrderNumber = paused.orderNumber;
+  memory.context.paymentPendingAmount = paused.pendingAmount;
+  memory.context.paymentReceiptId = paused.receiptId;
+  memory.context.paymentReceiptAmount = paused.receiptAmount;
+  memory.context.pausedPaymentContext = undefined;
+
+  return hasActivePaymentContext(memory);
+}
+
+function clearPaymentContext(
+  memory: SessionMemory,
+  options?: { preservePausedContext?: boolean }
+): void {
   memory.context.activeOrdersPayable = undefined;
   memory.context.paymentStage = undefined;
   memory.context.paymentMethod = undefined;
@@ -10658,6 +10717,9 @@ function clearPaymentContext(memory: SessionMemory): void {
   memory.context.paymentPendingAmount = undefined;
   memory.context.paymentReceiptId = undefined;
   memory.context.paymentReceiptAmount = undefined;
+  if (!options?.preservePausedContext) {
+    memory.context.pausedPaymentContext = undefined;
+  }
 }
 
 type MenuSelection = 'order' | 'catalog' | 'more' | 'active' | 'repeat' | 'other' | null;
@@ -10749,12 +10811,17 @@ function parseMenuSelection(message: string, lastMenu?: 'primary' | 'secondary')
   if (
     normalized === 'hacer pedido' ||
     normalized === 'hacer un pedido' ||
+    normalized === 'hacerte un pedido' ||
+    normalized === 'hacerte pedido' ||
     normalized.includes('quiero hacer pedido') ||
     normalized.includes('quiero hacer un pedido') ||
+    normalized.includes('quiero hacerte un pedido') ||
+    normalized.includes('te quiero hacer un pedido') ||
     normalized.includes('quiero pedir') ||
     normalized.includes('quiero comprar') ||
     normalized.includes('hacer pedido') ||
-    normalized.includes('hacer un pedido')
+    normalized.includes('hacer un pedido') ||
+    normalized.includes('hacerte un pedido')
   ) {
     return 'order';
   }
@@ -11430,8 +11497,16 @@ function isPaymentFlowAbortIntent(message: string): boolean {
   if (normalized.includes('no quiero hacer el pago')) return true;
   if (normalized.includes('cancela el pago')) return true;
   if (normalized.includes('cancelar el pago')) return true;
+  if (normalized.includes('me arrepenti')) return true;
+  if (normalized.includes('pago despues')) return true;
+  if (normalized.includes('te pago despues')) return true;
+  if (normalized.includes('pago mas tarde')) return true;
   if (normalized.includes('dejalo para despues')) return true;
   if (normalized.includes('dejalo para mas tarde')) return true;
+  if (normalized.includes('despues te mando comprobante')) return true;
+  if (normalized.includes('despues mando comprobante')) return true;
+  if (normalized.includes('luego te mando comprobante')) return true;
+  if (normalized.includes('te mando comprobante despues')) return true;
 
   return false;
 }
@@ -11708,6 +11783,7 @@ function resetOrderFlowContext(memory: SessionMemory): void {
   memory.context.paymentPendingAmount = undefined;
   memory.context.paymentReceiptId = undefined;
   memory.context.paymentReceiptAmount = undefined;
+  memory.context.pausedPaymentContext = undefined;
   memory.context.pendingProductSelection = undefined;
   memory.context.repeatOrders = undefined;
   memory.context.repeatOrderId = undefined;

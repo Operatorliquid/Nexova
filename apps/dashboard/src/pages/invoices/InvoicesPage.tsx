@@ -362,19 +362,21 @@ const formatCbteNumber = (pointOfSale?: number, cbteNro?: number | null): string
   return `${pv}-${nro}`;
 };
 
-const escapeHtml = (value: string): string =>
-  value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-
 const getCustomerName = (customer: Order['customer']): string => {
   if (customer.name) return customer.name;
   if (customer.firstName && customer.lastName) return `${customer.firstName} ${customer.lastName}`;
   return customer.firstName || customer.lastName || customer.phone;
 };
+
+interface InvoiceActionOptions {
+  silentSuccessToast?: boolean;
+  silentErrorToast?: boolean;
+}
+
+interface InvoiceActionResult {
+  ok: boolean;
+  message?: string;
+}
 
 export default function InvoicesPage(): JSX.Element {
   const { workspace } = useAuth();
@@ -387,7 +389,6 @@ export default function InvoicesPage(): JSX.Element {
   const [arcaStatus, setArcaStatus] = useState<ArcaStatus | null>(null);
   const [isLoadingArca, setIsLoadingArca] = useState(true);
   const [commerceVatConditionId, setCommerceVatConditionId] = useState<string | null>(null);
-  const [commerceBusinessName, setCommerceBusinessName] = useState<string | null>(null);
   const [isLoadingCommerce, setIsLoadingCommerce] = useState(true);
   const [billingSummary, setBillingSummary] = useState<BillingSummary | null>(null);
   const [isLoadingSummary, setIsLoadingSummary] = useState(true);
@@ -549,15 +550,12 @@ export default function InvoicesPage(): JSX.Element {
         const workspaceData = readRecord(data, 'workspace');
         const settings = readRecord(workspaceData, 'settings');
         setCommerceVatConditionId(readString(settings, 'vatConditionId') ?? null);
-        setCommerceBusinessName(readString(settings, 'businessName') ?? null);
       } else {
         setCommerceVatConditionId(null);
-        setCommerceBusinessName(null);
       }
     } catch (error) {
       console.error('Failed to fetch commerce settings:', error);
       setCommerceVatConditionId(null);
-      setCommerceBusinessName(null);
     } finally {
       setIsLoadingCommerce(false);
     }
@@ -637,42 +635,50 @@ export default function InvoicesPage(): JSX.Element {
     }
   };
 
-  const handleCreateInvoice = async (): Promise<{ approved: boolean }> => {
-    if (!workspace?.id || !selectedOrder) return { approved: false };
+  const handleCreateInvoice = async (options?: InvoiceActionOptions): Promise<InvoiceActionResult> => {
+    if (!workspace?.id || !selectedOrder) return { ok: false, message: 'No hay pedido seleccionado.' };
     if (resolveOrderInvoiceStatus(selectedOrder) !== 'pending_invoicing') {
-      setInvoiceError('Este pedido no está pendiente de facturación.');
-      return { approved: false };
+      const message = 'Este pedido no está pendiente de facturación.';
+      setInvoiceError(message);
+      return { ok: false, message };
     }
     if (!arcaStatus?.connected) {
-      setInvoiceError('ARCA no está conectado.');
-      return { approved: false };
+      const message = 'ARCA no está conectado.';
+      setInvoiceError(message);
+      return { ok: false, message };
     }
     if (!commerceVatConditionId) {
-      setInvoiceError('Configurá la condición frente al IVA del comercio antes de emitir facturas.');
-      return { approved: false };
+      const message = 'Configurá la condición frente al IVA del comercio antes de emitir facturas.';
+      setInvoiceError(message);
+      return { ok: false, message };
     }
     if (!customer) {
-      setInvoiceError('No se encontraron los datos del cliente.');
-      return { approved: false };
+      const message = 'No se encontraron los datos del cliente.';
+      setInvoiceError(message);
+      return { ok: false, message };
     }
     const cuitDigits = customer.cuit ? customer.cuit.replace(/\D/g, '') : '';
     if (!cuitDigits || cuitDigits.length !== 11) {
-      setInvoiceError('El cliente no tiene un CUIT válido.');
-      return { approved: false };
+      const message = 'El cliente no tiene un CUIT válido.';
+      setInvoiceError(message);
+      return { ok: false, message };
     }
     if (!customer.businessName || !customer.fiscalAddress || !customer.vatCondition) {
-      setInvoiceError('Faltan datos fiscales del cliente.');
-      return { approved: false };
+      const message = 'Faltan datos fiscales del cliente.';
+      setInvoiceError(message);
+      return { ok: false, message };
     }
     const vatIdValue = normalizeVatConditionId(customer.vatCondition || null);
     if (!vatIdValue) {
-      setInvoiceError('La condición IVA del cliente no es válida.');
-      return { approved: false };
+      const message = 'La condición IVA del cliente no es válida.';
+      setInvoiceError(message);
+      return { ok: false, message };
     }
     const vatId = Number(vatIdValue);
     if (Number.isNaN(vatId)) {
-      setInvoiceError('La condición IVA del cliente no es válida.');
-      return { approved: false };
+      const message = 'La condición IVA del cliente no es válida.';
+      setInvoiceError(message);
+      return { ok: false, message };
     }
 
     setIsCreating(true);
@@ -727,7 +733,9 @@ export default function InvoicesPage(): JSX.Element {
       });
 
       if (approved) {
-        toast.success('Factura emitida correctamente');
+        if (!options?.silentSuccessToast) {
+          toast.success('Factura emitida correctamente');
+        }
         setSelectedOrder((prev) => (prev ? { ...prev, invoiceStatus: 'invoiced' } : prev));
         await fetchExistingInvoice(selectedOrder.id);
         await fetchOrders();
@@ -738,20 +746,22 @@ export default function InvoicesPage(): JSX.Element {
       }
 
       await fetchSummary();
-      return { approved };
+      return { ok: approved, message: approved ? undefined : (extractArcaRejectionMessage(data) || 'La factura fue rechazada por ARCA') };
     } catch (error) {
       console.error('Failed to create invoice:', error);
       const message = error instanceof Error ? error.message : 'Error al emitir la factura';
       setInvoiceError(message);
-      toast.error(message);
-      return { approved: false };
+      if (!options?.silentErrorToast) {
+        toast.error(message);
+      }
+      return { ok: false, message };
     } finally {
       setIsCreating(false);
     }
   };
 
-  const handleSendInvoice = async (): Promise<void> => {
-    if (!workspace?.id || !selectedOrder) return;
+  const handleSendInvoice = async (options?: InvoiceActionOptions): Promise<InvoiceActionResult> => {
+    if (!workspace?.id || !selectedOrder) return { ok: false, message: 'No hay pedido seleccionado.' };
     setIsSendingInvoice(true);
     setInvoiceSendError('');
     try {
@@ -767,116 +777,66 @@ export default function InvoicesPage(): JSX.Element {
       }
 
       await readJsonRecord(response);
-      toast.success('Factura enviada al cliente');
+      if (!options?.silentSuccessToast) {
+        toast.success('Factura enviada al cliente');
+      }
+      return { ok: true };
     } catch (error) {
       console.error('Failed to send invoice:', error);
       const message = error instanceof Error ? error.message : 'No se pudo enviar la factura';
       setInvoiceSendError(message);
-      toast.error(message);
+      if (!options?.silentErrorToast) {
+        toast.error(message);
+      }
+      return { ok: false, message };
     } finally {
       setIsSendingInvoice(false);
     }
   };
 
   const handleCreateAndSendInvoice = async (): Promise<void> => {
-    const result = await handleCreateInvoice();
-    if (result?.approved) {
-      await handleSendInvoice();
+    const result = await handleCreateInvoice({ silentSuccessToast: true, silentErrorToast: true });
+    if (result.ok) {
+      const sent = await handleSendInvoice({ silentSuccessToast: true, silentErrorToast: true });
+      if (sent.ok) {
+        toast.success('Factura emitida y enviada al cliente');
+      } else {
+        toast.error(sent.message || 'Factura emitida, pero no se pudo enviar al cliente');
+      }
+    } else {
+      toast.error(result.message || 'No se pudo emitir la factura');
     }
   };
 
-  const handlePrint = (): void => {
+  const handlePrint = async (): Promise<void> => {
     if (!selectedOrder) return;
-    const invoice = existingInvoice
-      ? {
-          approved: existingInvoice.status === 'authorized',
-          cae: existingInvoice.cae || undefined,
-          caeExpiresAt: existingInvoice.caeExpiresAt,
-          cbteNro: existingInvoice.cbteNro,
-          cbteTipo: existingInvoice.cbteTipo,
-          pointOfSale: existingInvoice.pointOfSale,
-        }
-      : invoiceResult;
-    if (!invoice) return;
-    const items = selectedOrder.items || [];
-    const customerName = getCustomerName(selectedOrder.customer);
-    const businessName = commerceBusinessName || workspace?.name || 'Nexova';
-    const invoiceTypeLabel = formatCbteTipoLabel(invoice.cbteTipo) || invoiceType.label;
-    const pointOfSale = invoice.pointOfSale ?? arcaStatus?.pointOfSale;
-    const html = `
-      <html>
-        <head>
-          <title>Factura ${escapeHtml(selectedOrder.orderNumber)}</title>
-          <style>
-            body { font-family: Arial, sans-serif; color: #0f172a; margin: 32px; }
-            h1 { font-size: 20px; margin: 0 0 8px; }
-            .muted { color: #64748b; font-size: 12px; }
-            .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
-            .card { border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; margin-bottom: 16px; }
-            table { width: 100%; border-collapse: collapse; margin-top: 12px; }
-            th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid #e2e8f0; font-size: 12px; }
-            .totals { margin-top: 12px; text-align: right; font-size: 14px; }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <div>
-              <h1>${escapeHtml(businessName)}</h1>
-              <div class="muted">${escapeHtml(invoiceTypeLabel)} · ${escapeHtml(formatCbteNumber(pointOfSale, invoice.cbteNro))}</div>
-              <div class="muted">Pedido ${escapeHtml(selectedOrder.orderNumber)}</div>
-            </div>
-            <div class="muted">
-              <div>CAE: ${escapeHtml(invoice.cae || '—')}</div>
-              <div>Venc. CAE: ${escapeHtml(formatArcaDate(invoice.caeExpiresAt))}</div>
-            </div>
-          </div>
-          <div class="card">
-            <div><strong>Cliente:</strong> ${escapeHtml(customerName)}</div>
-            <div><strong>Telefono:</strong> ${escapeHtml(selectedOrder.customer.phone)}</div>
-            <div><strong>Fecha:</strong> ${escapeHtml(formatOrderDate(selectedOrder.createdAt))}</div>
-          </div>
-          <div class="card">
-            <strong>Detalle</strong>
-            <table>
-              <thead>
-                <tr>
-                  <th>Producto</th>
-                  <th>Cantidad</th>
-                  <th>Precio</th>
-                  <th>Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${items
-                  .map(
-                    (item) => `
-                    <tr>
-                      <td>${escapeHtml(item.name)}</td>
-                      <td>${item.quantity}</td>
-                      <td>${escapeHtml(formatCurrency(item.unitPrice))}</td>
-                      <td>${escapeHtml(formatCurrency(item.total))}</td>
-                    </tr>
-                  `
-                  )
-                  .join('')}
-              </tbody>
-            </table>
-            <div class="totals"><strong>Total:</strong> ${escapeHtml(formatCurrency(selectedOrder.total))}</div>
-          </div>
-          <script>
-            window.onload = () => {
-              window.print();
-              window.onafterprint = () => window.close();
-            };
-          </script>
-        </body>
-      </html>
-    `;
+    if (!workspace?.id) return;
 
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) return;
-    printWindow.document.write(html);
-    printWindow.document.close();
+    try {
+      const response = await apiFetch(
+        `/api/v1/integrations/arca/invoices/${selectedOrder.id}/send?preview=1`,
+        { method: 'POST', body: JSON.stringify({}) },
+        workspace.id
+      );
+      if (!response.ok) {
+        const data = await readJsonRecord(response);
+        throw new Error(readErrorMessage(data, 'No se pudo generar la vista de impresión.'));
+      }
+
+      const data = await readJsonRecord(response);
+      const mediaUrl = readString(data, 'mediaUrl');
+      if (!mediaUrl) {
+        throw new Error('No se recibió el PDF para imprimir.');
+      }
+
+      const printWindow = window.open(mediaUrl, '_blank', 'noopener,noreferrer');
+      if (!printWindow) {
+        throw new Error('El navegador bloqueó la ventana emergente de impresión.');
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'No se pudo abrir la factura para imprimir.';
+      toast.error(message);
+    }
   };
 
   return (
