@@ -1625,8 +1625,9 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
       const invoicesDir = path.join(UPLOAD_DIR, 'invoices');
       await fs.mkdir(invoicesDir, { recursive: true });
 
-      const safeFilename = sanitizeFilename(filename || `factura_${order.orderNumber}.pdf`);
-      const uniqueName = `${workspaceId}-${orderId}-${invoice.id}-${Date.now()}-${randomUUID().slice(0, 8)}-${safeFilename}`;
+      const safeFilename = sanitizeFilename(filename || `factura_${order.orderNumber}.pdf`).slice(0, 36);
+      // Keep invoice filenames short so signed URL path params stay below router limits.
+      const uniqueName = `${invoice.id}-${Date.now()}-${randomUUID().slice(0, 6)}-${safeFilename}`;
       await fs.writeFile(path.join(invoicesDir, uniqueName), buffer);
 
       const publicBase = await resolvePublicBaseUrl(request);

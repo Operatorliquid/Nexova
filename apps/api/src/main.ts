@@ -124,6 +124,8 @@ async function bootstrap(): Promise<void> {
           ? { target: 'pino-pretty', options: { colorize: true } }
           : undefined,
     },
+    // Signed upload URLs can include long filenames; avoid false 404 from router param limits.
+    maxParamLength: 500,
     requestIdHeader: 'x-request-id',
     genReqId: () => crypto.randomUUID(),
   });
