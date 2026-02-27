@@ -12,6 +12,8 @@ import { type PrismaClient } from '@prisma/client';
 import { PDFDocument, type PDFImage, type PDFFont, type PDFPage, rgb, StandardFonts } from 'pdf-lib';
 import sharp from 'sharp';
 
+import { getCommercePlanCapabilities, resolveCommercePlan } from '@nexova/shared';
+
 const PAGE = { width: 595, height: 842 }; // A4
 const MARGIN = 36;
 const CONTENT_GAP = 12;
@@ -511,11 +513,19 @@ export class OrderReceiptPdfService {
   private async getWorkspaceBranding(workspaceId: string): Promise<WorkspaceBranding> {
     const workspace = await this.prisma.workspace.findUnique({
       where: { id: workspaceId },
-      select: { name: true, settings: true },
+      select: { name: true, plan: true, settings: true },
     });
 
     const settings = (workspace?.settings as Record<string, unknown>) || {};
-    const receiptBranding = this.resolveReceiptBrandingSettings(settings.receiptBranding);
+    const workspacePlan = resolveCommercePlan({
+      workspacePlan: workspace?.plan,
+      settingsPlan: settings.commercePlan,
+      fallback: 'pro',
+    });
+    const capabilities = getCommercePlanCapabilities(workspacePlan);
+    const receiptBranding = capabilities.showReceiptBrandingSettings
+      ? this.resolveReceiptBrandingSettings(settings.receiptBranding)
+      : this.resolveReceiptBrandingSettings(null);
     const businessLogo = this.readOptionalString(settings.companyLogo);
     const customLogo = this.readOptionalString(receiptBranding.customLogoUrl);
     let logoUrl = businessLogo;

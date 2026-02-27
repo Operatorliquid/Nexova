@@ -18,6 +18,7 @@ export interface CommercePlanCapabilities {
   showSettingsNotifications: boolean;
   showOwnerWhatsappAgentSettings: boolean;
   showBusinessInvoicingSettings: boolean;
+  showReceiptBrandingSettings: boolean;
   showArcaIntegration: boolean;
   showMercadoPagoIntegration: boolean;
   showWhatsappAudioTranscription: boolean;
@@ -57,6 +58,7 @@ const PLAN_CAPABILITIES: Record<CommercePlan, CommercePlanCapabilities> = {
     showSettingsNotifications: false,
     showOwnerWhatsappAgentSettings: false,
     showBusinessInvoicingSettings: false,
+    showReceiptBrandingSettings: false,
     showArcaIntegration: false,
     showMercadoPagoIntegration: false,
     showWhatsappAudioTranscription: false,
@@ -76,6 +78,7 @@ const PLAN_CAPABILITIES: Record<CommercePlan, CommercePlanCapabilities> = {
     showSettingsNotifications: true,
     showOwnerWhatsappAgentSettings: false,
     showBusinessInvoicingSettings: true,
+    showReceiptBrandingSettings: true,
     showArcaIntegration: true,
     showMercadoPagoIntegration: true,
     showWhatsappAudioTranscription: false,
@@ -95,6 +98,7 @@ const PLAN_CAPABILITIES: Record<CommercePlan, CommercePlanCapabilities> = {
     showSettingsNotifications: true,
     showOwnerWhatsappAgentSettings: true,
     showBusinessInvoicingSettings: true,
+    showReceiptBrandingSettings: true,
     showArcaIntegration: true,
     showMercadoPagoIntegration: true,
     showWhatsappAudioTranscription: true,

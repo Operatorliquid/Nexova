@@ -45,6 +45,11 @@
     box-sizing: border-box;
   }
 
+  html {
+    scroll-behavior: auto;          /* prevent CSS smooth-scroll fighting JS springs */
+    overscroll-behavior: none;      /* kill rubber-band that disrupts scroll progress */
+  }
+
   html,
   body,
   #root {
@@ -55,6 +60,7 @@
     @apply bg-background text-foreground antialiased;
     font-feature-settings: "rlig" 1, "calt" 1;
     overflow-x: hidden;
+    overscroll-behavior: none;
   }
 
   /* Custom scrollbar */

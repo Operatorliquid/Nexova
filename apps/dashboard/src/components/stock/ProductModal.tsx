@@ -153,7 +153,7 @@ export function ProductModal({
   const [isUploading, setIsUploading] = useState(false);
   const [isCreatingCategory, setIsCreatingCategory] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
-  const [newCategoryColor, setNewCategoryColor] = useState('#6366f1');
+  const [newCategoryColor, setNewCategoryColor] = useState('#f84c03');
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [pendingFile, setPendingFile] = useState<File | null>(null);

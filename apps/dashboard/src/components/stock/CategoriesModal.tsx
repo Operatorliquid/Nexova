@@ -37,7 +37,7 @@ export function CategoriesModal({
   onDeleteCategory,
 }: CategoriesModalProps): JSX.Element {
   const [newCategoryName, setNewCategoryName] = useState('');
-  const [newCategoryColor, setNewCategoryColor] = useState('#6366f1');
+  const [newCategoryColor, setNewCategoryColor] = useState('#f84c03');
   const [isCreating, setIsCreating] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -141,7 +141,7 @@ export function CategoriesModal({
                   <div className="flex items-center gap-3">
                     <input
                       type="color"
-                      value={category.color || '#6366f1'}
+                      value={category.color || '#f84c03'}
                       onChange={(e) => {
                         void handleColorChange(category.id, e.target.value);
                       }}

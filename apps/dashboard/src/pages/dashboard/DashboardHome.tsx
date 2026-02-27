@@ -562,10 +562,10 @@ export default function DashboardHome(): JSX.Element {
 
         <AnimatedStagger className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3 md:gap-4">
           <StatCard label="Ventas" value={formatCurrency(summary.totalRevenue)} icon={DollarSign} color="emerald" isLoading={isLoading} />
-          <StatCard label="Pedidos" value={summary.totalOrders.toString()} icon={ShoppingCart} color="primary" isLoading={isLoading} />
+          <StatCard label="Pedidos" value={summary.totalOrders.toString()} icon={ShoppingCart} color="blue" isLoading={isLoading} />
           <StatCard label="Nuevos pedidos" value={summary.newOrders.length.toString()} icon={Bell} color="primary" isLoading={isLoading} />
-          <StatCard label="Pagado" value={formatCurrency(summary.totalPaid)} icon={CreditCard} color="emerald" isLoading={isLoading} />
-          <StatCard label="Pendiente" value={formatCurrency(summary.pendingRevenue)} icon={TrendingUp} color="primary" isLoading={isLoading} />
+          <StatCard label="Pagado" value={formatCurrency(summary.totalPaid)} icon={CreditCard} color="cyan" isLoading={isLoading} />
+          <StatCard label="Pendiente" value={formatCurrency(summary.pendingRevenue)} icon={TrendingUp} color="amber" isLoading={isLoading} />
         </AnimatedStagger>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

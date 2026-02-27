@@ -510,6 +510,82 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
     return new Date(`${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}T00:00:00Z`);
   };
 
+  const IVA_CONDITION_LABELS: Record<string, string> = {
+    '1': 'Responsable inscripto',
+    '4': 'Sujeto exento',
+    '5': 'Consumidor final',
+    '6': 'Responsable monotributo',
+    '7': 'Sujeto no categorizado',
+    '8': 'Proveedor del exterior',
+    '9': 'Cliente del exterior',
+    '10': 'IVA liberado',
+    '13': 'Monotributista social',
+    '15': 'IVA no alcanzado',
+    '16': 'Monotributo trabajador independiente promovido',
+  };
+
+  const readText = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
+
+  const readFiniteNumber = (value: unknown): number | null => {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string' && value.trim().length > 0) {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+  };
+
+  const formatArcaQrDate = (date: Date): string => {
+    const year = date.getUTCFullYear();
+    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(date.getUTCDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  const buildArcaQrUrl = (params: {
+    issuedAt: Date;
+    cuit: string;
+    pointOfSale: number;
+    cbteTipo: number;
+    cbteNro: number;
+    totalCents: number;
+    currency: string;
+    docTipo: number;
+    docNro: number;
+    cae: string;
+    monCotiz?: number | null;
+  }): string | null => {
+    const cuitDigits = params.cuit.replace(/\D/g, '');
+    if (cuitDigits.length < 8) return null;
+    if (!params.cae || !params.cae.trim()) return null;
+
+    const payload = {
+      ver: 1,
+      fecha: formatArcaQrDate(params.issuedAt),
+      cuit: Number(cuitDigits),
+      ptoVta: Math.trunc(params.pointOfSale || 0),
+      tipoCmp: Math.trunc(params.cbteTipo || 0),
+      nroCmp: Math.trunc(params.cbteNro || 0),
+      importe: Number((Math.max(params.totalCents || 0, 0) / 100).toFixed(2)),
+      moneda: (params.currency || 'ARS').trim().toUpperCase().slice(0, 3),
+      ctz: Number.isFinite(params.monCotiz) && (params.monCotiz || 0) > 0 ? Number(params.monCotiz) : 1,
+      tipoDocRec: Math.trunc(params.docTipo || 0),
+      nroDocRec: Math.trunc(params.docNro || 0),
+      tipoCodAut: 'E',
+      codAut: Number(params.cae),
+    };
+
+    const encodedPayload = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64');
+    return `https://www.arca.gob.ar/fe/qr/?p=${encodeURIComponent(encodedPayload)}`;
+  };
+
+  const resolveVatConditionLabel = (value: unknown): string => {
+    const raw = readText(value);
+    if (!raw) return 'No informada';
+    if (IVA_CONDITION_LABELS[raw]) return IVA_CONDITION_LABELS[raw];
+    return raw;
+  };
+
   type PlanGuardFailure = {
     error: 'FORBIDDEN_BY_PLAN';
     message: string;
@@ -1427,6 +1503,7 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
           workspace: {
             select: {
               name: true,
+              settings: true,
             },
           },
           customer: {
@@ -1434,6 +1511,10 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
               phone: true,
               firstName: true,
               lastName: true,
+              businessName: true,
+              cuit: true,
+              fiscalAddress: true,
+              vatCondition: true,
             },
           },
         },
@@ -1486,21 +1567,66 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
 
       const cbteLabel = formatCbteTipoLabel(invoice.cbteTipo);
       const cbteNumber = formatCbteNumber(invoice.pointOfSale, invoice.cbteNro);
+      const workspaceSettings = asRecord(order.workspace?.settings);
+      const invoiceRequestData = asRecord(invoice.requestData);
+
+      const issuedAt =
+        parseArcaDate(readText(invoiceRequestData?.cbteFch)) ||
+        invoice.createdAt;
+
+      const requestDocTipo = Math.trunc(readFiniteNumber(invoiceRequestData?.docTipo) || 0);
+      const requestDocNro = Math.trunc(readFiniteNumber(invoiceRequestData?.docNro) || 0);
+      const requestMonCotiz = readFiniteNumber(invoiceRequestData?.monCotiz);
+
+      const qrUrl = buildArcaQrUrl({
+        issuedAt,
+        cuit: invoice.cuit || '',
+        pointOfSale: invoice.pointOfSale || 0,
+        cbteTipo: invoice.cbteTipo || 0,
+        cbteNro: invoice.cbteNro || 0,
+        totalCents: invoice.total || 0,
+        currency: invoice.currency || 'ARS',
+        docTipo: requestDocTipo,
+        docNro: requestDocNro,
+        cae: invoice.cae || '',
+        monCotiz: requestMonCotiz,
+      });
 
       const customerName =
+        order.customer?.businessName?.trim() ||
         [order.customer?.firstName, order.customer?.lastName].filter(Boolean).join(' ').trim() ||
         '-';
+      const customerDocument = order.customer?.cuit?.trim()
+        || (requestDocNro > 0 ? String(requestDocNro) : '');
+      const customerAddress = order.customer?.fiscalAddress?.trim() || '';
+      const customerVatCondition = resolveVatConditionLabel(order.customer?.vatCondition);
+      const issuerVatCondition = resolveVatConditionLabel(workspaceSettings?.vatConditionId);
 
       const { buffer, filename } = await arcaPdfService.generateInvoicePdf({
-        businessName: order.workspace?.name || 'Nexova',
+        businessName:
+          readText(workspaceSettings?.businessName) ||
+          order.workspace?.name ||
+          'Nexova',
+        issuerAddress: readText(workspaceSettings?.businessAddress) || null,
+        issuerPhone:
+          readText(workspaceSettings?.whatsappContact) ||
+          readText(workspaceSettings?.phone) ||
+          null,
+        issuerVatCondition,
+        issuerCuit: invoice.cuit || null,
         invoiceLabel: cbteLabel,
         invoiceNumber: cbteNumber,
         orderNumber: order.orderNumber,
-        issuedAt: invoice.createdAt,
+        issuedAt,
         cae: invoice.cae,
         caeExpiresAt: invoice.caeExpiresAt,
         customerName,
         customerPhone: customerPhone,
+        customerAddress,
+        customerDocument,
+        customerVatCondition,
+        saleCondition: 'Cuenta corriente',
+        arcaQrUrl: qrUrl,
         totalCents: invoice.total,
         items: order.items.map((item) => ({
           name: item.name,

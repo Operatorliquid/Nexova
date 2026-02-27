@@ -36,7 +36,7 @@ export function getNivoTheme(): PartialTheme {
 export const CHART_COLORS = [
   'hsl(var(--primary))',
   '#22c55e',
-  '#38bdf8',
+  '#ff6b35',
   '#f59e0b',
   '#ef4444',
   '#a78bfa',

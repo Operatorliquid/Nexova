@@ -5,14 +5,12 @@ import { Header } from './Header';
 import { Sidebar } from './Sidebar';
 import { modules } from '../../config/modules';
 import { useAuth } from '../../contexts/AuthContext';
-import { useTheme } from '../../contexts/ThemeContext';
 import { getWorkspaceCommerceCapabilities } from '../../lib/commerce-plan';
 import { QuickActionsFloat } from '../QuickActionsFloat';
 import { AnimatePresence, motion } from '../ui/motion';
 
 export function DashboardLayout(): JSX.Element {
   const location = useLocation();
-  const { theme } = useTheme();
   const { workspace } = useAuth();
   const capabilities = getWorkspaceCommerceCapabilities(workspace);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -33,25 +31,13 @@ export function DashboardLayout(): JSX.Element {
 
   return (
     <div className="h-dvh bg-background overflow-hidden flex">
-      {/* Background gradient - adapts to theme */}
+      {/* Background gradient - tones defined via CSS variables in globals.css */}
       <div className="fixed inset-0 -z-10 overflow-hidden">
-        {theme === 'dark' ? (
-          <>
-            <div className="absolute top-0 -left-40 w-96 h-96 bg-[#4f46e5]/20 rounded-full blur-[150px]" />
-            <div className="absolute bottom-0 -right-40 w-96 h-96 bg-[#7c3aed]/12 rounded-full blur-[150px]" />
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[400px] bg-[#3b82f6]/8 rounded-full blur-[200px]" />
-            <div className="absolute top-1/4 right-1/4 w-72 h-72 bg-[#06b6d4]/8 rounded-full blur-[180px]" />
-            <div className="absolute bottom-1/3 left-1/3 w-64 h-64 bg-[#8b5cf6]/6 rounded-full blur-[180px]" />
-          </>
-        ) : (
-          <>
-            <div className="absolute top-0 -left-40 w-96 h-96 bg-[#4f46e5]/10 rounded-full blur-[150px]" />
-            <div className="absolute bottom-0 -right-40 w-96 h-96 bg-[#7c3aed]/8 rounded-full blur-[150px]" />
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[400px] bg-[#3b82f6]/5 rounded-full blur-[200px]" />
-            <div className="absolute top-1/4 right-1/4 w-72 h-72 bg-[#06b6d4]/5 rounded-full blur-[180px]" />
-            <div className="absolute bottom-1/3 left-1/3 w-64 h-64 bg-[#8b5cf6]/4 rounded-full blur-[180px]" />
-          </>
-        )}
+        <div className="absolute top-0 -left-40 w-96 h-96 rounded-full blur-[150px]" style={{ background: 'var(--orb-primary)' }} />
+        <div className="absolute bottom-0 -right-40 w-96 h-96 rounded-full blur-[150px]" style={{ background: 'var(--orb-warm)' }} />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[400px] rounded-full blur-[200px]" style={{ background: 'var(--orb-core)' }} />
+        <div className="absolute top-1/4 right-1/4 w-72 h-72 rounded-full blur-[180px]" style={{ background: 'var(--orb-amber)' }} />
+        <div className="absolute bottom-1/3 left-1/3 w-64 h-64 rounded-full blur-[180px]" style={{ background: 'var(--orb-deep)' }} />
       </div>
 
       <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />

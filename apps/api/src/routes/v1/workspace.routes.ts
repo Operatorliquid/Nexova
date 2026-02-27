@@ -1553,6 +1553,9 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
         delete newSettings.monotributoCategory;
         delete newSettings.monotributoActivity;
       }
+      if (!planContext.capabilities.showReceiptBrandingSettings) {
+        delete newSettings.receiptBranding;
+      }
       if (!planContext.capabilities.showSettingsNotifications) {
         delete newSettings.notificationPreferences;
       }

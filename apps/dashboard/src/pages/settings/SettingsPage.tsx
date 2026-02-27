@@ -116,16 +116,19 @@ function isValidWhatsappContact(value: string): boolean {
 // Navigation items - "Mi negocio" only shows for commerce business type
 const getSettingsNav = (
   businessType?: string,
-  options?: { showNotifications?: boolean }
+  options?: { showNotifications?: boolean; showReceipts?: boolean }
 ): SettingsNavItem[] => {
   const showNotifications = options?.showNotifications ?? true;
+  const showReceipts = options?.showReceipts ?? true;
   const nav: SettingsNavItem[] = [
     { name: 'Mi perfil', href: '/settings' },
   ];
 
   if (businessType === 'commerce') {
     nav.push({ name: 'Mi negocio', href: '/settings/business' });
-    nav.push({ name: 'Boletas', href: '/settings/receipts' });
+    if (showReceipts) {
+      nav.push({ name: 'Boletas', href: '/settings/receipts' });
+    }
     nav.push({ name: 'Stock', href: '/settings/stock' });
     nav.push({ name: 'Pagos', href: '/settings/payments' });
   }
@@ -3143,6 +3146,7 @@ export default function SettingsPage(): JSX.Element {
   const capabilities = getWorkspaceCommerceCapabilities(workspace);
   const settingsNav = getSettingsNav(workspace?.businessType, {
     showNotifications: capabilities.showSettingsNotifications,
+    showReceipts: capabilities.showReceiptBrandingSettings,
   });
 
   return (
@@ -3207,7 +3211,7 @@ export default function SettingsPage(): JSX.Element {
               <Route
                 path="receipts"
                 element={
-                  workspace?.businessType === 'commerce'
+                  workspace?.businessType === 'commerce' && capabilities.showReceiptBrandingSettings
                     ? <ReceiptSettings />
                     : <Navigate to="/settings" replace />
                 }

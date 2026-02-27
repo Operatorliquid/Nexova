@@ -53,9 +53,9 @@ const styles = {
     text: 'text-primary/90',
   },
   info: {
-    bg: 'bg-blue-500/10 border-blue-500/30',
-    icon: 'bg-blue-500/20 text-blue-400',
-    text: 'text-blue-100',
+    bg: 'bg-primary/10 border-primary/30',
+    icon: 'bg-primary/20 text-primary',
+    text: 'text-primary/90',
   },
 };
 
@@ -76,8 +76,8 @@ const notificationStyles = {
     text: 'text-foreground',
   },
   info: {
-    bg: 'bg-sky-500/15 border-sky-500/30',
-    accent: 'bg-sky-400',
+    bg: 'bg-primary/15 border-primary/30',
+    accent: 'bg-primary',
     text: 'text-foreground',
   },
 };
@@ -103,16 +103,16 @@ const notificationTypeStyles: Record<string, NotificationToastStyle> = {
     icon: 'text-red-400',
   },
   'order.edited': {
-    bg: 'bg-sky-500/15 border-sky-500/30',
-    accent: 'bg-sky-400',
-    text: 'text-sky-100',
-    icon: 'text-sky-400',
+    bg: 'bg-amber-500/15 border-amber-500/30',
+    accent: 'bg-amber-400',
+    text: 'text-amber-100',
+    icon: 'text-amber-400',
   },
   'customer.new': {
-    bg: 'bg-indigo-500/15 border-indigo-500/30',
-    accent: 'bg-indigo-400',
-    text: 'text-indigo-100',
-    icon: 'text-indigo-400',
+    bg: 'bg-primary/15 border-primary/30',
+    accent: 'bg-primary',
+    text: 'text-primary/90',
+    icon: 'text-primary',
   },
   'receipt.new': {
     bg: 'bg-primary/15 border-primary/30',

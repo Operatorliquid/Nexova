@@ -84,13 +84,13 @@ const FRAG = /* glsl */ `
 
   void main() {
     vec2 uv = gl_FragCoord.xy / uResolution.xy;
-    float t  = uTime * 0.30 + uSeed * 6.2832;   /* faster base animation */
+    float t  = uTime * 0.55 + uSeed * 6.2832;   /* speed: 0.55 = visibly animated idle */
     float ar = uResolution.x / uResolution.y;
 
-    /* ── Domain warp: more amplitude → more visible idle movement ── */
+    /* ── Domain warp: larger amplitude → strongly visible idle movement ── */
     vec2 wuv = uv + vec2(
-      0.048 * sin(uv.y * 4.2 + t * 0.38) + 0.028 * cos(uv.x * 3.1 + t * 0.27),
-      0.048 * cos(uv.x * 4.6 - t * 0.32) + 0.028 * sin(uv.y * 3.5 + t * 0.44)
+      0.072 * sin(uv.y * 4.2 + t * 0.38) + 0.042 * cos(uv.x * 3.1 + t * 0.27),
+      0.072 * cos(uv.x * 4.6 - t * 0.32) + 0.042 * sin(uv.y * 3.5 + t * 0.44)
     );
 
     /* ── Mouse PUSH: radial UV displacement away from cursor ──
@@ -103,15 +103,15 @@ const FRAG = /* glsl */ `
     /* ── 8 colour poles with independent organic orbits ── */
     vec2 ap = vec2(ar, 1.0);
 
-    /* Bigger orbit radii → more visible idle breathing */
-    vec2 q0 = vec2(0.10 + 0.16*sin(t*0.71),        0.86 + 0.14*cos(t*0.53));
-    vec2 q1 = vec2(0.50 + 0.24*cos(t*0.44),        0.64 + 0.20*sin(t*0.62));
-    vec2 q2 = vec2(0.90 + 0.13*sin(t*0.57),        0.40 + 0.22*cos(t*0.47));
-    vec2 q3 = vec2(0.24 + 0.22*cos(t*0.39 + 1.20), 0.14 + 0.18*sin(t*0.68));
-    vec2 q4 = vec2(0.74 + 0.19*sin(t*0.51 + 2.10), 0.10 + 0.15*cos(t*0.58));
-    vec2 q5 = vec2(0.07 + 0.12*cos(t*0.63 + 0.80), 0.50 + 0.24*sin(t*0.41));
-    vec2 q6 = vec2(0.62 + 0.17*sin(t*0.47 + 3.00), 0.88 + 0.14*cos(t*0.36));
-    vec2 q7 = vec2(0.37 + 0.21*cos(t*0.33 + 1.80), 0.45 + 0.19*sin(t*0.55));
+    /* Orbit radii bumped ~40% → strongly visible idle breathing */
+    vec2 q0 = vec2(0.10 + 0.24*sin(t*0.71),        0.86 + 0.20*cos(t*0.53));
+    vec2 q1 = vec2(0.50 + 0.34*cos(t*0.44),        0.64 + 0.28*sin(t*0.62));
+    vec2 q2 = vec2(0.90 + 0.20*sin(t*0.57),        0.40 + 0.30*cos(t*0.47));
+    vec2 q3 = vec2(0.24 + 0.30*cos(t*0.39 + 1.20), 0.14 + 0.26*sin(t*0.68));
+    vec2 q4 = vec2(0.74 + 0.28*sin(t*0.51 + 2.10), 0.10 + 0.22*cos(t*0.58));
+    vec2 q5 = vec2(0.07 + 0.19*cos(t*0.63 + 0.80), 0.50 + 0.33*sin(t*0.41));
+    vec2 q6 = vec2(0.62 + 0.26*sin(t*0.47 + 3.00), 0.88 + 0.21*cos(t*0.36));
+    vec2 q7 = vec2(0.37 + 0.30*cos(t*0.33 + 1.80), 0.45 + 0.27*sin(t*0.55));
 
     vec3 col0 = vec3(0.20, 0.02, 0.00);
     vec3 col1 = vec3(0.93, 0.26, 0.01);
@@ -251,7 +251,7 @@ export default function FluidOrangeBackground({ className = '', seed = 0 }: Prop
       resize();
 
       // Decay energy when idle (half-life ≈ 600ms at 60fps)
-      if (now - lastMove > 60) energy *= 0.972;
+      if (now - lastMove > 60) energy *= 0.968; /* faster energy decay = snappier feel */
 
       // current  → fast follow (smooth cursor position)
       current.x += (target.x - current.x) * 0.14;
