@@ -386,17 +386,88 @@ function tokenizeForProductMatch(raw: string): string[] {
   return Array.from(new Set(tokens));
 }
 
+function normalizeComparableToken(token: string): string {
+  let normalized = stripAccents(token || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
+    .trim();
+  if (!normalized) return '';
+
+  if (normalized.length > 4 && normalized.endsWith('es')) {
+    normalized = normalized.slice(0, -2);
+  } else if (normalized.length > 3 && normalized.endsWith('s')) {
+    normalized = normalized.slice(0, -1);
+  }
+  return normalized;
+}
+
+function levenshteinDistance(left: string, right: string): number {
+  if (left === right) return 0;
+  if (!left.length) return right.length;
+  if (!right.length) return left.length;
+
+  const rows = left.length + 1;
+  const cols = right.length + 1;
+  const dp: number[][] = Array.from({ length: rows }, () => Array(cols).fill(0));
+
+  for (let i = 0; i < rows; i += 1) dp[i][0] = i;
+  for (let j = 0; j < cols; j += 1) dp[0][j] = j;
+
+  for (let i = 1; i < rows; i += 1) {
+    for (let j = 1; j < cols; j += 1) {
+      const cost = left[i - 1] === right[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + cost
+      );
+    }
+  }
+
+  return dp[left.length][right.length];
+}
+
+function fuzzyTokenMatch(leftRaw: string, rightRaw: string): boolean {
+  const left = normalizeComparableToken(leftRaw);
+  const right = normalizeComparableToken(rightRaw);
+  if (!left || !right) return false;
+  if (left === right) return true;
+
+  if (left.length >= 4 && right.includes(left)) return true;
+  if (right.length >= 4 && left.includes(right)) return true;
+
+  if (left.length >= 5 && right.length >= 5) {
+    const distance = levenshteinDistance(left, right);
+    if (distance <= 1) return true;
+    if (Math.max(left.length, right.length) >= 9 && distance <= 2) return true;
+  }
+
+  return false;
+}
+
 function computeTokenSimilarity(left: string[], right: string[]): number {
   if (left.length === 0 || right.length === 0) return 0;
-  const rightSet = new Set(right);
-  let overlap = 0;
-  for (const token of left) {
-    if (rightSet.has(token)) overlap += 1;
-  }
-  if (overlap === 0) return 0;
+  let overlapLeft = 0;
+  let overlapRight = 0;
+  const matchedRight = new Set<number>();
 
-  const recall = overlap / left.length;
-  const precision = overlap / right.length;
+  for (const token of left) {
+    const idx = right.findIndex((candidate, candidateIndex) => {
+      if (matchedRight.has(candidateIndex) && candidate === token) return true;
+      return fuzzyTokenMatch(token, candidate);
+    });
+    if (idx >= 0) {
+      overlapLeft += 1;
+      if (!matchedRight.has(idx)) {
+        matchedRight.add(idx);
+        overlapRight += 1;
+      }
+    }
+  }
+  if (overlapLeft === 0) return 0;
+
+  const recall = overlapLeft / left.length;
+  const precision = overlapRight / right.length;
   const harmonic = (2 * recall * precision) / (recall + precision);
   return Number.isFinite(harmonic) ? harmonic : 0;
 }
