@@ -31,6 +31,7 @@ import {
   getPromotionValueLabel,
   promotionIsUsable,
 } from '../../utils/promotions.js';
+import { analyzeOrderImageWithClaude } from '../../utils/order-image-claude.js';
 import { extractReceiptAmountWithClaude, parseAmountInputToCents } from '../../utils/receipt-claude.js';
 import { resolveUploadDir, resolveUploadDirCandidates } from '../../utils/upload-dir.js';
 
@@ -990,6 +991,130 @@ export const ordersRoutes: FastifyPluginAsync = async (fastify) => {
         .header('Content-Type', 'application/pdf')
         .header('Content-Disposition', `inline; filename="${receipt.filename}"`)
         .send(receipt.buffer);
+    }
+  );
+
+  // OCR preview for product-order images/PDFs (PRO only)
+  fastify.post(
+    '/ocr-image',
+    { preHandler: [fastify.requirePermission('orders:create')] },
+    async (request, reply) => {
+      const workspaceId = request.headers['x-workspace-id'] as string;
+      if (!workspaceId) {
+        return reply.code(400).send({ error: 'MISSING_WORKSPACE', message: 'X-Workspace-Id header required' });
+      }
+
+      const membership = await fastify.prisma.membership.findFirst({
+        where: {
+          workspaceId,
+          userId: request.user!.sub,
+          status: { in: ['ACTIVE', 'active'] },
+        },
+        include: { role: { select: { name: true } } },
+      });
+      const planContext = await getWorkspacePlanContext(
+        fastify.prisma,
+        workspaceId,
+        membership?.role?.name
+      );
+      if (!planContext.capabilities.showWhatsappOrderImageOcr) {
+        return reply.code(403).send({
+          error: 'FORBIDDEN_BY_PLAN',
+          message: 'Tu plan actual no incluye pedidos por imagen',
+        });
+      }
+
+      const data = await request.file({
+        limits: { fileSize: 8 * 1024 * 1024 },
+      });
+      if (!data) {
+        return reply.code(400).send({ error: 'NO_FILE', message: 'No file uploaded' });
+      }
+
+      const allowedTypes = new Set([
+        'image/jpeg',
+        'image/png',
+        'image/webp',
+        'image/gif',
+        'application/pdf',
+      ]);
+      if (!allowedTypes.has(data.mimetype)) {
+        return reply.code(400).send({
+          error: 'INVALID_FILE',
+          message: 'Tipo de archivo no permitido. Use JPG, PNG, WebP, GIF o PDF.',
+        });
+      }
+
+      const chunks: Buffer[] = [];
+      for await (const chunk of data.file) {
+        if (Buffer.isBuffer(chunk)) {
+          chunks.push(chunk);
+          continue;
+        }
+        if (chunk instanceof Uint8Array) {
+          chunks.push(Buffer.from(chunk));
+          continue;
+        }
+        chunks.push(Buffer.from(String(chunk)));
+      }
+      const buffer = Buffer.concat(chunks);
+      if (buffer.length === 0) {
+        return reply.code(400).send({ error: 'EMPTY_FILE', message: 'Empty file' });
+      }
+
+      const getMultipartFieldValue = (field: unknown): string | undefined => {
+        if (!field) return undefined;
+        if (Array.isArray(field)) return getMultipartFieldValue(field[0]);
+        if (typeof field === 'string') return field;
+        if (typeof field === 'number') return String(field);
+        if (typeof field === 'object' && 'value' in field) {
+          const value = (field as { value?: unknown }).value;
+          if (typeof value === 'string') return value;
+          if (typeof value === 'number') return String(value);
+        }
+        return undefined;
+      };
+
+      const fields = data.fields as Record<string, unknown> | undefined;
+      const caption = getMultipartFieldValue(fields?.caption) || getMultipartFieldValue(fields?.message);
+
+      const products = await fastify.prisma.product.findMany({
+        where: {
+          workspaceId,
+          status: 'active',
+          deletedAt: null,
+        },
+        select: {
+          id: true,
+          name: true,
+          sku: true,
+          unit: true,
+          unitValue: true,
+          secondaryUnit: true,
+          secondaryUnitValue: true,
+        },
+        take: 500,
+      });
+
+      try {
+        const result = await analyzeOrderImageWithClaude({
+          buffer,
+          mediaType: data.mimetype,
+          caption,
+          products,
+        });
+
+        return reply.send({
+          success: true,
+          ...result,
+        });
+      } catch (error) {
+        request.log.error({ error }, 'Order image OCR failed');
+        return reply.code(500).send({
+          error: 'OCR_FAILED',
+          message: 'No se pudo procesar la imagen del pedido',
+        });
+      }
     }
   );
 

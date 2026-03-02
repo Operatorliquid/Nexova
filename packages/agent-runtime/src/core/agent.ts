@@ -6974,6 +6974,284 @@ export class RetailAgent {
         }
       }
 
+      if (!memory.context.paymentStage) {
+        const inboundAttachment = extractAttachmentInfo(message);
+        if (inboundAttachment && toolRegistry.get('ocr_order_image_products')) {
+          await this.storeMessage(sessionId, 'user', message, messageId);
+
+          const ocrExecution = await toolRegistry.execute(
+            'ocr_order_image_products',
+            {
+              fileRef: inboundAttachment.fileRef,
+              fileType: inboundAttachment.fileType,
+              ...(inboundAttachment.caption ? { caption: inboundAttachment.caption } : {}),
+            },
+            toolContext
+          );
+          toolsUsed.push(ocrExecution);
+
+          if (!ocrExecution.result.success) {
+            const response = ocrExecution.result.error?.includes('pedidos por imagen')
+              ? 'Tu plan no incluye pedidos por imagen. Si querés, escribime el pedido en texto.'
+              : ocrExecution.result.error || 'No pude procesar la imagen.';
+            await this.storeMessage(sessionId, 'assistant', response);
+            return {
+              response,
+              state: fsm.getState(),
+              toolsUsed,
+              tokensUsed: 0,
+              shouldSendMessage: true,
+            };
+          }
+
+          const ocrData = (ocrExecution.result.data || {}) as {
+            classification?: 'order_products' | 'payment_receipt' | 'unknown';
+            items?: Array<{
+              description?: string;
+              quantity?: number;
+              matchType?: 'exact' | 'ambiguous' | 'not_found';
+              matchedProductId?: string;
+              clarification?: string;
+              candidates?: Array<{ displayName?: string; name?: string }>;
+            }>;
+            message?: string;
+          };
+
+          if (ocrData.classification === 'payment_receipt') {
+            const payableOrders = (await this.prisma.order.findMany({
+              where: withVisibleOrders({
+                workspaceId,
+                customerId,
+                status: { notIn: ['cancelled', 'returned', 'draft', 'trashed'] },
+              }),
+              orderBy: { createdAt: 'desc' },
+              take: 20,
+              select: { id: true, orderNumber: true, total: true, paidAmount: true },
+            }))
+              .map((order) => ({
+                id: order.id,
+                orderNumber: order.orderNumber,
+                pendingAmount: Math.max(order.total - order.paidAmount, 0),
+              }))
+              .filter((order) => order.pendingAmount > 0);
+
+            if (payableOrders.length === 0) {
+              const response = 'Detecté un comprobante de pago, pero no tenés pedidos pendientes para aplicarlo.';
+              await this.storeMessage(sessionId, 'assistant', response);
+              return {
+                response,
+                state: fsm.getState(),
+                toolsUsed,
+                tokensUsed: 0,
+                shouldSendMessage: true,
+              };
+            }
+
+            if (payableOrders.length === 1) {
+              const selected = payableOrders[0];
+              const commerceSettings = (await this.loadCommerceProfile(workspaceId)) as Record<string, unknown>;
+              const paymentOptions = resolvePaymentMethodsEnabled(commerceSettings);
+              const hasMpTool = !!toolRegistry.get('create_mp_payment_link');
+              const availableOptions = {
+                mpLink: paymentOptions.mpLink && hasMpTool,
+                transfer: paymentOptions.transfer,
+                cash: paymentOptions.cash,
+              };
+
+              memory.context.paymentOrders = payableOrders;
+              memory.context.paymentOrderId = selected.id;
+              memory.context.paymentOrderNumber = selected.orderNumber;
+              memory.context.paymentPendingAmount = selected.pendingAmount;
+              memory.context.paymentStage = 'select_method';
+              memory.context.activeOrdersPrompt = undefined;
+              memory.context.activeOrdersAction = undefined;
+              memory.context.activeOrdersAwaiting = undefined;
+              memory.context.activeOrdersPayable = undefined;
+              memory.context.activeOrdersSubmenu = undefined;
+              memory.context.activeOrdersInvoiceOptions = undefined;
+              await this.memoryManager.saveSession(memory);
+
+              const methodContent = buildPaymentMethodContent(
+                selected.orderNumber,
+                selected.pendingAmount,
+                availableOptions
+              );
+              const response = `Detecté un comprobante de pago.\n\n${methodContent.text}`;
+              await this.storeMessage(sessionId, 'assistant', response);
+
+              return {
+                response,
+                responseType: 'interactive-buttons',
+                responsePayload: {
+                  ...methodContent.interactive,
+                  body: response,
+                },
+                state: fsm.getState(),
+                toolsUsed,
+                tokensUsed: 0,
+                shouldSendMessage: true,
+              };
+            }
+
+            memory.context.paymentStage = 'select_order';
+            memory.context.paymentOrders = payableOrders;
+            memory.context.paymentOrderId = undefined;
+            memory.context.paymentOrderNumber = undefined;
+            memory.context.paymentPendingAmount = undefined;
+            await this.memoryManager.saveSession(memory);
+
+            const selectionContent = buildPaymentOrderSelectionContent(payableOrders);
+            const response = `Detecté un comprobante de pago.\n\n${selectionContent.text}`;
+            const responsePayload =
+              selectionContent.responseType === 'interactive-buttons'
+                ? {
+                    ...(selectionContent.responsePayload as InteractiveButtonsPayload),
+                    body: response,
+                  }
+                : {
+                    ...(selectionContent.responsePayload as InteractiveListPayload),
+                    body: response,
+                  };
+            await this.storeMessage(sessionId, 'assistant', response);
+
+            return {
+              response,
+              responseType: selectionContent.responseType,
+              responsePayload,
+              state: fsm.getState(),
+              toolsUsed,
+              tokensUsed: 0,
+              shouldSendMessage: true,
+            };
+          }
+
+          if (ocrData.classification !== 'order_products') {
+            const response = ocrData.message || 'No pude identificar productos en la imagen. Probá con otra foto o escribilo en texto.';
+            await this.storeMessage(sessionId, 'assistant', response);
+            return {
+              response,
+              state: fsm.getState(),
+              toolsUsed,
+              tokensUsed: 0,
+              shouldSendMessage: true,
+            };
+          }
+
+          const parsedItems = Array.isArray(ocrData.items)
+            ? ocrData.items.filter((item) => typeof item.description === 'string' && item.description.trim().length > 0)
+            : [];
+          const exactItems = parsedItems.filter(
+            (item): item is {
+              description: string;
+              quantity: number;
+              matchType: 'exact';
+              matchedProductId: string;
+            } => item.matchType === 'exact' && typeof item.matchedProductId === 'string'
+          );
+          const unclearItems = parsedItems.filter((item) => item.matchType !== 'exact');
+
+          if (
+            fsm.getState() !== AgentState.COLLECTING_ORDER
+            && fsm.getState() !== AgentState.AWAITING_CONFIRMATION
+            && fsm.canTransition(AgentState.COLLECTING_ORDER)
+          ) {
+            fsm.transition(AgentState.COLLECTING_ORDER);
+            await this.memoryManager.updateState(sessionId, AgentState.COLLECTING_ORDER);
+          }
+
+          const addErrors: string[] = [];
+          for (const item of exactItems) {
+            const addExecution = await toolRegistry.execute(
+              'add_to_cart',
+              {
+                productId: item.matchedProductId,
+                quantity:
+                  typeof item.quantity === 'number' && Number.isFinite(item.quantity) && item.quantity > 0
+                    ? Math.max(1, Math.round(item.quantity))
+                    : 1,
+              },
+              toolContext
+            );
+            toolsUsed.push(addExecution);
+            if (!addExecution.result.success) {
+              addErrors.push(
+                addExecution.result.error || `No pude agregar "${item.description}" al carrito.`
+              );
+            }
+          }
+
+          const cart = await this.memoryManager.getCart(sessionId);
+          const clarificationLines: string[] = [];
+          for (const item of unclearItems) {
+            if (item.clarification && item.clarification.trim().length > 0) {
+              clarificationLines.push(`• ${item.clarification.trim()}`);
+              continue;
+            }
+            const candidate = Array.isArray(item.candidates) ? item.candidates[0] : undefined;
+            const candidateName = candidate?.displayName || candidate?.name;
+            if (candidateName) {
+              clarificationLines.push(`• Para "${item.description}", tengo "${candidateName}". ¿Te sirve?`);
+            } else {
+              clarificationLines.push(`• No me quedó claro "${item.description}". ¿Cuál querés exactamente?`);
+            }
+          }
+
+          if (addErrors.length > 0) {
+            clarificationLines.push(...addErrors.map((error) => `• ${error}`));
+          }
+
+          if (!cart || cart.items.length === 0) {
+            const fallback = clarificationLines.length > 0
+              ? ['No pude agregar productos al carrito.', ...clarificationLines].join('\n')
+              : 'No pude agregar productos al carrito con esa imagen. ¿Me los escribís en texto?';
+            await this.storeMessage(sessionId, 'assistant', fallback);
+            return {
+              response: fallback,
+              state: fsm.getState(),
+              toolsUsed,
+              tokensUsed: 0,
+              shouldSendMessage: true,
+            };
+          }
+
+          const orderSummary = buildOrderSummaryMessage(cart);
+
+          if (clarificationLines.length > 0) {
+            const response = [orderSummary, '', 'Necesito confirmar esto para seguir:', ...clarificationLines].join('\n');
+            if (fsm.getState() !== AgentState.COLLECTING_ORDER && fsm.canTransition(AgentState.COLLECTING_ORDER)) {
+              fsm.transition(AgentState.COLLECTING_ORDER);
+              await this.memoryManager.updateState(sessionId, AgentState.COLLECTING_ORDER);
+            }
+            await this.storeMessage(sessionId, 'assistant', response);
+            return {
+              response,
+              state: fsm.getState(),
+              toolsUsed,
+              tokensUsed: 0,
+              shouldSendMessage: true,
+            };
+          }
+
+          const actions = buildOrderActionsContent();
+          const response = `${orderSummary}\n\n${actions.text}`;
+          if (fsm.canTransition(AgentState.AWAITING_CONFIRMATION)) {
+            fsm.transition(AgentState.AWAITING_CONFIRMATION);
+            await this.memoryManager.updateState(sessionId, AgentState.AWAITING_CONFIRMATION);
+          }
+          await this.storeMessage(sessionId, 'assistant', response);
+
+          return {
+            response,
+            responseType: 'interactive-buttons',
+            responsePayload: actions.interactive,
+            state: fsm.getState(),
+            toolsUsed,
+            tokensUsed: 0,
+            shouldSendMessage: true,
+          };
+        }
+      }
+
       if (wantsAccountStatementPdf) {
         await this.storeMessage(sessionId, 'user', message, messageId);
 

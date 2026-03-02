@@ -216,38 +216,14 @@ export default function IndexPage(): JSX.Element {
   // stiffness 180 / damping 28: rápido, sin overshoot, maneja reversa sin saltos
   const smoothProgress = useSpring(scrollYProgress, { stiffness: 180, damping: 28, mass: 0.5 });
 
-  const heroWidth = useTransform(smoothProgress, [0, 0.04], ['94%', '100%']);
-  const heroHeight = useTransform(smoothProgress, [0, 0.04], ['92%', '100%']);
-  const heroRadius = useTransform(smoothProgress, [0, 0.04], ['3.5rem', '0rem']);
+  const heroWidth = useTransform(smoothProgress, [0, 0.2], ['94%', '100%']);
+  const heroHeight = useTransform(smoothProgress, [0, 0.2], ['92%', '100%']);
+  const heroRadius = useTransform(smoothProgress, [0, 0.2], ['3.5rem', '0rem']);
 
-  const textHeroY = useTransform(smoothProgress, [0.02, 0.1], [0, -200]);
-  const textHeroOpacity = useTransform(smoothProgress, [0.02, 0.08], [1, 0]);
-  const navOpacity = useTransform(smoothProgress, [0.02, 0.08], [1, 0]);
-
-  const sec2Y = useTransform(smoothProgress, [0.1, 0.14], ['40vh', '0vh']);
-  const sec2Opacity = useTransform(smoothProgress, [0.1, 0.12, 0.2, 0.24], [0, 1, 1, 0]);
-
-  const text1Lines = ['This isn\'t about who', 'shouts the loudest.'];
-  const text2Lines = ['Wherever your money', 'goes, change follows.'];
-  const text1Opacity = useTransform(smoothProgress, [0.63, 0.66], [1, 0]);
-  const text2Opacity = useTransform(smoothProgress, [0.77, 0.8], [1, 0]);
-
-  const circleScale = useTransform(smoothProgress, [0.80, 0.84], [0, 3]);
-
-  // Mac: 4 keyframes so it continuously moves — no dead zone where scroll does nothing.
-  // 0.92→0.97: exits to -140vh (fully off screen) instead of hanging at -38vh until sticky releases.
-  const deviceTravelY = useTransform(
-    smoothProgress,
-    [0.81, 0.855, 0.92, 0.97],
-    ['110vh', '0vh', '-38vh', '-140vh'],
-  );
-  const deviceScale = useTransform(smoothProgress, [0.855, 0.92], [1, 0.95]);
-
-  // Texto: fade-in on entry, fade-out before MacBook exits so nothing hangs on screen.
-  const macText1Opacity = useTransform(smoothProgress, [0.858, 0.882, 0.92, 0.95], [0, 1, 1, 0]);
-  const macText1Y = useTransform(smoothProgress, [0.858, 0.882], [22, 0]);
-  const macText2Opacity = useTransform(smoothProgress, [0.872, 0.896, 0.92, 0.95], [0, 1, 1, 0]);
-  const macText2Y = useTransform(smoothProgress, [0.872, 0.896], [18, 0]);
+  // Move the entire text + dashboard block up naturally initially
+  const heroScrollY = useTransform(smoothProgress, [0, 0.25], [0, -350]);
+  const textHeroOpacity = useTransform(smoothProgress, [0.15, 0.4], [1, 0]);
+  const navOpacity = useTransform(smoothProgress, [0.15, 0.4], [1, 0]);
 
   const renderRevealText = (
     lines: string[],
@@ -341,9 +317,9 @@ export default function IndexPage(): JSX.Element {
   const p12TextLines = ["Let's Pocketchange", 'the world'];
 
   return (
-    <div className="bg-white">
-      <div ref={containerRef} className="relative w-full bg-black" style={{ height: '2200vh' }}>
-        <div className="sticky top-0 h-screen w-full flex items-center justify-center overflow-hidden z-20">
+    <div className="relative min-h-screen bg-black overflow-hidden font-sans selection:bg-[#ff4200]/30 selection:text-[#ff4200]">
+      <div ref={containerRef} className="relative w-full" style={{ height: '300vh' }}>
+        <div className="sticky top-0 h-screen w-full flex items-center justify-center overflow-hidden perspective-[2000px]">
           <motion.div
             style={{ width: heroWidth, height: heroHeight, borderRadius: heroRadius }}
             className="relative overflow-hidden flex flex-col bg-[#ff4200] z-10 shadow-2xl"
@@ -372,10 +348,10 @@ export default function IndexPage(): JSX.Element {
               </button>
             </motion.nav>
 
-            <div className="relative flex-1 flex flex-col items-center justify-center px-6 md:px-12 z-10 pointer-events-none w-full h-full pb-10">
+            <motion.div style={{ y: heroScrollY }} className="relative flex-1 flex flex-col items-center justify-start px-6 md:px-12 z-10 pointer-events-none w-full h-full pt-16 md:pt-24">
               <motion.div
-                style={{ opacity: textHeroOpacity, y: textHeroY }}
-                className="max-w-4xl text-white pointer-events-auto text-center flex flex-col items-center mt-12 md:mt-24 z-20"
+                style={{ opacity: textHeroOpacity }}
+                className="max-w-4xl text-white pointer-events-auto text-center flex flex-col items-center z-20"
               >
                 <div className="mb-6 px-4 py-1.5 rounded-full border border-white/20 bg-white/5 backdrop-blur-md inline-flex items-center gap-2 text-xs font-semibold tracking-wide shadow-lg">
                   <span className="text-[#ff4200]">✨ New Update</span>
@@ -398,135 +374,9 @@ export default function IndexPage(): JSX.Element {
                 </div>
               </motion.div>
 
-              <div className="w-full max-w-[1100px] flex-1 min-h-0 pointer-events-auto flex flex-col justify-end perspective-[2000px] z-10 pb-8">
-                <HeroDashboardMockup progress={smoothProgress} startRange={0.01} endRange={0.08} />
+              <div className="w-full max-w-[1100px] flex-none pointer-events-auto flex flex-col justify-start perspective-[2000px] z-10 pb-20">
+                <HeroDashboardMockup progress={smoothProgress} startRange={0.4} endRange={0.8} />
               </div>
-            </div>
-
-            <motion.div
-              style={{ y: sec2Y, opacity: sec2Opacity }}
-              className="absolute inset-0 z-30 flex items-center justify-center px-6 pointer-events-none"
-            >
-              <div className="max-w-6xl w-full text-center text-white flex flex-col items-center">
-                <div className="mb-12 px-8 py-3 rounded-full border border-white/30 backdrop-blur-sm inline-block shadow-lg uppercase tracking-widest text-[10px] font-black">
-                  El sistema favorece a los ruidosos, no a los dignos.
-                </div>
-                <h2 className="text-5xl md:text-9xl font-medium leading-[1] tracking-tight mb-16 drop-shadow-xl italic">
-                  Estamos cambiando eso. <br />Una compra alineada a la vez.
-                </h2>
-                <p className="text-lg md:text-2xl opacity-80 max-w-3xl leading-relaxed font-medium">
-                  Pocketchange honra a los negocios que reescriben las reglas, arraigados
-                  localmente y amados por su comunidad.
-                </p>
-              </div>
-            </motion.div>
-
-            <div className="absolute inset-0 z-40 flex items-center justify-center pointer-events-none">
-              {SECTION_CARDS.map((card, idx) => {
-                const startEntry = 0.22 + idx * 0.03;
-                const endEntry = startEntry + 0.06;
-                const startExit = 0.42 + idx * 0.02;
-                const endExit = startExit + 0.08;
-
-                const y = useTransform(
-                  smoothProgress,
-                  [startEntry, endEntry, startExit, endExit],
-                  [1400, card.yPos, card.yPos - 40, -1200],
-                );
-                const opacity = useTransform(
-                  smoothProgress,
-                  [startEntry, startEntry + 0.02, startExit, endExit],
-                  [0, 1, 1, 0],
-                );
-                const rotation = useTransform(
-                  smoothProgress,
-                  [startEntry, endEntry, startExit, endExit],
-                  [card.rot * 1.8, card.rot, card.rot, card.rot * 0.5],
-                );
-                const scale = useTransform(
-                  smoothProgress,
-                  [startEntry, endEntry, startExit, endExit],
-                  [0.8, 1, 1, 0.85],
-                );
-
-                return (
-                  <motion.div
-                    key={card.id}
-                    style={{ y, opacity, scale, rotate: rotation, x: card.xPos }}
-                    className="absolute w-[260px] md:w-[360px] aspect-[4/5.2] bg-zinc-950 rounded-[2.5rem] overflow-hidden shadow-[0_50px_100px_rgba(0,0,0,0.7)] border border-white/10"
-                  >
-                    <img src={card.img} alt={card.title} className="w-full h-full object-cover opacity-70" />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/20 to-transparent p-8 flex flex-col justify-between">
-                      <div className="flex justify-start">
-                        <div className="w-10 h-10 bg-red-600 rounded-full flex items-center justify-center text-white shadow-xl">
-                          <CheckCircle2 size={20} fill="white" />
-                        </div>
-                      </div>
-                      <p className="text-white font-black text-2xl leading-[1.1] tracking-tight mb-2 uppercase italic">
-                        {card.title}
-                      </p>
-                    </div>
-                  </motion.div>
-                );
-              })}
-            </div>
-
-            <div className="absolute inset-0 z-[45] flex items-center justify-center pointer-events-none px-6">
-              <motion.div style={{ opacity: text1Opacity }} className="absolute text-center w-full max-w-6xl">
-                {renderRevealText(
-                  text1Lines,
-                  0.52,
-                  0.6,
-                  'text-white text-5xl md:text-[100px] font-light leading-[1.1] tracking-tight drop-shadow-2xl',
-                  smoothProgress,
-                )}
-              </motion.div>
-              <motion.div style={{ opacity: text2Opacity }} className="absolute text-center w-full max-w-6xl">
-                {renderRevealText(
-                  text2Lines,
-                  0.67,
-                  0.75,
-                  'text-white text-5xl md:text-[100px] font-light leading-[1.1] tracking-tight drop-shadow-2xl',
-                  smoothProgress,
-                )}
-              </motion.div>
-            </div>
-
-            <motion.div
-              style={{ scale: circleScale, x: '-50%', y: '50%' }}
-              className="absolute bottom-0 left-1/2 w-[150vw] aspect-square bg-white rounded-full z-[48] pointer-events-none"
-            />
-            <motion.div className="absolute inset-0 z-[49] pointer-events-none flex flex-col items-center pt-8 md:pt-10">
-              <motion.div
-                style={{ y: deviceTravelY, scale: deviceScale }}
-                className="relative w-[340px] md:w-[700px] lg:w-[900px] flex flex-col items-center drop-shadow-[0_-20px_50px_rgba(0,0,0,0.2)]"
-              >
-                <div className="w-full aspect-[16/10] bg-zinc-900 rounded-t-2xl md:rounded-t-[2.5rem] border-[8px] md:border-[16px] border-zinc-900 overflow-hidden relative">
-                  <img
-                    src="https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=1200&auto=format&fit=crop"
-                    alt="Screen App"
-                    className="w-full h-full object-cover"
-                  />
-                  <div className="absolute top-0 left-1/2 -translate-x-1/2 w-2 md:w-3 h-2 md:h-3 bg-black rounded-full mt-2 md:mt-3 shadow-inner" />
-                </div>
-                <div className="w-[115%] h-3 md:h-6 bg-zinc-300 rounded-b-xl md:rounded-b-2xl flex justify-center relative z-10 border-t border-white/50 shadow-[0_20px_40px_rgba(0,0,0,0.15)]">
-                  <div className="w-1/4 h-1.5 md:h-2 bg-zinc-400 rounded-b-md shadow-inner" />
-                </div>
-              </motion.div>
-              <motion.div style={{ y: deviceTravelY }} className="w-full max-w-5xl text-center px-6 mt-8 md:mt-12">
-                <motion.p
-                  style={{ opacity: macText1Opacity, y: macText1Y }}
-                  className="text-4xl md:text-[70px] font-light leading-[1.1] tracking-tight text-[#ff4200] mb-4 md:mb-8"
-                >
-                  This isn't just an application.<br />It's a call for action.
-                </motion.p>
-                <motion.p
-                  style={{ opacity: macText2Opacity, y: macText2Y }}
-                  className="text-base md:text-2xl font-medium leading-relaxed tracking-tight text-zinc-800 max-w-4xl mx-auto"
-                >
-                  Turn your spending into a tool for change, not just convenience. Put visibility where it belongs: with the people who hold our communities together.
-                </motion.p>
-              </motion.div>
             </motion.div>
           </motion.div>
         </div>

@@ -24,6 +24,7 @@ import { resolveOrderReference } from '../../utils/order-reference.js';
 import { withVisibleOrders } from '../../utils/orders.js';
 import { fetchBinaryWithGuards } from '../../utils/remote-fetch-guard.js';
 import { BaseTool } from '../base.js';
+import { buildProductDisplayName, extractUnitHints, matchesUnitHints } from './product-utils.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // DEPENDENCIES INTERFACE
@@ -131,6 +132,40 @@ interface ExtractReceiptAmountResult {
   amountCents?: number;
   confidence?: number;
   extractedText?: string;
+  message: string;
+}
+
+type OrderImageClassification = 'order_products' | 'payment_receipt' | 'unknown';
+
+type OrderImageMatchType = 'exact' | 'ambiguous' | 'not_found';
+
+interface OrderImageProductCandidate {
+  productId: string;
+  name: string;
+  displayName: string;
+  sku: string;
+  unit: string | null;
+  unitValue: string | null;
+  secondaryUnit: string | null;
+  secondaryUnitValue: string | null;
+  score: number;
+}
+
+interface OrderImageMatchedItem {
+  description: string;
+  quantity: number;
+  matchType: OrderImageMatchType;
+  matchedProductId?: string;
+  matchedProductName?: string;
+  clarification?: string;
+  candidates?: OrderImageProductCandidate[];
+}
+
+interface OcrOrderImageProductsResult {
+  success: boolean;
+  classification: OrderImageClassification;
+  confidence?: number;
+  items: OrderImageMatchedItem[];
   message: string;
 }
 
@@ -283,6 +318,373 @@ function isAllowedReceiptSource(fileRef: string, configuredApiUrl?: string | nul
   } catch {
     return false;
   }
+}
+
+type WorkspaceProductForImageMatch = {
+  id: string;
+  name: string;
+  sku: string;
+  unit: string | null;
+  unitValue: string | null;
+  secondaryUnit: string | null;
+  secondaryUnitValue: string | null;
+};
+
+type ExtractedOrderLine = {
+  description: string;
+  quantity: number;
+};
+
+type RankedOrderImageProductCandidate = OrderImageProductCandidate & {
+  unitMatched: boolean;
+};
+
+const PRODUCT_MATCH_STOPWORDS = new Set([
+  'de',
+  'del',
+  'la',
+  'el',
+  'los',
+  'las',
+  'y',
+  'con',
+  'sin',
+  'en',
+  'por',
+  'para',
+  'un',
+  'una',
+  'uno',
+  'unas',
+  'unos',
+  'quiero',
+  'necesito',
+  'mandame',
+  'manda',
+  'agrega',
+  'agregar',
+  'pedido',
+  'pedir',
+]);
+
+function stripAccents(raw: string): string {
+  return raw.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+function tokenizeForProductMatch(raw: string): string[] {
+  const normalized = stripAccents(raw || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+  if (!normalized) return [];
+
+  const tokens = normalized
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 1 && !PRODUCT_MATCH_STOPWORDS.has(token));
+
+  return Array.from(new Set(tokens));
+}
+
+function computeTokenSimilarity(left: string[], right: string[]): number {
+  if (left.length === 0 || right.length === 0) return 0;
+  const rightSet = new Set(right);
+  let overlap = 0;
+  for (const token of left) {
+    if (rightSet.has(token)) overlap += 1;
+  }
+  if (overlap === 0) return 0;
+
+  const recall = overlap / left.length;
+  const precision = overlap / right.length;
+  const harmonic = (2 * recall * precision) / (recall + precision);
+  return Number.isFinite(harmonic) ? harmonic : 0;
+}
+
+function parsePositiveQuantity(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const qty = Math.round(value);
+    if (qty > 0 && qty <= 1_000_000) return qty;
+    return 1;
+  }
+  if (typeof value === 'string') {
+    const digits = value.replace(/[^0-9.-]/g, '').trim();
+    if (!digits) return 1;
+    const parsed = Number(digits);
+    if (!Number.isFinite(parsed)) return 1;
+    return parsePositiveQuantity(parsed);
+  }
+  return 1;
+}
+
+function detectReceiptByText(raw: string): boolean {
+  const normalized = stripAccents(raw || '').toLowerCase();
+  if (!normalized) return false;
+  return (
+    normalized.includes('comprobante')
+    || normalized.includes('transferencia')
+    || normalized.includes('mercado pago')
+    || normalized.includes('pago')
+    || normalized.includes('ticket')
+    || normalized.includes('trx')
+    || normalized.includes('operacion')
+  );
+}
+
+function splitCaptionIntoItems(caption?: string): ExtractedOrderLine[] {
+  const raw = (caption || '').trim();
+  if (!raw) return [];
+
+  const parts = raw
+    .split(/\n|,|;|\s+y\s+/i)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  const lines = parts
+    .map((part) => {
+      const prefixed = part.match(/^(\d+)\s*x?\s*(.+)$/i);
+      if (prefixed) {
+        return {
+          quantity: parsePositiveQuantity(prefixed[1]),
+          description: prefixed[2].trim(),
+        };
+      }
+      return {
+        quantity: 1,
+        description: part,
+      };
+    })
+    .filter((line) => line.description.length > 0);
+
+  return lines.slice(0, 30);
+}
+
+function buildOrderImagePrompt(caption?: string): string {
+  const captionLine = caption?.trim()
+    ? `Texto/caption enviado junto a la imagen: "${caption.trim()}".`
+    : 'No hay texto/caption adicional.';
+
+  return [
+    'Clasificá esta imagen/PDF en UNA de estas categorías:',
+    '1) order_products: lista/pedido de productos.',
+    '2) payment_receipt: comprobante de pago/transferencia.',
+    '3) unknown: no se puede determinar.',
+    captionLine,
+    'Si es order_products, extraé los items con cantidad y descripción.',
+    'Si no se ve la cantidad, usar 1.',
+    'Respondé SOLO JSON válido en una sola línea con esta forma exacta:',
+    '{"intent":"order_products|payment_receipt|unknown","confidence":0.0,"items":[{"description":"string","quantity":number}]}',
+  ].join('\n');
+}
+
+function normalizeOrderImageClassification(value: unknown, caption?: string): OrderImageClassification {
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'order_products') return 'order_products';
+    if (normalized === 'payment_receipt' || normalized === 'receipt') return 'payment_receipt';
+    if (normalized === 'unknown') return 'unknown';
+  }
+  if (detectReceiptByText(caption || '')) return 'payment_receipt';
+  if ((caption || '').trim()) return 'order_products';
+  return 'unknown';
+}
+
+function normalizeExtractedOrderLines(items: unknown, caption?: string): ExtractedOrderLine[] {
+  if (!Array.isArray(items)) {
+    return splitCaptionIntoItems(caption);
+  }
+
+  const parsed = items
+    .map((entry) => {
+      if (!entry || typeof entry !== 'object') return null;
+      const candidate = entry as Record<string, unknown>;
+      const descriptionRaw = candidate.description;
+      const description = typeof descriptionRaw === 'string' ? descriptionRaw.trim() : '';
+      if (!description) return null;
+      return {
+        description,
+        quantity: parsePositiveQuantity(candidate.quantity),
+      };
+    })
+    .filter((line): line is ExtractedOrderLine => line !== null);
+
+  if (parsed.length > 0) return parsed.slice(0, 30);
+  return splitCaptionIntoItems(caption);
+}
+
+async function extractOrderImageIntentWithClaude(params: {
+  buffer: Buffer;
+  mediaType: string;
+  caption?: string;
+}): Promise<{ classification: OrderImageClassification; confidence?: number; items: ExtractedOrderLine[] }> {
+  const apiKey = process.env.ANTHROPIC_API_KEY || '';
+  if (!apiKey) {
+    return {
+      classification: normalizeOrderImageClassification(undefined, params.caption),
+      items: splitCaptionIntoItems(params.caption),
+    };
+  }
+
+  const model = process.env.ORDER_IMAGE_OCR_MODEL || process.env.LLM_MODEL || 'claude-sonnet-4-20250514';
+  const anthropic = new Anthropic({ apiKey });
+
+  const base64 = params.buffer.toString('base64');
+  const content: Anthropic.ContentBlockParam[] = [
+    { type: 'text', text: buildOrderImagePrompt(params.caption) },
+  ];
+
+  if (params.mediaType === 'application/pdf') {
+    content.push({
+      type: 'document',
+      source: {
+        type: 'base64',
+        media_type: 'application/pdf',
+        data: base64,
+      },
+    } as Anthropic.ContentBlockParam);
+  } else {
+    const mediaType = params.mediaType as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+    content.push({
+      type: 'image',
+      source: {
+        type: 'base64',
+        media_type: mediaType,
+        data: base64,
+      },
+    } as Anthropic.ContentBlockParam);
+  }
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 1200,
+    temperature: 0,
+    messages: [{ role: 'user', content }],
+  });
+
+  const textBlock = response.content.find((block) => block.type === 'text');
+  const rawText = textBlock?.text?.trim() || '';
+  if (!rawText) {
+    return {
+      classification: normalizeOrderImageClassification(undefined, params.caption),
+      items: splitCaptionIntoItems(params.caption),
+    };
+  }
+
+  const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    return {
+      classification: normalizeOrderImageClassification(undefined, params.caption),
+      items: splitCaptionIntoItems(params.caption),
+    };
+  }
+
+  try {
+    const parsed = JSON.parse(jsonMatch[0]) as {
+      intent?: unknown;
+      confidence?: unknown;
+      items?: unknown;
+    };
+    const classification = normalizeOrderImageClassification(parsed.intent, params.caption);
+    const confidence =
+      typeof parsed.confidence === 'number' && Number.isFinite(parsed.confidence)
+        ? Math.max(0, Math.min(1, parsed.confidence))
+        : undefined;
+    const items = normalizeExtractedOrderLines(parsed.items, params.caption);
+    return { classification, confidence, items };
+  } catch {
+    return {
+      classification: normalizeOrderImageClassification(undefined, params.caption),
+      items: splitCaptionIntoItems(params.caption),
+    };
+  }
+}
+
+function rankOrderImageCandidates(
+  item: ExtractedOrderLine,
+  products: WorkspaceProductForImageMatch[]
+): RankedOrderImageProductCandidate[] {
+  const descriptionTokens = tokenizeForProductMatch(item.description);
+  const unitHints = extractUnitHints(item.description);
+
+  const ranked = products
+    .map((product) => {
+      const productTokens = tokenizeForProductMatch(`${product.name} ${product.sku || ''}`);
+      let score = computeTokenSimilarity(descriptionTokens, productTokens);
+      if (descriptionTokens[0] && productTokens[0] && descriptionTokens[0] === productTokens[0]) {
+        score += 0.08;
+      }
+
+      const unitMatched = unitHints.length > 0
+        ? matchesUnitHints(product, unitHints)
+        : false;
+
+      if (unitHints.length > 0) {
+        score += unitMatched ? 0.24 : -0.14;
+      }
+
+      score = Math.max(0, Math.min(0.99, score));
+
+      return {
+        productId: product.id,
+        name: product.name,
+        displayName: buildProductDisplayName(product),
+        sku: product.sku,
+        unit: product.unit,
+        unitValue: product.unitValue,
+        secondaryUnit: product.secondaryUnit,
+        secondaryUnitValue: product.secondaryUnitValue,
+        score,
+        unitMatched,
+      };
+    })
+    .sort((a, b) => b.score - a.score);
+
+  return ranked.slice(0, 5);
+}
+
+function buildOrderImageMatch(item: ExtractedOrderLine, products: WorkspaceProductForImageMatch[]): OrderImageMatchedItem {
+  const candidates = rankOrderImageCandidates(item, products);
+  const best = candidates[0];
+  const second = candidates[1];
+  const hasUnitHints = extractUnitHints(item.description).length > 0;
+
+  if (!best || best.score < 0.28) {
+    return {
+      description: item.description,
+      quantity: item.quantity,
+      matchType: 'not_found',
+      clarification: `No encontré "${item.description}" en el stock. ¿Me lo podés escribir con más detalle?`,
+      candidates: [],
+    };
+  }
+
+  const isAmbiguousBySimilarity = Boolean(second) && best.score - second.score < 0.08 && second.score >= 0.45;
+  const isAmbiguousByMeasure = hasUnitHints && !best.unitMatched && best.score < 0.8;
+  const isWeakMatch = best.score < 0.52;
+
+  if (isAmbiguousBySimilarity || isAmbiguousByMeasure || isWeakMatch) {
+    const topCandidates = candidates.slice(0, 3);
+    const suggestion = topCandidates[0]?.displayName
+      ? `Tengo ${topCandidates[0].displayName}. ¿Te sirve?`
+      : `No me quedó claro "${item.description}". ¿Cuál querés exactamente?`;
+
+    return {
+      description: item.description,
+      quantity: item.quantity,
+      matchType: 'ambiguous',
+      clarification: suggestion,
+      candidates: topCandidates,
+    };
+  }
+
+  return {
+    description: item.description,
+    quantity: item.quantity,
+    matchType: 'exact',
+    matchedProductId: best.productId,
+    matchedProductName: best.displayName,
+    candidates: [best],
+  };
 }
 
 async function extractReceiptAmountWithClaude(params: {
@@ -687,6 +1089,204 @@ export class ExtractReceiptAmountTool extends BaseTool<typeof ExtractReceiptAmou
       return {
         success: false,
         error: error instanceof Error ? error.message : 'No pude analizar el comprobante',
+      };
+    }
+  }
+}
+
+const OcrOrderImageProductsInput = z.object({
+  fileRef: z.string().describe('Referencia al archivo subido (de WhatsApp)'),
+  fileType: z.enum(['image', 'pdf']).default('image').describe('Tipo de archivo'),
+  caption: z.string().optional().describe('Texto/caption asociado al archivo'),
+});
+
+export class OcrOrderImageProductsTool extends BaseTool<typeof OcrOrderImageProductsInput> {
+  private prisma: PrismaClient;
+
+  constructor(prisma: PrismaClient) {
+    super({
+      name: 'ocr_order_image_products',
+      description:
+        'Analiza una imagen/PDF enviada por cliente para detectar si es pedido de productos o comprobante de pago, y matchear productos con stock.',
+      category: ToolCategory.QUERY,
+      inputSchema: OcrOrderImageProductsInput,
+    });
+    this.prisma = prisma;
+  }
+
+  private resolveWhatsAppApiKey(number: {
+    apiKeyEnc?: string | null;
+    apiKeyIv?: string | null;
+    provider?: string | null;
+  }): string {
+    const provider = (number.provider || 'infobip').toLowerCase();
+    if (provider === 'infobip') {
+      const envKey = (process.env.INFOBIP_API_KEY || '').trim();
+      if (envKey) return envKey;
+      if (number.apiKeyEnc && number.apiKeyIv) {
+        return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
+      }
+      return '';
+    }
+    if (number.apiKeyEnc && number.apiKeyIv) {
+      return decrypt({ encrypted: number.apiKeyEnc, iv: number.apiKeyIv });
+    }
+    return '';
+  }
+
+  private async fetchMediaBuffer(
+    fileRef: string,
+    expectedFileType: 'image' | 'pdf',
+    apiKey?: string,
+    configuredApiUrl?: string | null
+  ): Promise<{ buffer: Buffer; contentType?: string }> {
+    if (!isAllowedReceiptSource(fileRef, configuredApiUrl)) {
+      throw new Error('No pude descargar el archivo: host no permitido');
+    }
+
+    const headers: Record<string, string> = {};
+    if (apiKey) {
+      headers.Authorization = `App ${apiKey}`;
+    }
+
+    const allowedContentTypes = expectedFileType === 'pdf'
+      ? ['application/pdf']
+      : ['image/*'];
+
+    const { buffer, contentType } = await fetchBinaryWithGuards({
+      url: fileRef,
+      headers,
+      isAllowedHost: (host) => isAllowedReceiptSource(`https://${host}/`, configuredApiUrl),
+      allowedContentTypes,
+      maxBytes: 8 * 1024 * 1024,
+      timeoutMs: 15000,
+    });
+
+    return { buffer, contentType };
+  }
+
+  async execute(
+    input: z.infer<typeof OcrOrderImageProductsInput>,
+    context: ToolContext
+  ): Promise<ToolResult<OcrOrderImageProductsResult>> {
+    const workspacePlan = await this.prisma.workspace.findUnique({
+      where: { id: context.workspaceId },
+      select: { plan: true, settings: true },
+    });
+    const workspaceSettings = (workspacePlan?.settings as Record<string, unknown> | undefined) || {};
+    const plan = resolveCommercePlan({
+      workspacePlan: workspacePlan?.plan,
+      settingsPlan: workspaceSettings.commercePlan,
+      fallback: 'pro',
+    });
+    if (!getCommercePlanCapabilities(plan).showWhatsappOrderImageOcr) {
+      return {
+        success: false,
+        error: 'Tu plan actual no incluye pedidos por imagen',
+      };
+    }
+
+    const { fileRef, fileType, caption } = input;
+
+    const whatsappNumber = await this.prisma.whatsAppNumber.findFirst({
+      where: { workspaceId: context.workspaceId, isActive: true },
+      select: { apiKeyEnc: true, apiKeyIv: true, provider: true, apiUrl: true },
+    });
+
+    const wantsInfobipAuth = shouldAttachInfobipAuth(fileRef);
+    const apiKey = wantsInfobipAuth
+      ? ((whatsappNumber ? this.resolveWhatsAppApiKey(whatsappNumber) : '')
+        || process.env.INFOBIP_API_KEY
+        || '')
+      : '';
+
+    try {
+      const { buffer, contentType } = await this.fetchMediaBuffer(
+        fileRef,
+        fileType,
+        apiKey,
+        whatsappNumber?.apiUrl
+      );
+
+      const resolvedContentType = contentType
+        || (fileType === 'pdf' ? 'application/pdf' : inferMediaType(fileRef));
+
+      const ocr = await extractOrderImageIntentWithClaude({
+        buffer,
+        mediaType: resolvedContentType,
+        caption,
+      });
+
+      if (ocr.classification === 'payment_receipt') {
+        return {
+          success: true,
+          data: {
+            success: true,
+            classification: 'payment_receipt',
+            confidence: ocr.confidence,
+            items: [],
+            message: 'Detecté que el archivo parece un comprobante de pago.',
+          },
+        };
+      }
+
+      if (ocr.classification !== 'order_products') {
+        return {
+          success: true,
+          data: {
+            success: true,
+            classification: 'unknown',
+            confidence: ocr.confidence,
+            items: [],
+            message: 'No pude identificar productos con claridad en la imagen.',
+          },
+        };
+      }
+
+      const products = await this.prisma.product.findMany({
+        where: {
+          workspaceId: context.workspaceId,
+          status: 'active',
+          deletedAt: null,
+        },
+        select: {
+          id: true,
+          name: true,
+          sku: true,
+          unit: true,
+          unitValue: true,
+          secondaryUnit: true,
+          secondaryUnitValue: true,
+        },
+        take: 500,
+      });
+
+      const matches = ocr.items.map((item) => buildOrderImageMatch(item, products));
+      const exactCount = matches.filter((m) => m.matchType === 'exact').length;
+      const ambiguousCount = matches.filter((m) => m.matchType === 'ambiguous').length;
+      const notFoundCount = matches.filter((m) => m.matchType === 'not_found').length;
+
+      const message =
+        matches.length === 0
+          ? 'No encontré líneas de productos para procesar.'
+          : ambiguousCount > 0 || notFoundCount > 0
+            ? `Detecté ${matches.length} item(s): ${exactCount} claros, ${ambiguousCount} ambiguos y ${notFoundCount} sin match.`
+            : `Detecté ${exactCount} item(s) de producto listos para agregar al pedido.`;
+
+      return {
+        success: true,
+        data: {
+          success: true,
+          classification: 'order_products',
+          confidence: ocr.confidence,
+          items: matches,
+          message,
+        },
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'No pude analizar la imagen',
       };
     }
   }
@@ -1323,6 +1923,7 @@ export function createPaymentTools(
   const { prisma, ledgerService, mpService } = deps;
 
   const tools: Array<BaseTool<z.ZodSchema, unknown>> = [
+    new OcrOrderImageProductsTool(prisma),
     new ExtractReceiptAmountTool(prisma),
     new ProcessReceiptTool(prisma),
     new UpdateReceiptAmountTool(prisma),
