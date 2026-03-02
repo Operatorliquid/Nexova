@@ -212,30 +212,21 @@ export default function IndexPage(): JSX.Element {
     target: containerRef,
     offset: ['start start', 'end end'],
   });
-  // motion/react v12: useSpring intermediary required for useTransform propagation.
-  // stiffness:600 gives smooth interpolation between scroll ticks (no micro-jitter).
-  // mass:0.1 keeps response fast while avoiding the choppy snap of mass:0.01.
-  const smoothProgress = useSpring(scrollYProgress, { stiffness: 600, damping: 50, mass: 0.1 });
+  // stiffness 180 / damping 28: rápido, sin overshoot, maneja reversa sin saltos
+  const smoothProgress = useSpring(scrollYProgress, { stiffness: 180, damping: 28, mass: 0.5 });
 
-  // Card expande sobre 176vh (2×) en vez de 88vh — más gradual, no "snap"
-  const heroWidth = useTransform(smoothProgress, [0, 0.08], ['94%', '100%']);
-  const heroHeight = useTransform(smoothProgress, [0, 0.08], ['92%', '100%']);
-  const heroRadius = useTransform(smoothProgress, [0, 0.08], ['3.5rem', '0rem']);
+  const heroWidth = useTransform(smoothProgress, [0, 0.04], ['94%', '100%']);
+  const heroHeight = useTransform(smoothProgress, [0, 0.04], ['92%', '100%']);
+  const heroRadius = useTransform(smoothProgress, [0, 0.04], ['3.5rem', '0rem']);
 
-  // Phones: se mueven gradualmente (±1200px) pero se DESVANECEN antes de que sec2
-  // aparezca en 0.10. phone1 tiene z-40 (> sec2 z-30), si no se desvanece se ve
-  // colgado encima de la siguiente sección. El Y sigue hasta 0.18 pero invisible.
-  const phone1Y = useTransform(smoothProgress, [0.02, 0.18], [0, -1200]);
-  const phone1Rotate = useTransform(smoothProgress, [0.02, 0.18], [-15, -35]);
-  const phone1Opacity = useTransform(smoothProgress, [0.02, 0.09], [1, 0]);
-  const phone2Y = useTransform(smoothProgress, [0.02, 0.18], [0, 1200]);
-  const phone2Rotate = useTransform(smoothProgress, [0.02, 0.18], [-15, 10]);
-  const phone2Opacity = useTransform(smoothProgress, [0.02, 0.09], [1, 0]);
+  const phone1Y = useTransform(smoothProgress, [0.02, 0.1], [0, -1800]);
+  const phone1Rotate = useTransform(smoothProgress, [0.02, 0.1], [-15, -35]);
+  const phone2Y = useTransform(smoothProgress, [0.02, 0.1], [0, 1800]);
+  const phone2Rotate = useTransform(smoothProgress, [0.02, 0.1], [-15, 10]);
 
-  // Texto hero: fade gradual pero terminado antes de sec2 (nav: 0.09, text: 0.12)
-  const textHeroX = useTransform(smoothProgress, [0.03, 0.16], [0, -700]);
-  const textHeroOpacity = useTransform(smoothProgress, [0.03, 0.12], [1, 0]);
-  const navOpacity = useTransform(smoothProgress, [0.02, 0.09], [1, 0]);
+  const textHeroX = useTransform(smoothProgress, [0.02, 0.1], [0, -1200]);
+  const textHeroOpacity = useTransform(smoothProgress, [0.02, 0.08], [1, 0]);
+  const navOpacity = useTransform(smoothProgress, [0.02, 0.08], [1, 0]);
 
   const sec2Y = useTransform(smoothProgress, [0.1, 0.14], ['40vh', '0vh']);
   const sec2Opacity = useTransform(smoothProgress, [0.1, 0.12, 0.2, 0.24], [0, 1, 1, 0]);
@@ -243,24 +234,24 @@ export default function IndexPage(): JSX.Element {
   const text1Lines = ['This isn\'t about who', 'shouts the loudest.'];
   const text2Lines = ['Wherever your money', 'goes, change follows.'];
   const text1Opacity = useTransform(smoothProgress, [0.63, 0.66], [1, 0]);
-  const text2Opacity = useTransform(smoothProgress, [0.79, 0.83], [1, 0]);
+  const text2Opacity = useTransform(smoothProgress, [0.77, 0.8], [1, 0]);
 
-  // Circle: wider range [0.74, 0.90] = 288vh at 1800vh ≈ original 220vh at 2200vh.
-  const circleScale = useTransform(smoothProgress, [0.74, 0.90], [0, 3]);
+  const circleScale = useTransform(smoothProgress, [0.80, 0.84], [0, 3]);
 
-  // MacBook: compressed window [0.85 → 0.955] = 168vh at 1600vh total
-  // Circle fully open at 0.86, so MacBook enters into clean white.
+  // Mac: 4 keyframes so it continuously moves — no dead zone where scroll does nothing.
+  // 0.92→0.97: exits to -140vh (fully off screen) instead of hanging at -38vh until sticky releases.
   const deviceTravelY = useTransform(
     smoothProgress,
-    [0.85, 0.878, 0.925, 0.955],
-    ['110vh', '0vh', '-30vh', '-140vh'],
+    [0.81, 0.855, 0.92, 0.97],
+    ['110vh', '0vh', '-38vh', '-140vh'],
   );
-  const deviceScale = useTransform(smoothProgress, [0.878, 0.925], [1, 0.95]);
+  const deviceScale = useTransform(smoothProgress, [0.855, 0.92], [1, 0.95]);
 
-  const macText1Opacity = useTransform(smoothProgress, [0.881, 0.900, 0.925, 0.955], [0, 1, 1, 0]);
-  const macText1Y = useTransform(smoothProgress, [0.881, 0.900], [22, 0]);
-  const macText2Opacity = useTransform(smoothProgress, [0.891, 0.910, 0.925, 0.955], [0, 1, 1, 0]);
-  const macText2Y = useTransform(smoothProgress, [0.891, 0.910], [18, 0]);
+  // Texto: fade-in on entry, fade-out before MacBook exits so nothing hangs on screen.
+  const macText1Opacity = useTransform(smoothProgress, [0.858, 0.882, 0.92, 0.95], [0, 1, 1, 0]);
+  const macText1Y = useTransform(smoothProgress, [0.858, 0.882], [22, 0]);
+  const macText2Opacity = useTransform(smoothProgress, [0.872, 0.896, 0.92, 0.95], [0, 1, 1, 0]);
+  const macText2Y = useTransform(smoothProgress, [0.872, 0.896], [18, 0]);
 
   const renderRevealText = (
     lines: string[],
@@ -281,7 +272,7 @@ export default function IndexPage(): JSX.Element {
               <span key={`${lineIdx}-${wordIdx}`} className="inline-block whitespace-nowrap mr-[0.25em]">
                 {word.split('').map((char, charIdx) => {
                   const charStart = startRange + step * globalIndex;
-                  const charEnd = charStart + step * 8;
+                  const charEnd = charStart + step * 5;
                   globalIndex += 1;
                   return (
                     <CharReveal
@@ -301,21 +292,25 @@ export default function IndexPage(): JSX.Element {
     );
   };
 
-  // Phase7: card zooms in linearly — direct scroll progress, no spring
   const { scrollYProgress: p7Progress } = useScroll({
     target: phase7Ref,
     offset: ['start end', 'end end'],
   });
-  const p7Width = useTransform(p7Progress, [0, 0.2], ['88%', '100%']);
-  const p7Height = useTransform(p7Progress, [0, 0.2], ['82%', '100%']);
-  const p7Radius = useTransform(p7Progress, [0, 0.2], ['4rem', '0rem']);
+  const p7Smooth = useSpring(p7Progress, { stiffness: 180, damping: 28, mass: 0.5 });
+
+  const p7Width = useTransform(p7Smooth, [0, 0.15], ['90%', '100%']);
+  const p7Height = useTransform(p7Smooth, [0, 0.15], ['85%', '100%']);
+  const p7Radius = useTransform(p7Smooth, [0, 0.15], ['4rem', '0rem']);
+
+  const p7BgY = useTransform(p7Smooth, [0, 1], ['-10%', '15%']);
+  const p7ContentY = useTransform(p7Smooth, [0, 1], ['15%', '-15%']);
 
   const { scrollYProgress: p8Progress } = useScroll({
     target: phase8Ref,
     offset: ['start 60%', 'end end'],
   });
-  // Spring required for CharReveal propagation in p8 reveal text
-  const p8Smooth = useSpring(p8Progress, { stiffness: 400, damping: 40, mass: 0.1 });
+  const p8Smooth = useSpring(p8Progress, { stiffness: 180, damping: 28, mass: 0.5 });
+
   const p8BgColor = useTransform(p8Smooth, [0.35, 0.65], ['#ffffff', '#000000']);
   const p8MainColor = useTransform(p8Smooth, [0.35, 0.65], ['#3e2723', '#ffffff']);
   const p8SubColor = useTransform(p8Smooth, [0.35, 0.65], ['#52525b', '#d4d4d8']);
@@ -336,22 +331,22 @@ export default function IndexPage(): JSX.Element {
     target: phase11Ref,
     offset: ['start end', 'end end'],
   });
-  // Direct progress — linear, no spring
-  const p11Width = useTransform(p11Progress, [0, 0.35], ['90%', '100%']);
-  const p11Height = useTransform(p11Progress, [0, 0.35], ['85%', '100%']);
-  const p11Radius = useTransform(p11Progress, [0, 0.35], ['4rem', '0rem']);
+  const p11Smooth = useSpring(p11Progress, { stiffness: 180, damping: 28, mass: 0.5 });
+
+  const p11Width = useTransform(p11Smooth, [0, 0.35], ['90%', '100%']);
+  const p11Height = useTransform(p11Smooth, [0, 0.35], ['85%', '100%']);
+  const p11Radius = useTransform(p11Smooth, [0, 0.35], ['4rem', '0rem']);
 
   const { scrollYProgress: p12Progress } = useScroll({
     target: phase12Ref,
     offset: ['start end', 'end end'],
   });
-  // Spring required: p12Smooth drives renderRevealText (CharReveal)
-  const p12Smooth = useSpring(p12Progress, { stiffness: 400, damping: 40, mass: 0.1 });
+  const p12Smooth = useSpring(p12Progress, { stiffness: 180, damping: 28, mass: 0.5 });
   const p12TextLines = ["Let's Pocketchange", 'the world'];
 
   return (
     <div className="bg-white">
-      <div ref={containerRef} className="relative w-full bg-black" style={{ height: '1800vh' }}>
+      <div ref={containerRef} className="relative w-full bg-black" style={{ height: '2200vh' }}>
         <div className="sticky top-0 h-screen w-full flex items-center justify-center overflow-hidden z-20">
           <motion.div
             style={{ width: heroWidth, height: heroHeight, borderRadius: heroRadius }}
@@ -414,7 +409,7 @@ export default function IndexPage(): JSX.Element {
               <div className="absolute right-0 top-0 bottom-0 w-1/2">
                 {/* Phone 1 — arriba, centrado hacia la izquierda del panel */}
                 <motion.div
-                  style={{ y: phone1Y, rotate: phone1Rotate, opacity: phone1Opacity }}
+                  style={{ y: phone1Y, rotate: phone1Rotate }}
                   className="absolute z-40 top-6 left-[10%]"
                 >
                   <img
@@ -426,8 +421,8 @@ export default function IndexPage(): JSX.Element {
 
                 {/* Phone 2 — abajo, centrado hacia la derecha del panel */}
                 <motion.div
-                  style={{ y: phone2Y, rotate: phone2Rotate, opacity: phone2Opacity }}
-                  className="absolute z-20 bottom-6 right-[10%] blur-[0.5px]"
+                  style={{ y: phone2Y, rotate: phone2Rotate }}
+                  className="absolute z-20 bottom-6 right-[10%] opacity-90 blur-[0.5px]"
                 >
                   <img
                     src="/assets/phone2.webp"
@@ -459,22 +454,18 @@ export default function IndexPage(): JSX.Element {
             <div className="absolute inset-0 z-40 flex items-center justify-center pointer-events-none">
               {SECTION_CARDS.map((card, idx) => {
                 const startEntry = 0.22 + idx * 0.03;
-                // Rango extendido: 0.10 en vez de 0.06 (220vh vs 132vh).
-                // Sin spring, el recorrido desde y=1400 debe ser más largo para que
-                // se vea el "subir desde abajo" en vez de aparecer de golpe.
-                const endEntry = startEntry + 0.10;
-                const startExit = 0.44 + idx * 0.02;
+                const endEntry = startEntry + 0.06;
+                const startExit = 0.42 + idx * 0.02;
                 const endExit = startExit + 0.08;
 
                 const y = useTransform(
                   smoothProgress,
                   [startEntry, endEntry, startExit, endExit],
-                  [700, card.yPos, card.yPos - 40, -1200],
+                  [1400, card.yPos, card.yPos - 40, -1200],
                 );
-                // Fade-in extendido: 0.05 en vez de 0.02 (110vh vs 44vh)
                 const opacity = useTransform(
                   smoothProgress,
-                  [startEntry, startEntry + 0.05, startExit, endExit],
+                  [startEntry, startEntry + 0.02, startExit, endExit],
                   [0, 1, 1, 0],
                 );
                 const rotation = useTransform(
@@ -535,12 +526,10 @@ export default function IndexPage(): JSX.Element {
               style={{ scale: circleScale, x: '-50%', y: '50%' }}
               className="absolute bottom-0 left-1/2 w-[150vw] aspect-square bg-white rounded-full z-[48] pointer-events-none"
             />
-            {/* MacBook + text — absolutely positioned so they never take up flex flow space */}
-            <div className="absolute inset-0 z-[49] pointer-events-none">
-              {/* MacBook mockup — centred at top, travels up via deviceTravelY */}
+            <motion.div className="absolute inset-0 z-[49] pointer-events-none flex flex-col items-center pt-8 md:pt-10">
               <motion.div
-                style={{ y: deviceTravelY, scale: deviceScale, x: '-50%', left: '50%' }}
-                className="absolute top-8 md:top-10 w-[340px] md:w-[700px] lg:w-[900px] flex flex-col items-center drop-shadow-[0_-20px_50px_rgba(0,0,0,0.2)]"
+                style={{ y: deviceTravelY, scale: deviceScale }}
+                className="relative w-[340px] md:w-[700px] lg:w-[900px] flex flex-col items-center drop-shadow-[0_-20px_50px_rgba(0,0,0,0.2)]"
               >
                 <div className="w-full aspect-[16/10] bg-zinc-900 rounded-t-2xl md:rounded-t-[2.5rem] border-[8px] md:border-[16px] border-zinc-900 overflow-hidden relative">
                   <img
@@ -553,51 +542,43 @@ export default function IndexPage(): JSX.Element {
                 <div className="w-[115%] h-3 md:h-6 bg-zinc-300 rounded-b-xl md:rounded-b-2xl flex justify-center relative z-10 border-t border-white/50 shadow-[0_20px_40px_rgba(0,0,0,0.15)]">
                   <div className="w-1/4 h-1.5 md:h-2 bg-zinc-400 rounded-b-md shadow-inner" />
                 </div>
-
-                {/* Text pinned BELOW the MacBook inside the same travelling div — no extra layout space */}
-                <div className="w-full max-w-5xl text-center px-6 mt-8 md:mt-12">
-                  <motion.p
-                    style={{ opacity: macText1Opacity, y: macText1Y }}
-                    className="text-4xl md:text-[70px] font-light leading-[1.1] tracking-tight text-[#ff4200] mb-4 md:mb-8"
-                  >
-                    This isn't just an application.<br />It's a call for action.
-                  </motion.p>
-                  <motion.p
-                    style={{ opacity: macText2Opacity, y: macText2Y }}
-                    className="text-base md:text-2xl font-medium leading-relaxed tracking-tight text-zinc-800 max-w-4xl mx-auto"
-                  >
-                    Turn your spending into a tool for change, not just convenience. Put visibility where it belongs: with the people who hold our communities together.
-                  </motion.p>
-                </div>
               </motion.div>
-            </div>
+              <motion.div style={{ y: deviceTravelY }} className="w-full max-w-5xl text-center px-6 mt-8 md:mt-12">
+                <motion.p
+                  style={{ opacity: macText1Opacity, y: macText1Y }}
+                  className="text-4xl md:text-[70px] font-light leading-[1.1] tracking-tight text-[#ff4200] mb-4 md:mb-8"
+                >
+                  This isn't just an application.<br />It's a call for action.
+                </motion.p>
+                <motion.p
+                  style={{ opacity: macText2Opacity, y: macText2Y }}
+                  className="text-base md:text-2xl font-medium leading-relaxed tracking-tight text-zinc-800 max-w-4xl mx-auto"
+                >
+                  Turn your spending into a tool for change, not just convenience. Put visibility where it belongs: with the people who hold our communities together.
+                </motion.p>
+              </motion.div>
+            </motion.div>
           </motion.div>
         </div>
       </div>
 
-      <div ref={phase7Ref} className="relative w-full z-30 -mt-[120vh]" style={{ height: '200vh' }}>
-        {/* bg-black fills the frame around the rounded card — no white bleeding */}
-        <div className="sticky top-0 h-screen w-full flex items-center justify-center overflow-hidden bg-black">
+      <div ref={phase7Ref} className="relative w-full z-30 -mt-[100vh]" style={{ height: '100vh' }}>
+        <div className="sticky top-0 h-screen w-full flex items-center justify-center overflow-hidden">
           <motion.div
             style={{ width: p7Width, height: p7Height, borderRadius: p7Radius }}
-            className="relative bg-[#ff4200] overflow-hidden flex flex-col"
+            className="relative bg-orange-600 overflow-hidden flex flex-col shadow-[0_0_80px_rgba(0,0,0,0.15)]"
           >
-            {/* Background image — static, no parallax */}
-            <div className="absolute inset-0 w-full h-full z-0">
+            <motion.div style={{ y: p7BgY }} className="absolute inset-0 w-full h-[120%] -top-[10%] z-0">
               <img
                 src="https://images.unsplash.com/photo-1506869640319-a1a5606089ce?q=80&w=1600&auto=format&fit=crop"
                 alt="Silhouette"
                 className="w-full h-full object-cover mix-blend-multiply opacity-80"
               />
               <div className="absolute inset-0 bg-gradient-to-r from-[#ff4200] via-[#ff4200]/80 to-transparent" />
-            </div>
+            </motion.div>
 
-            {/* Content — simple fade-in, no vertical scroll movement */}
             <motion.div
-              initial={{ opacity: 0 }}
-              whileInView={{ opacity: 1 }}
-              viewport={{ once: false, amount: 0.3 }}
-              transition={{ duration: 0.7, ease: 'easeOut' }}
+              style={{ y: p7ContentY }}
               className="relative z-10 h-full flex flex-col justify-center px-10 md:px-24 max-w-3xl text-white"
             >
               <div className="mb-8 inline-block self-start border border-white/40 rounded-full px-6 py-2 text-[10px] md:text-xs font-black tracking-widest uppercase">
@@ -657,7 +638,7 @@ export default function IndexPage(): JSX.Element {
                 0.05,
                 0.4,
                 'text-4xl md:text-[65px] font-light leading-[1.1] tracking-tight mb-12',
-                p8Progress,
+                p8Smooth,
               )}
             </motion.div>
 
@@ -667,7 +648,7 @@ export default function IndexPage(): JSX.Element {
                 0.35,
                 0.75,
                 'text-sm md:text-[18px] font-medium leading-relaxed tracking-tight max-w-4xl mx-auto',
-                p8Progress,
+                p8Smooth,
               )}
             </motion.div>
           </div>
@@ -956,6 +937,6 @@ export default function IndexPage(): JSX.Element {
           </div>
         </div>
       </div>
-    </div >
+    </div>
   );
 }

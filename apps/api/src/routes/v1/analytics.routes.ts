@@ -19,6 +19,52 @@ const metricsQuerySchema = z.object({
   year: z.coerce.number().int().min(2000).max(2100).optional(),
 });
 
+function buildEmergencyFallbackInsights(reason?: string): {
+  insights: {
+    headline: string;
+    summary: string;
+    strengths: string[];
+    risks: string[];
+    opportunities: string[];
+    actions: Array<{ title: string; detail: string; priority: 'alta' | 'media' | 'baja' }>;
+  };
+  generatedAt: string;
+  model: string;
+  fallback: true;
+  warning?: string;
+} {
+  return {
+    insights: {
+      headline: 'No pudimos completar el análisis IA en este momento',
+      summary: 'Te mostramos un resumen de contingencia mientras se recupera el servicio.',
+      strengths: ['El módulo de métricas sigue disponible para análisis manual.'],
+      risks: ['El resumen IA puede volver incompleto hasta que se estabilice el proveedor.'],
+      opportunities: ['Podés revisar ventas, ticket y cobranzas en métricas para decidir hoy.'],
+      actions: [
+        {
+          title: 'Reintentar en unos minutos',
+          detail: 'El sistema aplicó fallback automático para evitar corte del flujo.',
+          priority: 'media',
+        },
+        {
+          title: 'Tomar decisiones con KPIs base',
+          detail: 'Usá ventas totales, pedidos, ticket promedio y deudas para priorizar acciones inmediatas.',
+          priority: 'baja',
+        },
+        {
+          title: 'Monitorear estabilidad',
+          detail: 'Si persiste, revisar cuota/rate-limit y latencia del proveedor de IA.',
+          priority: 'alta',
+        },
+      ],
+    },
+    generatedAt: new Date().toISOString(),
+    model: 'emergency-fallback-v1',
+    fallback: true,
+    ...(reason ? { warning: reason } : {}),
+  };
+}
+
 export const analyticsRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get(
     '/metrics',
@@ -82,19 +128,19 @@ export const analyticsRoutes: FastifyPluginAsync = async (fastify) => {
         }
 
         const result = await generateBusinessInsights(fastify.prisma, workspaceId, query.range, query.year);
-        await recordMonthlyUsage(fastify.prisma, {
-          workspaceId,
-          metric: COMMERCE_USAGE_METRICS.aiMetricsInsights,
-          quantity: 1,
-          metadata: { source: 'analytics.insights' },
-        });
+        if (!result.fallback) {
+          await recordMonthlyUsage(fastify.prisma, {
+            workspaceId,
+            metric: COMMERCE_USAGE_METRICS.aiMetricsInsights,
+            quantity: 1,
+            metadata: { source: 'analytics.insights' },
+          });
+        }
         return reply.send(result);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'INSIGHTS_FAILED';
-        if (message === 'LLM_NOT_CONFIGURED') {
-          return reply.code(503).send({ error: 'LLM_NOT_CONFIGURED', message: 'LLM no configurado' });
-        }
-        return reply.code(500).send({ error: 'INSIGHTS_FAILED', message });
+        request.log.warn({ workspaceId, error }, 'analytics insights failed, returning emergency fallback');
+        return reply.send(buildEmergencyFallbackInsights(message));
       }
     }
   );

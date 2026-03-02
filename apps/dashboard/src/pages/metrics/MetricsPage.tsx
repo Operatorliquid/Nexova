@@ -101,6 +101,16 @@ interface GeneratedInsights {
   actions: Array<{ title: string; detail: string; priority: 'alta' | 'media' | 'baja' }>;
 }
 
+function readErrorMessage(payload: unknown): string | null {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
+  const record = payload as Record<string, unknown>;
+  const message = record.message;
+  if (typeof message === 'string' && message.trim().length > 0) return message;
+  const error = record.error;
+  if (typeof error === 'string' && error.trim().length > 0) return error;
+  return null;
+}
+
 const EMPTY_SERIES: MetricsSeriesPoint[] = [];
 const EMPTY_PAYMENTS: Array<{ method: string; total: number; count: number }> = [];
 
@@ -261,7 +271,14 @@ export default function MetricsPage(): JSX.Element {
         const queryParams = new URLSearchParams({ range, year });
         const response = await apiFetch(`/api/v1/analytics/insights?${queryParams.toString()}`, {}, workspace.id);
         if (!response.ok) {
-          throw new Error('No se pudo generar el resumen');
+          let message = 'No se pudo generar el resumen';
+          try {
+            const payload = await response.json();
+            message = readErrorMessage(payload) ?? message;
+          } catch {
+            // noop
+          }
+          throw new Error(message);
         }
         const data = (await response.json()) as unknown as { insights?: GeneratedInsights };
         setInsights(data.insights ?? null);

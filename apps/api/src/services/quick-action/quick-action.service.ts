@@ -4201,6 +4201,8 @@ export class QuickActionService {
       normalized.includes('estado de cuenta') ||
       normalized.includes('cuenta corriente') ||
       normalized.includes('que debe') ||
+      normalized.includes('cuanto debe') ||
+      normalized.includes('cuanto debo') ||
       normalized.includes('que debo') ||
       normalized.includes('saldo adeudado') ||
       normalized.includes('deuda hasta hoy')
@@ -4389,11 +4391,17 @@ export class QuickActionService {
 
   private hasCustomerSelectorInput(input: Record<string, unknown>): boolean {
     const asString = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
+    const phone = asString(input.phone);
+    const email = asString(input.email);
+    const customerId = asString(input.customerId);
+    const name = asString(input.name);
+    const cleanedName = name ? this.cleanCustomerIdentifierCandidate(name) : '';
+    const hasUsableName = Boolean(cleanedName) && !this.isGenericCustomerCandidate(cleanedName);
     return Boolean(
-      asString(input.customerId) ||
-      asString(input.phone) ||
-      asString(input.name) ||
-      asString(input.email)
+      customerId ||
+      phone ||
+      email ||
+      hasUsableName
     );
   }
 
@@ -4760,6 +4768,8 @@ export class QuickActionService {
       normalized.includes('cliente') ||
       normalized.includes('deuda') ||
       normalized.includes('saldo') ||
+      normalized.includes('debe') ||
+      normalized.includes('debo') ||
       normalized.includes('pedido') ||
       normalized.includes('orden') ||
       normalized.includes('conversacion') ||
@@ -4783,8 +4793,11 @@ export class QuickActionService {
     const patterns: RegExp[] = [
       /(?:^|\b)(?:resumen|estado)\s+de\s+cuenta\s+(?:de|del|para)?\s*(.+)$/i,
       /(?:^|\b)cuenta\s+corriente\s+(?:de|del|para)?\s*(.+)$/i,
+      /(?:^|\b)(?:cuanto|cuánto)\s+(?:debe|debo)\s+(?:de|del|de la|del cliente|de cliente|para)?\s*(.+)$/i,
+      /(?:^|\b)(?:debe|debo)\s+(?:de|del|de la|del cliente|de cliente|para)?\s*(.+)$/i,
       /(?:^|\b)(?:que\s+debe|que\s+debo)\s+(?:de|del|de la|del cliente|de cliente|para)?\s*(.+)$/i,
       /(?:^|\b)(?:buscar|ver|mostrar|mostrame|dame|traeme|trae|abrir)\s+(?:el\s+|al\s+)?cliente\s+(.+)$/i,
+      /(?:^|\b)(?:buscar|ver|mostrar|mostrame|dame|traeme|trae|abrir)\s+(?:a|al)\s+(.+?)\s+(?:cliente|deudor(?:es)?)$/i,
       /(?:^|\b)cliente\s+(.+)$/i,
       /(?:^|\b)clientes\s+(.+)$/i,
       /(?:^|\b)(?:deuda|saldo)\s+(?:de|del|de la|del cliente|de cliente)?\s*(.+)$/i,
@@ -4813,6 +4826,11 @@ export class QuickActionService {
       if (this.isGenericCustomerCandidate(candidate)) continue;
 
       return { name: candidate };
+    }
+
+    const looseName = this.extractCustomerNameLoose(cleaned);
+    if (looseName && !this.isGenericCustomerCandidate(looseName)) {
+      return { name: looseName };
     }
 
     return null;
@@ -5304,6 +5322,7 @@ export class QuickActionService {
 
   private async resolveCustomer(input: Record<string, unknown>, workspaceId: string): Promise<CustomerRecord> {
     const where: Prisma.CustomerWhereInput = { workspaceId, deletedAt: null };
+    const readTrimmed = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
     const customerId = input.customerId ? String(input.customerId) : undefined;
     if (customerId) {
       const customer = await this.prisma.customer.findFirst({ where: { id: customerId, workspaceId, deletedAt: null } });
@@ -5316,12 +5335,29 @@ export class QuickActionService {
       where.phone = { contains: phone.replace(/\D/g, '') };
     } else if (input.email) {
       where.email = { contains: String(input.email), mode: 'insensitive' as const };
-    } else if (input.name) {
-      const rawName = String(input.name).trim();
+    } else {
+      const rawNameCandidates = [
+        readTrimmed(input.name),
+        readTrimmed(input.customerName),
+        readTrimmed(input.customer),
+        readTrimmed(input.cliente),
+        readTrimmed(input.query),
+        readTrimmed(input.target),
+      ].filter((value) => value.length > 0);
+      const usableName = rawNameCandidates
+        .map((value) => this.cleanCustomerIdentifierCandidate(value))
+        .find((value) => Boolean(value) && !this.isGenericCustomerCandidate(value));
+
+      if (!usableName) {
+        throw new Error('Necesito un cliente (id, nombre, teléfono o email).');
+      }
+
+      const rawName = usableName;
       const tokens = rawName.split(/\s+/).filter(Boolean);
       const fullNameFilter = [
         { firstName: { contains: rawName, mode: 'insensitive' as const } },
         { lastName: { contains: rawName, mode: 'insensitive' as const } },
+        { businessName: { contains: rawName, mode: 'insensitive' as const } },
       ];
 
       if (tokens.length >= 2) {
@@ -5341,12 +5377,16 @@ export class QuickActionService {
               { lastName: { contains: first, mode: 'insensitive' as const } },
             ],
           },
+          {
+            AND: [
+              { businessName: { contains: first, mode: 'insensitive' as const } },
+              { businessName: { contains: last, mode: 'insensitive' as const } },
+            ],
+          },
         ];
       } else {
         where.OR = fullNameFilter;
       }
-    } else {
-      throw new Error('Necesito un cliente (id, nombre, teléfono o email).');
     }
 
     const candidates = await this.prisma.customer.findMany({

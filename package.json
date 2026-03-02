@@ -30,6 +30,8 @@
     "railway:api:start": "pnpm --filter @nexova/api start",
     "railway:worker:build": "HUSKY=0 PRISMA_SKIP_POSTINSTALL_GENERATE=1 pnpm install --frozen-lockfile --filter @nexova/worker... && pnpm --filter @nexova/worker exec prisma generate --schema ../../prisma/schema.prisma && pnpm --filter @nexova/worker... build",
     "railway:worker:start": "pnpm --filter @nexova/worker start",
+    "railway:dashboard:build": "HUSKY=0 pnpm install --frozen-lockfile --filter @nexova/dashboard... && pnpm --filter @nexova/dashboard... build",
+    "railway:dashboard:start": "pnpm --filter @nexova/dashboard start",
     "format": "prettier --write \"**/*.{ts,tsx,js,json,md}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,json,md}\"",
     "prepare": "husky"
