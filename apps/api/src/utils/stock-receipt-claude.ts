@@ -1,6 +1,9 @@
 import Anthropic from '@anthropic-ai/sdk';
 
 const INT32_MAX = 2_147_483_647;
+const DEFAULT_OCR_MAX_TOKENS = 6000;
+const MIN_OCR_MAX_TOKENS = 1000;
+const MAX_OCR_MAX_TOKENS = 12000;
 
 type ClaudeProduct = {
   id: string;
@@ -54,6 +57,13 @@ type ProductMatchCandidate = {
   confidence: number;
   reason: string;
 };
+
+function readOcrMaxTokens(): number {
+  const raw = process.env.STOCK_RECEIPT_OCR_MAX_TOKENS;
+  const parsed = Number.parseInt(raw || '', 10);
+  if (!Number.isFinite(parsed)) return DEFAULT_OCR_MAX_TOKENS;
+  return Math.max(MIN_OCR_MAX_TOKENS, Math.min(MAX_OCR_MAX_TOKENS, parsed));
+}
 
 function readRecordField(value: unknown, key: string): unknown {
   if (!value || typeof value !== 'object') return undefined;
@@ -467,6 +477,8 @@ function buildPrompt(products: ClaudeProduct[]): string {
     '- Para segunda unidad "bulto", usar secondary_unit = "bundle".',
     '- En new_product.name NO incluyas medida ni formato (ej: no "Pepsi 2LT", no "Coca PETx6").',
     '- La medida va en unit/unit_value y el formato pack/caja/bulto/docena va en secondary_unit/secondary_unit_value.',
+    '- Extraé TODOS los renglones de productos visibles en la boleta (no sólo los primeros).',
+    '- Si hay muchos ítems, priorizá incluir todos los ítems y usá match.reason corto o null.',
     '- Si falta total, estimá total_cents sumando line_total_cents de los ítems.',
     '- No inventes productos ni ids.',
     '- Respondé SOLO con JSON válido en una sola linea (sin markdown).',
@@ -543,7 +555,7 @@ export async function extractStockReceiptWithClaude(params: {
 
   const response = await anthropic.messages.create({
     model,
-    max_tokens: 1400,
+    max_tokens: readOcrMaxTokens(),
     temperature: 0,
     messages: [{ role: 'user', content }],
   });

@@ -607,8 +607,9 @@ export function QuickActionsFloat(): JSX.Element {
         ref={panelRef}
         className={cn(
           'fixed z-50',
-          'left-3 right-3 bottom-3 sm:left-auto sm:right-6 sm:bottom-6 sm:w-[480px] sm:max-w-[calc(100vw-3rem)]',
-          'rounded-2xl shadow-2xl overflow-hidden',
+          'left-3 right-3 top-3 bottom-3 sm:left-auto sm:right-6 sm:top-auto sm:bottom-6 sm:w-[480px] sm:max-w-[calc(100vw-3rem)]',
+          'max-h-[calc(100dvh-1.5rem)] sm:max-h-[min(720px,calc(100dvh-3rem))]',
+          'rounded-2xl shadow-2xl overflow-hidden flex flex-col',
           'bg-popover border border-border',
           'transition-all duration-300 ease-out origin-bottom sm:origin-bottom-right',
           isOpen
@@ -636,7 +637,7 @@ export function QuickActionsFloat(): JSX.Element {
         </div>
 
         {/* Content */}
-        <div className="px-5 py-4 space-y-4">
+        <div className="px-5 py-4 space-y-4 min-h-0 flex-1 overflow-y-auto overscroll-contain">
           {/* Input */}
           <div className="relative">
             <div className="flex gap-2">
@@ -785,9 +786,10 @@ export function QuickActionsFloat(): JSX.Element {
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-3 border-t border-border flex items-center justify-between text-xs text-muted-foreground">
-          <span>Presiona Enter para ejecutar</span>
-          <div className="flex items-center gap-1.5">
+        <div className="px-5 py-3 border-t border-border flex items-center justify-between text-xs text-muted-foreground shrink-0">
+          <span className="sm:hidden">Enter para ejecutar</span>
+          <span className="hidden sm:inline">Presiona Enter para ejecutar</span>
+          <div className="hidden sm:flex items-center gap-1.5">
             <kbd className="px-1.5 py-0.5 rounded-md bg-secondary border border-border text-[10px] font-medium">
               <Command className="w-2.5 h-2.5 inline" />
             </kbd>

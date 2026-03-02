@@ -17,6 +17,7 @@ import {
 import { useRef, useState } from 'react';
 
 import FluidOrangeBackground from '../components/FluidOrangeBackground';
+import HeroDashboardMockup from '../components/HeroDashboardMockup';
 
 const AppleIcon = (): JSX.Element => (
   <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
@@ -219,12 +220,7 @@ export default function IndexPage(): JSX.Element {
   const heroHeight = useTransform(smoothProgress, [0, 0.04], ['92%', '100%']);
   const heroRadius = useTransform(smoothProgress, [0, 0.04], ['3.5rem', '0rem']);
 
-  const phone1Y = useTransform(smoothProgress, [0.02, 0.1], [0, -1800]);
-  const phone1Rotate = useTransform(smoothProgress, [0.02, 0.1], [-15, -35]);
-  const phone2Y = useTransform(smoothProgress, [0.02, 0.1], [0, 1800]);
-  const phone2Rotate = useTransform(smoothProgress, [0.02, 0.1], [-15, 10]);
-
-  const textHeroX = useTransform(smoothProgress, [0.02, 0.1], [0, -1200]);
+  const textHeroY = useTransform(smoothProgress, [0.02, 0.1], [0, -200]);
   const textHeroOpacity = useTransform(smoothProgress, [0.02, 0.08], [1, 0]);
   const navOpacity = useTransform(smoothProgress, [0.02, 0.08], [1, 0]);
 
@@ -361,7 +357,7 @@ export default function IndexPage(): JSX.Element {
               style={{ opacity: navOpacity }}
               className="relative z-50 flex items-center justify-between px-12 py-10 text-white font-black italic uppercase tracking-tighter"
             >
-              <div className="text-3xl">POCKETCHANGE</div>
+              <div className="text-3xl">NEXOVA</div>
               <div className="hidden lg:flex items-center gap-10 text-[11px] tracking-[0.3em] opacity-60 font-bold">
                 <span>Who it's for</span>
                 <span>How it works</span>
@@ -376,60 +372,34 @@ export default function IndexPage(): JSX.Element {
               </button>
             </motion.nav>
 
-            <div className="relative flex-1 flex items-center px-12 md:px-32 z-10 pointer-events-none">
+            <div className="relative flex-1 flex flex-col items-center justify-center px-6 md:px-12 z-10 pointer-events-none w-full h-full pb-10">
               <motion.div
-                style={{ opacity: textHeroOpacity, x: textHeroX }}
-                className="max-w-5xl text-white pointer-events-auto"
+                style={{ opacity: textHeroOpacity, y: textHeroY }}
+                className="max-w-4xl text-white pointer-events-auto text-center flex flex-col items-center mt-12 md:mt-24 z-20"
               >
-                <h1 className="text-6xl md:text-[96px] font-black leading-[1.05] tracking-tighter mb-8 drop-shadow-2xl italic">
-                  Vendé más. <br />Atendé mejor. <br />Crecé sin límites.
+                <div className="mb-6 px-4 py-1.5 rounded-full border border-white/20 bg-white/5 backdrop-blur-md inline-flex items-center gap-2 text-xs font-semibold tracking-wide shadow-lg">
+                  <span className="text-[#ff4200]">✨ New Update</span>
+                  <span className="text-white/60">|</span>
+                  <span>Introducing v3 — <a href="#" className="text-blue-400 hover:text-blue-300 transition-colors">Try Now</a></span>
+                </div>
+                <h1 className="text-5xl md:text-7xl font-bold leading-[1.1] tracking-tight mb-6 drop-shadow-2xl">
+                  Platform For Advanced Analytics<br />To Grow Your Business
                 </h1>
-                <p className="text-base md:text-xl opacity-80 mb-12 max-w-sm font-medium leading-relaxed tracking-tight">
-                  Joyas locales. Fundadores subrepresentados. Marcas haciendo el bien. Gasta con
-                  proposito.
+                <p className="text-base md:text-lg opacity-70 mb-10 max-w-xl font-medium leading-relaxed tracking-tight">
+                  Lorem ipsum dolor sit amet consectetur tortor aliquet eget consectetur sollicitudin tempus.
                 </p>
-                <div className="flex flex-wrap gap-8">
-                  <div className="flex items-center gap-6 px-12 py-7 bg-black rounded-[2.5rem] shadow-2xl group cursor-pointer active:scale-95 transition-transform">
-                    <AppleIcon />
-                    <div className="text-left font-black">
-                      <p className="text-[10px] uppercase opacity-40">Download on</p>
-                      <p className="text-2xl">App Store</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-6 px-12 py-7 bg-black rounded-[2.5rem] shadow-2xl group cursor-pointer active:scale-95 transition-transform">
-                    <PlayIcon />
-                    <div className="text-left font-black">
-                      <p className="text-[10px] uppercase opacity-40">Get it on</p>
-                      <p className="text-2xl">Google Play</p>
-                    </div>
-                  </div>
+                <div className="flex flex-wrap justify-center gap-4 mb-20">
+                  <button className="px-8 py-3.5 bg-white text-black rounded-xl font-semibold hover:bg-zinc-200 transition-colors shadow-lg active:scale-95">
+                    Start for free
+                  </button>
+                  <button className="px-8 py-3.5 bg-zinc-800/80 text-white rounded-xl font-semibold border border-white/10 hover:bg-zinc-800 transition-colors shadow-lg active:scale-95">
+                    Live Demo
+                  </button>
                 </div>
               </motion.div>
-              {/* Right panel: phone1 arriba-izquierda, phone2 abajo-derecha, más juntos */}
-              <div className="absolute right-0 top-0 bottom-0 w-1/2">
-                {/* Phone 1 — arriba, centrado hacia la izquierda del panel */}
-                <motion.div
-                  style={{ y: phone1Y, rotate: phone1Rotate }}
-                  className="absolute z-40 top-6 left-[10%]"
-                >
-                  <img
-                    src="/assets/phone1.webp"
-                    alt="Phone Front"
-                    className="max-h-[65vh] w-auto drop-shadow-2xl"
-                  />
-                </motion.div>
 
-                {/* Phone 2 — abajo, centrado hacia la derecha del panel */}
-                <motion.div
-                  style={{ y: phone2Y, rotate: phone2Rotate }}
-                  className="absolute z-20 bottom-6 right-[10%] opacity-90 blur-[0.5px]"
-                >
-                  <img
-                    src="/assets/phone2.webp"
-                    alt="Phone Back"
-                    className="max-h-[60vh] w-auto drop-shadow-xl"
-                  />
-                </motion.div>
+              <div className="w-full max-w-[1100px] flex-1 min-h-0 pointer-events-auto flex flex-col justify-end perspective-[2000px] z-10 pb-8">
+                <HeroDashboardMockup progress={smoothProgress} startRange={0.01} endRange={0.08} />
               </div>
             </div>
 
