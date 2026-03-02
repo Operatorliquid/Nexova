@@ -1,11 +1,12 @@
 import { AlertTriangle, CreditCard, Lock, LogOut, RefreshCw } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/Card';
 import { AnimatedPage } from '@/components/ui/motion';
 import { useAuth } from '@/contexts/AuthContext';
+import { apiFetch } from '@/lib/api';
 
 export function normalizeWorkspaceStatus(status?: string | null): string {
   return (status || '').trim().toLowerCase();
@@ -38,6 +39,7 @@ interface WorkspacePaywallCardProps {
   retryLabel?: string;
   logoutLabel?: string;
   onRetry?: () => void;
+  retryDisabled?: boolean;
   onLogout?: () => void;
   badgeText?: string;
   badgeVariant?: 'secondary' | 'success' | 'warning' | 'destructive';
@@ -58,6 +60,7 @@ export function WorkspacePaywallCard({
   retryLabel = 'Reintentar',
   logoutLabel = 'Cerrar sesion',
   onRetry,
+  retryDisabled = false,
   onLogout,
   badgeText,
   badgeVariant,
@@ -132,7 +135,7 @@ export function WorkspacePaywallCard({
 
       {showActions && (
         <CardFooter className="relative z-10 p-7 md:p-8 gap-3 flex-wrap">
-          <Button type="button" onClick={onRetry} className="min-w-[150px]">
+          <Button type="button" onClick={onRetry} disabled={retryDisabled} className="min-w-[150px]">
             <RefreshCw className="w-4 h-4 mr-2" />
             {retryLabel}
           </Button>
@@ -148,6 +151,101 @@ export function WorkspacePaywallCard({
 
 export default function WorkspaceSuspendedPage(): JSX.Element {
   const { workspace, logout, refreshUser } = useAuth();
+  const [isRedirectingToCheckout, setIsRedirectingToCheckout] = useState(false);
+  const [checkoutError, setCheckoutError] = useState('');
+
+  const normalizeBillingPlan = (value?: string | null): 'basic' | 'standard' | 'pro' => {
+    const plan = (value || '').trim().toLowerCase();
+    if (['pro', 'professional', 'enterprise', 'premium', 'advanced'].includes(plan)) {
+      return 'pro';
+    }
+    if (['standard', 'standar', 'medium', 'medio'].includes(plan)) {
+      return 'standard';
+    }
+    if (['basic', 'free', 'starter'].includes(plan)) {
+      return 'basic';
+    }
+    return 'standard';
+  };
+
+  const readApiError = async (response: Response, fallback: string): Promise<string> => {
+    try {
+      const payload = (await response.json()) as { message?: string; error?: string };
+      if (payload?.message) return payload.message;
+      if (payload?.error) return payload.error;
+    } catch {
+      // noop
+    }
+    return fallback;
+  };
+
+  const redirectToCheckout = async (): Promise<void> => {
+    if (isRedirectingToCheckout) return;
+    if (!workspace?.id) {
+      await refreshUser();
+      return;
+    }
+
+    setIsRedirectingToCheckout(true);
+    setCheckoutError('');
+
+    try {
+      const plan = normalizeBillingPlan(workspace.plan);
+
+      const intentResponse = await apiFetch(
+        '/api/v1/billing/intents',
+        {
+          method: 'POST',
+          body: JSON.stringify({ plan, months: 1 }),
+        },
+        workspace.id
+      );
+      if (!intentResponse.ok) {
+        throw new Error(await readApiError(intentResponse, 'No se pudo iniciar el checkout.'));
+      }
+
+      const intentPayload = (await intentResponse.json()) as { flowToken?: string };
+      const flowToken = intentPayload.flowToken?.trim();
+      if (!flowToken) {
+        throw new Error('No se pudo iniciar el checkout.');
+      }
+
+      const sessionResponse = await apiFetch(
+        '/api/v1/billing/checkout/session',
+        {
+          method: 'POST',
+          body: JSON.stringify({ flowToken }),
+        },
+        workspace.id
+      );
+      if (!sessionResponse.ok) {
+        throw new Error(await readApiError(sessionResponse, 'No se pudo crear la sesión de pago.'));
+      }
+
+      const sessionPayload = (await sessionResponse.json()) as {
+        checkoutUrl?: string;
+        alreadyProcessed?: boolean;
+      };
+
+      if (sessionPayload.alreadyProcessed) {
+        await refreshUser();
+        return;
+      }
+
+      if (!sessionPayload.checkoutUrl) {
+        throw new Error('Stripe no devolvió una URL de checkout válida.');
+      }
+
+      window.location.href = sessionPayload.checkoutUrl;
+    } catch (error) {
+      setCheckoutError(
+        error instanceof Error
+          ? error.message
+          : 'No se pudo redirigir a Stripe. Intentá nuevamente.'
+      );
+      setIsRedirectingToCheckout(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-background overflow-hidden relative">
@@ -167,8 +265,15 @@ export default function WorkspaceSuspendedPage(): JSX.Element {
           <WorkspacePaywallCard
             status={workspace?.status}
             workspaceName={workspace?.name}
+            helperText={
+              checkoutError
+                ? checkoutError
+                : 'Toca "Ir a pagar" para abonar 1 mes de tu plan actual y reactivar el acceso.'
+            }
+            retryLabel={isRedirectingToCheckout ? 'Redirigiendo...' : 'Ir a pagar'}
+            retryDisabled={isRedirectingToCheckout}
             onRetry={() => {
-              void refreshUser();
+              void redirectToCheckout();
             }}
             onLogout={() => {
               void logout();

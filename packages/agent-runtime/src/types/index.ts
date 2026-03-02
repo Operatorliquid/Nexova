@@ -284,6 +284,15 @@ export interface ConversationContext {
       mode?: 'add' | 'set';
     }>;
   };
+  pendingImageOrderClarification?: {
+    items: Array<{
+      description: string;
+      quantity: number;
+      productId: string;
+      productName: string;
+    }>;
+    unresolved?: string[];
+  };
   pendingCancelOrderId?: string;
   pendingCancelOrderNumber?: string;
   pendingStockAdjustment?: {

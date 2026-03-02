@@ -1237,6 +1237,7 @@ export class RetailAgent {
         memory.context.paymentReceiptId = undefined;
         memory.context.paymentReceiptAmount = undefined;
         memory.context.pendingProductSelection = undefined;
+        memory.context.pendingImageOrderClarification = undefined;
         memory.context.repeatOrders = undefined;
         memory.context.repeatOrderId = undefined;
         memory.context.repeatOrderNumber = undefined;
@@ -2540,9 +2541,203 @@ export class RetailAgent {
         }
       }
 
+      if (memory.context.pendingImageOrderClarification) {
+        if (isReturnToMenu(message)) {
+          memory.context.pendingImageOrderClarification = undefined;
+          await this.memoryManager.saveSession(memory);
+          return respondWithPrimaryMenu();
+        }
+
+        const pendingClarification = memory.context.pendingImageOrderClarification;
+        const decision = parseImageOrderClarificationDecision(message);
+
+        if (decision !== 'confirm') {
+          if (decision === 'reject') {
+            memory.context.pendingImageOrderClarification = undefined;
+            await this.memoryManager.saveSession(memory);
+            const response = 'Entendido. Escribime el pedido en texto y lo armo por ahí.';
+            await this.storeMessage(sessionId, 'user', message, messageId);
+            await this.storeMessage(sessionId, 'assistant', response);
+            return {
+              response,
+              state: fsm.getState(),
+              toolsUsed: [],
+              tokensUsed: 0,
+              shouldSendMessage: true,
+            };
+          }
+
+          const itemsPreview = pendingClarification.items.map(
+            (item) => `• ${item.quantity}x ${item.productName}`
+          );
+          const response = [
+            'Necesito confirmar esos productos de la imagen.',
+            ...itemsPreview,
+            '',
+            'Respondé "sí" para agregarlos con esas cantidades, o escribime el pedido en texto.',
+          ].join('\n');
+          await this.storeMessage(sessionId, 'user', message, messageId);
+          await this.storeMessage(sessionId, 'assistant', response);
+          return {
+            response,
+            state: fsm.getState(),
+            toolsUsed: [],
+            tokensUsed: 0,
+            shouldSendMessage: true,
+          };
+        }
+
+        memory.context.pendingImageOrderClarification = undefined;
+        await this.memoryManager.saveSession(memory);
+
+        const addErrors: string[] = [];
+        const shortages: Array<{
+          productId?: string;
+          variantId?: string;
+          name: string;
+          available: number;
+          requested: number;
+          mode?: 'add' | 'set';
+        }> = [];
+
+        for (const item of pendingClarification.items) {
+          const execution = await toolRegistry.execute(
+            'add_to_cart',
+            {
+              productId: item.productId,
+              quantity:
+                typeof item.quantity === 'number' && Number.isFinite(item.quantity) && item.quantity > 0
+                  ? Math.max(1, Math.round(item.quantity))
+                  : 1,
+            },
+            toolContext
+          );
+          toolsUsed.push(execution);
+
+          if (!execution.result.success) {
+            const itemShortages = extractInsufficientStock(execution.result.data);
+            if (itemShortages.length > 0) {
+              shortages.push(...itemShortages);
+            } else {
+              addErrors.push(
+                execution.result.error || `No pude agregar "${item.productName}" al carrito.`
+              );
+            }
+          }
+        }
+
+        if (shortages.length > 0 && shortages.some((detail) => detail.available > 0)) {
+          memory.context.pendingStockAdjustment = { items: shortages };
+          await this.memoryManager.saveSession(memory);
+          const response = buildInsufficientStockMessage(shortages);
+          await this.storeMessage(sessionId, 'user', message, messageId);
+          await this.storeMessage(sessionId, 'assistant', response);
+          return {
+            response,
+            state: fsm.getState(),
+            toolsUsed,
+            tokensUsed: 0,
+            shouldSendMessage: true,
+          };
+        }
+
+        const cart = await this.memoryManager.getCart(sessionId);
+        if (!cart || cart.items.length === 0) {
+          const fallback = addErrors.length > 0
+            ? ['No pude agregar esos productos al carrito.', ...addErrors.map((error) => `• ${error}`)].join('\n')
+            : 'No pude agregar esos productos al carrito.';
+          await this.storeMessage(sessionId, 'user', message, messageId);
+          await this.storeMessage(sessionId, 'assistant', fallback);
+          return {
+            response: fallback,
+            state: fsm.getState(),
+            toolsUsed,
+            tokensUsed: 0,
+            shouldSendMessage: true,
+          };
+        }
+
+        const unresolvedLines = pendingClarification.unresolved ? [...pendingClarification.unresolved] : [];
+        if (addErrors.length > 0) {
+          unresolvedLines.push(...addErrors.map((error) => `• ${error}`));
+        }
+
+        if (unresolvedLines.length > 0) {
+          const response = [
+            buildOrderSummaryMessage(cart),
+            '',
+            'No pude resolver estos productos de la imagen:',
+            ...unresolvedLines,
+            '',
+            'Si querés, escribímelos en texto y los agrego.',
+          ].join('\n');
+
+          if (fsm.getState() !== AgentState.COLLECTING_ORDER && fsm.canTransition(AgentState.COLLECTING_ORDER)) {
+            fsm.transition(AgentState.COLLECTING_ORDER);
+            await this.memoryManager.updateState(sessionId, AgentState.COLLECTING_ORDER);
+          }
+
+          await this.storeMessage(sessionId, 'user', message, messageId);
+          await this.storeMessage(sessionId, 'assistant', response);
+          return {
+            response,
+            state: fsm.getState(),
+            toolsUsed,
+            tokensUsed: 0,
+            shouldSendMessage: true,
+          };
+        }
+
+        const isEditingExistingOrder = !!memory.context.editingOrderId;
+        const actions = isEditingExistingOrder ? buildEditOrderActionsContent() : buildOrderActionsContent();
+        const shouldSendPdf = cart.items.length > LONG_ORDER_SUMMARY_THRESHOLD;
+        const response = shouldSendPdf
+          ? await (async () => {
+            const execution = await toolRegistry.execute(
+              'send_order_pdf',
+              {
+                summary: buildCartSummaryPayload(cart, memory.context.editingOrderNumber),
+              },
+              toolContext
+            );
+            toolsUsed.push(execution);
+            return execution.result.success
+              ? '🛒 Te envié el resumen del pedido en PDF.'
+              : buildOrderSummaryMessage(cart);
+          })()
+          : buildOrderSummaryMessage(cart);
+
+        await this.storeMessage(sessionId, 'user', message, messageId);
+        await this.storeMessage(sessionId, 'assistant', response);
+
+        if (fsm.canTransition(AgentState.AWAITING_CONFIRMATION)) {
+          fsm.transition(AgentState.AWAITING_CONFIRMATION);
+          await this.memoryManager.updateState(sessionId, AgentState.AWAITING_CONFIRMATION);
+        }
+
+        await this.prisma.agentSession.updateMany({
+          where: { id: sessionId, workspaceId },
+          data: {
+            currentState: fsm.getState(),
+            lastActivityAt: new Date(),
+          },
+        });
+
+        return {
+          response,
+          responseType: 'interactive-buttons',
+          responsePayload: actions.interactive,
+          state: fsm.getState(),
+          toolsUsed,
+          tokensUsed: 0,
+          shouldSendMessage: true,
+        };
+      }
+
       if (memory.context.pendingProductSelection) {
         if (isReturnToMenu(message)) {
           memory.context.pendingProductSelection = undefined;
+          memory.context.pendingImageOrderClarification = undefined;
           await this.memoryManager.saveSession(memory);
           return respondWithPrimaryMenu();
         }
@@ -2594,6 +2789,7 @@ export class RetailAgent {
         const carryOverShortages = pendingShortages ? [...pendingShortages] : [];
 
         memory.context.pendingProductSelection = undefined;
+        memory.context.pendingImageOrderClarification = undefined;
         await this.memoryManager.saveSession(memory);
 
         const execution = await toolRegistry.execute(
@@ -7012,7 +7208,11 @@ export class RetailAgent {
               matchType?: 'exact' | 'ambiguous' | 'not_found';
               matchedProductId?: string;
               clarification?: string;
-              candidates?: Array<{ displayName?: string; name?: string }>;
+              candidates?: Array<{
+                productId?: string;
+                displayName?: string;
+                name?: string;
+              }>;
             }>;
             message?: string;
           };
@@ -7181,23 +7381,63 @@ export class RetailAgent {
           }
 
           const cart = await this.memoryManager.getCart(sessionId);
+          const hadPendingImageClarification = Boolean(memory.context.pendingImageOrderClarification);
+          memory.context.pendingImageOrderClarification = undefined;
+          if (hadPendingImageClarification) {
+            await this.memoryManager.saveSession(memory);
+          }
           const clarificationLines: string[] = [];
+          const unresolvedClarifications: string[] = [];
+          const confirmableClarifications: Array<{
+            description: string;
+            quantity: number;
+            productId: string;
+            productName: string;
+          }> = [];
           for (const item of unclearItems) {
-            if (item.clarification && item.clarification.trim().length > 0) {
-              clarificationLines.push(`• ${item.clarification.trim()}`);
+            const normalizedQuantity =
+              typeof item.quantity === 'number' && Number.isFinite(item.quantity) && item.quantity > 0
+                ? Math.max(1, Math.round(item.quantity))
+                : 1;
+            const candidate = Array.isArray(item.candidates)
+              ? item.candidates.find((entry) => typeof entry?.productId === 'string') || item.candidates[0]
+              : undefined;
+            const candidateName = candidate?.displayName || candidate?.name;
+
+            if (item.matchType === 'ambiguous' && candidateName && candidate?.productId) {
+              confirmableClarifications.push({
+                description: item.description || candidateName,
+                quantity: normalizedQuantity,
+                productId: candidate.productId,
+                productName: candidateName,
+              });
+              clarificationLines.push(
+                `• Para "${item.description}", tengo "${candidateName}" (${normalizedQuantity}x). ¿Te sirve?`
+              );
               continue;
             }
-            const candidate = Array.isArray(item.candidates) ? item.candidates[0] : undefined;
-            const candidateName = candidate?.displayName || candidate?.name;
+
+            if (item.clarification && item.clarification.trim().length > 0) {
+              const line = `• ${item.clarification.trim()}`;
+              clarificationLines.push(line);
+              unresolvedClarifications.push(line);
+              continue;
+            }
             if (candidateName) {
-              clarificationLines.push(`• Para "${item.description}", tengo "${candidateName}". ¿Te sirve?`);
+              const line = `• Para "${item.description}", tengo "${candidateName}". ¿Te sirve?`;
+              clarificationLines.push(line);
+              unresolvedClarifications.push(line);
             } else {
-              clarificationLines.push(`• No me quedó claro "${item.description}". ¿Cuál querés exactamente?`);
+              const line = `• No me quedó claro "${item.description}". ¿Cuál querés exactamente?`;
+              clarificationLines.push(line);
+              unresolvedClarifications.push(line);
             }
           }
 
           if (addErrors.length > 0) {
-            clarificationLines.push(...addErrors.map((error) => `• ${error}`));
+            const errorLines = addErrors.map((error) => `• ${error}`);
+            clarificationLines.push(...errorLines);
+            unresolvedClarifications.push(...errorLines);
           }
 
           if (!cart || cart.items.length === 0) {
@@ -7217,7 +7457,22 @@ export class RetailAgent {
           const orderSummary = buildOrderSummaryMessage(cart);
 
           if (clarificationLines.length > 0) {
-            const response = [orderSummary, '', 'Necesito confirmar esto para seguir:', ...clarificationLines].join('\n');
+            if (confirmableClarifications.length > 0) {
+              memory.context.pendingImageOrderClarification = {
+                items: confirmableClarifications,
+                unresolved: unresolvedClarifications.length > 0 ? unresolvedClarifications : undefined,
+              };
+              await this.memoryManager.saveSession(memory);
+            }
+            const response = [
+              orderSummary,
+              '',
+              'Necesito confirmar esto para seguir:',
+              ...clarificationLines,
+              ...(confirmableClarifications.length > 0
+                ? ['', 'Si está bien, respondé "sí" y los agrego con esas cantidades.']
+                : []),
+            ].join('\n');
             if (fsm.getState() !== AgentState.COLLECTING_ORDER && fsm.canTransition(AgentState.COLLECTING_ORDER)) {
               fsm.transition(AgentState.COLLECTING_ORDER);
               await this.memoryManager.updateState(sessionId, AgentState.COLLECTING_ORDER);
@@ -9017,6 +9272,7 @@ export class RetailAgent {
       memory.context.pendingInvoicePrompt = undefined;
       memory.context.pendingCatalogOffer = undefined;
       memory.context.pendingProductSelection = undefined;
+      memory.context.pendingImageOrderClarification = undefined;
       memory.context.pendingStockAdjustment = undefined;
       memory.context.pendingCancelOrderId = undefined;
       memory.context.pendingCancelOrderNumber = undefined;
@@ -9056,6 +9312,7 @@ export class RetailAgent {
       clearPaymentContext(memory, { preservePausedContext: true });
       memory.context.pendingCatalogOffer = undefined;
       memory.context.pendingProductSelection = undefined;
+      memory.context.pendingImageOrderClarification = undefined;
       memory.context.pendingStockAdjustment = undefined;
       memory.context.pendingCancelOrderId = undefined;
       memory.context.pendingCancelOrderNumber = undefined;
@@ -9097,6 +9354,7 @@ export class RetailAgent {
       memory.context.pendingOrderNumber = undefined;
       memory.context.pendingOrderOptions = undefined;
       memory.context.pendingProductSelection = undefined;
+      memory.context.pendingImageOrderClarification = undefined;
       memory.context.pendingStockAdjustment = undefined;
       memory.context.pendingCancelOrderId = undefined;
       memory.context.pendingCancelOrderNumber = undefined;
@@ -10214,6 +10472,7 @@ function shouldForceMenuForOrdering(memory: SessionMemory, fsm: StateMachine): b
   if (memory.context.pendingCancelOrderId) return false;
   if (memory.context.pendingCatalogOffer) return false;
   if (memory.context.pendingProductSelection) return false;
+  if (memory.context.pendingImageOrderClarification) return false;
   if (memory.context.pendingStockAdjustment) return false;
   if (memory.context.editingOrderId) return false;
   if (memory.context.paymentStage) return false;
@@ -11013,6 +11272,7 @@ type ActiveOrderRequest = { action: ActiveOrderAction; orderNumber?: string; ord
 type OrderViewRequest = { orderNumber?: string } | null;
 type PaymentMethodSelection = 'link' | 'transfer' | 'cash' | 'back' | 'more' | 'prev' | null;
 type CatalogOfferDecision = 'yes' | 'no' | 'back' | null;
+type ImageOrderClarificationDecision = 'confirm' | 'reject' | null;
 type FlowKind = NonNullable<SessionMemory['context']['activeFlow']>;
 
 function detectConversationFlow(memory: SessionMemory): FlowKind {
@@ -11036,6 +11296,7 @@ function detectConversationFlow(memory: SessionMemory): FlowKind {
   }
   const hasOrderContext =
     Boolean(memory.context.pendingProductSelection) ||
+    Boolean(memory.context.pendingImageOrderClarification) ||
     Boolean(memory.context.pendingStockAdjustment) ||
     Boolean(memory.context.pendingOrderDecision) ||
     Boolean(memory.context.pendingCancelOrderId) ||
@@ -11573,6 +11834,57 @@ function parseCatalogOfferDecision(message: string): CatalogOfferDecision {
   return null;
 }
 
+function parseImageOrderClarificationDecision(message: string): ImageOrderClarificationDecision {
+  const raw = message.trim().toLowerCase();
+  const normalized = normalizeSimpleText(message);
+  if (!raw && !normalized) return null;
+
+  const confirm = new Set([
+    'si',
+    'sí',
+    's',
+    'ok',
+    'okay',
+    'dale',
+    'de acuerdo',
+    'perfecto',
+    'correcto',
+    'listo',
+  ]);
+  const reject = new Set([
+    'no',
+    'n',
+    'no gracias',
+    'ninguno',
+    'ninguna',
+    'otra',
+    'otro',
+  ]);
+
+  if (confirm.has(normalized)) return 'confirm';
+  if (reject.has(normalized)) return 'reject';
+
+  if (
+    normalized.includes('esta bien')
+    || normalized.includes('estan bien')
+    || normalized.includes('me sirve')
+    || normalized.includes('me sirven')
+  ) {
+    return 'confirm';
+  }
+
+  if (
+    normalized.includes('no sirve')
+    || normalized.includes('no me sirve')
+    || normalized.includes('prefiero otro')
+    || normalized.includes('prefiero otra')
+  ) {
+    return 'reject';
+  }
+
+  return null;
+}
+
 function parseActiveOrderAction(message: string): ActiveOrderRequest {
   const raw = message.trim().toLowerCase();
   const normalized = normalizeSimpleText(message);
@@ -12063,6 +12375,7 @@ function resetOrderFlowContext(memory: SessionMemory): void {
   memory.context.paymentReceiptAmount = undefined;
   memory.context.pausedPaymentContext = undefined;
   memory.context.pendingProductSelection = undefined;
+  memory.context.pendingImageOrderClarification = undefined;
   memory.context.repeatOrders = undefined;
   memory.context.repeatOrderId = undefined;
   memory.context.repeatOrderNumber = undefined;
