@@ -22,12 +22,23 @@ export async function getWorkspacePlanContext(
     select: {
       plan: true,
       settings: true,
+      subscription: {
+        select: {
+          plan: true,
+          status: true,
+        },
+      },
     },
   });
 
   const settings = (workspace?.settings as Record<string, unknown> | undefined) || {};
+  const subscriptionStatus = (workspace?.subscription?.status || '').toLowerCase();
+  const subscriptionPlan =
+    workspace?.subscription?.plan && ['active', 'trialing', 'past_due', 'paid'].includes(subscriptionStatus)
+      ? workspace.subscription.plan
+      : undefined;
   const plan = resolveCommercePlan({
-    workspacePlan: workspace?.plan,
+    workspacePlan: subscriptionPlan || workspace?.plan,
     settingsPlan: settings.commercePlan,
     roleName: roleName || undefined,
     fallback: 'pro',

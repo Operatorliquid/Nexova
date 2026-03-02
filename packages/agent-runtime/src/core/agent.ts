@@ -6992,7 +6992,7 @@ export class RetailAgent {
 
           if (!ocrExecution.result.success) {
             const response = ocrExecution.result.error?.includes('pedidos por imagen')
-              ? 'Tu plan no incluye pedidos por imagen. Si querés, escribime el pedido en texto.'
+              ? 'Lo siento no puedo leer imagenes enviame el pedido en texto.'
               : ocrExecution.result.error || 'No pude procesar la imagen.';
             await this.storeMessage(sessionId, 'assistant', response);
             return {

@@ -33,7 +33,11 @@ const PLAN_ALIASES: Record<string, CommercePlan> = {
   starter: 'basic',
   standard: 'standard',
   standar: 'standard',
+  medium: 'standard',
+  medio: 'standard',
   pro: 'pro',
+  premium: 'pro',
+  advanced: 'pro',
   professional: 'pro',
   enterprise: 'pro',
 };

@@ -808,11 +808,25 @@ export class CreateMPPaymentLinkTool extends BaseTool<typeof CreateMPPaymentLink
     const { orderId, orderNumber, amount, description } = input;
     const workspacePlan = await this.prisma.workspace.findUnique({
       where: { id: context.workspaceId },
-      select: { plan: true, settings: true },
+      select: {
+        plan: true,
+        settings: true,
+        subscription: {
+          select: {
+            plan: true,
+            status: true,
+          },
+        },
+      },
     });
     const workspaceSettings = (workspacePlan?.settings as Record<string, unknown> | undefined) || {};
+    const subscriptionStatus = (workspacePlan?.subscription?.status || '').toLowerCase();
+    const subscriptionPlan =
+      workspacePlan?.subscription?.plan && ['active', 'trialing', 'past_due', 'paid'].includes(subscriptionStatus)
+        ? workspacePlan.subscription.plan
+        : undefined;
     const plan = resolveCommercePlan({
-      workspacePlan: workspacePlan?.plan,
+      workspacePlan: subscriptionPlan || workspacePlan?.plan,
       settingsPlan: workspaceSettings.commercePlan,
       fallback: 'pro',
     });
@@ -1171,11 +1185,25 @@ export class OcrOrderImageProductsTool extends BaseTool<typeof OcrOrderImageProd
   ): Promise<ToolResult<OcrOrderImageProductsResult>> {
     const workspacePlan = await this.prisma.workspace.findUnique({
       where: { id: context.workspaceId },
-      select: { plan: true, settings: true },
+      select: {
+        plan: true,
+        settings: true,
+        subscription: {
+          select: {
+            plan: true,
+            status: true,
+          },
+        },
+      },
     });
     const workspaceSettings = (workspacePlan?.settings as Record<string, unknown> | undefined) || {};
+    const subscriptionStatus = (workspacePlan?.subscription?.status || '').toLowerCase();
+    const subscriptionPlan =
+      workspacePlan?.subscription?.plan && ['active', 'trialing', 'past_due', 'paid'].includes(subscriptionStatus)
+        ? workspacePlan.subscription.plan
+        : undefined;
     const plan = resolveCommercePlan({
-      workspacePlan: workspacePlan?.plan,
+      workspacePlan: subscriptionPlan || workspacePlan?.plan,
       settingsPlan: workspaceSettings.commercePlan,
       fallback: 'pro',
     });
