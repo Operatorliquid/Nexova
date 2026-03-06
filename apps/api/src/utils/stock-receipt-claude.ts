@@ -136,6 +136,91 @@ function normalizeCents(value: unknown): number | null {
   return null;
 }
 
+function clampPositiveCents(value: number | null): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  const rounded = Math.round(value);
+  if (rounded <= 0) return null;
+  return Math.min(INT32_MAX, rounded);
+}
+
+function multiplyCents(left: number, right: number): number {
+  const result = left * right;
+  if (!Number.isFinite(result) || result <= 0) return 0;
+  if (result > INT32_MAX) return INT32_MAX;
+  return Math.round(result);
+}
+
+function divideCents(total: number, divisor: number): number {
+  if (!Number.isFinite(total) || total <= 0) return 0;
+  if (!Number.isFinite(divisor) || divisor <= 0) return 0;
+  return Math.max(1, Math.round(total / divisor));
+}
+
+export function normalizeExtractedStockReceiptPricing(params: {
+  quantity: number;
+  isPack: boolean;
+  unitsPerPack: number | null;
+  unitPriceCents: number | null;
+  lineTotalCents: number | null;
+}): { unitPriceCents: number | null; lineTotalCents: number | null } {
+  const quantity = normalizeQuantity(params.quantity) ?? 0;
+  if (quantity <= 0) {
+    return {
+      unitPriceCents: clampPositiveCents(params.unitPriceCents),
+      lineTotalCents: clampPositiveCents(params.lineTotalCents),
+    };
+  }
+
+  const isPack = params.isPack === true;
+  const unitsPerPack = isPack
+    ? Math.max(1, normalizeQuantity(params.unitsPerPack ?? null) ?? 1)
+    : 1;
+  const baseUnits = isPack ? quantity * unitsPerPack : quantity;
+  const packCount = quantity;
+
+  let unitPriceCents = clampPositiveCents(params.unitPriceCents);
+  let lineTotalCents = clampPositiveCents(params.lineTotalCents);
+
+  if (!isPack || unitsPerPack <= 1) {
+    if (!lineTotalCents && unitPriceCents) {
+      lineTotalCents = clampPositiveCents(multiplyCents(unitPriceCents, quantity));
+    }
+    if (!unitPriceCents && lineTotalCents) {
+      unitPriceCents = clampPositiveCents(divideCents(lineTotalCents, quantity));
+    }
+    return { unitPriceCents, lineTotalCents };
+  }
+
+  // Pack scenario (e.g. bulto/caja/pack):
+  // Persist unit price as base unit price so pack and loose products are comparable.
+  if (unitPriceCents && lineTotalCents) {
+    const totalAssumingPackPrice = multiplyCents(unitPriceCents, packCount);
+    const totalAssumingBaseUnitPrice = multiplyCents(unitPriceCents, baseUnits);
+    const diffPack = Math.abs(lineTotalCents - totalAssumingPackPrice);
+    const diffBase = Math.abs(lineTotalCents - totalAssumingBaseUnitPrice);
+    const looksLikePackPrice = diffPack <= diffBase;
+    if (looksLikePackPrice) {
+      unitPriceCents = clampPositiveCents(divideCents(unitPriceCents, unitsPerPack));
+    }
+    return { unitPriceCents, lineTotalCents };
+  }
+
+  if (unitPriceCents && !lineTotalCents) {
+    // With missing line total we assume supplier table price is per pack.
+    const packPriceCents = unitPriceCents;
+    lineTotalCents = clampPositiveCents(multiplyCents(packPriceCents, packCount));
+    unitPriceCents = clampPositiveCents(divideCents(packPriceCents, unitsPerPack));
+    return { unitPriceCents, lineTotalCents };
+  }
+
+  if (!unitPriceCents && lineTotalCents) {
+    unitPriceCents = clampPositiveCents(divideCents(lineTotalCents, baseUnits));
+    return { unitPriceCents, lineTotalCents };
+  }
+
+  return { unitPriceCents, lineTotalCents };
+}
+
 function normalizeQuantity(value: unknown): number | null {
   if (typeof value === 'number') {
     if (!Number.isFinite(value)) return null;
@@ -475,6 +560,9 @@ function buildPrompt(products: ClaudeProduct[]): string {
     '  - Nunca dejes quantity en 0 si hay datos de unidades o bultos.',
     '- Tratar "PETx6", "PACKx6", "CAJAx24" como formato de segunda unidad: pack/caja con units_per_pack.',
     '- Para segunda unidad "bulto", usar secondary_unit = "bundle".',
+    '- unit_price_cents debe ser SIEMPRE el precio por UNIDAD BASE (no por pack).',
+    '- line_total_cents debe ser el total completo de la linea (packs * precio pack o unidades * precio unidad).',
+    '- Ejemplo: 1 pack x6 a $600 => unit_price_cents=10000 y line_total_cents=60000.',
     '- En new_product.name NO incluyas medida ni formato (ej: no "Pepsi 2LT", no "Coca PETx6").',
     '- La medida va en unit/unit_value y el formato pack/caja/bulto/docena va en secondary_unit/secondary_unit_value.',
     '- Extraé TODOS los renglones de productos visibles en la boleta (no sólo los primeros).',
@@ -620,12 +708,15 @@ export async function extractStockReceiptWithClaude(params: {
           isPack = true;
         }
 
-        if ((!lineTotal || lineTotal <= 0) && unitPrice && unitPrice > 0 && quantity > 0) {
-          lineTotal = unitPrice * quantity;
-        }
-        if ((!unitPrice || unitPrice <= 0) && lineTotal && lineTotal > 0 && quantity > 0) {
-          unitPrice = Math.max(1, Math.round(lineTotal / quantity));
-        }
+        const normalizedPricing = normalizeExtractedStockReceiptPricing({
+          quantity,
+          isPack,
+          unitsPerPack: unitsPerPack ?? null,
+          unitPriceCents: unitPrice,
+          lineTotalCents: lineTotal,
+        });
+        unitPrice = normalizedPricing.unitPriceCents;
+        lineTotal = normalizedPricing.lineTotalCents;
 
         const match = item.match && typeof item.match === 'object' ? item.match : null;
         const llmProductId = typeof match?.product_id === 'string' ? match.product_id : null;

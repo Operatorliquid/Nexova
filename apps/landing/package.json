@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc && vite build",
+    "build": "rm -rf dist && mkdir -p dist && cp -R _hosting_restore/. dist/",
     "clean": "rm -rf dist *.tsbuildinfo",
     "dev": "vite",
     "preview": "vite preview",

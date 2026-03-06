@@ -63,3 +63,5 @@ apps/worker/apps/api/uploads/
 *.key
 secrets/
 apps/landing/src/pages/IndexPage.tsx
+apps/landing/.env.production
+apps/landing/_hosting_restore/
