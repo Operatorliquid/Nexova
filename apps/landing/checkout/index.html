@@ -8,7 +8,7 @@
     <script>
       const params = new URLSearchParams(window.location.search);
       const plan = params.get('plan');
-      const target = plan ? `/cart/?plan=${encodeURIComponent(plan)}` : '/cart/';
+      const target = plan ? `/cart?plan=${encodeURIComponent(plan)}` : '/cart';
       window.location.replace(target);
     </script>
   </head>

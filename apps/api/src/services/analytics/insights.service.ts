@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { PrismaClient } from '@prisma/client';
 import { z } from 'zod';
 
-import { buildMetrics, normalizeRange } from './metrics.service.js';
+import { type MetricsRangeInput, buildMetrics, normalizeRange } from './metrics.service.js';
 
 const INSIGHTS_SCHEMA = z.object({
   headline: z.string().min(3).max(160),
@@ -155,7 +155,7 @@ function buildFallbackInsights(params: {
 export async function generateBusinessInsights(
   prisma: PrismaClient,
   workspaceId: string,
-  rangeInput?: string,
+  rangeInput?: string | MetricsRangeInput,
   selectedYear?: number
 ): Promise<{
   insights: z.infer<typeof INSIGHTS_SCHEMA>;
@@ -163,8 +163,11 @@ export async function generateBusinessInsights(
   model: string;
   fallback?: boolean;
 }> {
-  const range = normalizeRange(rangeInput);
-  const metrics = await buildMetrics(prisma, workspaceId, range, selectedYear);
+  const normalizedRangeInput =
+    typeof rangeInput === 'string'
+      ? normalizeRange(rangeInput)
+      : rangeInput;
+  const metrics = await buildMetrics(prisma, workspaceId, normalizedRangeInput, selectedYear);
 
   const lastSeven = metrics.salesByDay.slice(-7);
   const prevSeven = metrics.salesByDay.slice(-14, -7);

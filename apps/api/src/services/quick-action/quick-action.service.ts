@@ -265,7 +265,7 @@ HERRAMIENTAS DISPONIBLES:
 - add_order_note(orderId?: string, orderNumber?: string, note: string): Agregar nota a pedido
 - cancel_order(orderId?: string, orderNumber?: string, reason?: string): Cancelar pedido
 - apply_payment(customerId?: string, phone?: string, name?: string, orderId?: string, orderNumber?: string, amount: number, description?: string): Aplicar pago (monto en pesos)
-- adjust_stock(productId?: string, sku?: string, name?: string, quantity: number, reason?: string): Ajustar stock (quantity puede ser positivo o negativo)
+- adjust_stock(productId?: string, sku?: string, name?: string, quantity?: number, mode?: 'set'|'adjust', target?: number, reason?: string): Ajustar stock de un producto (mode 'adjust' usa quantity como delta; mode 'set' fija stock disponible en target)
 - bulk_set_stock(target: number, mode?: 'set'|'adjust', categoryName?: string): Ajustar stock masivo (todos los productos o por categoría)
 - adjust_prices_percent(percent?: number, amount?: number, categoryName?: string, productId?: string, sku?: string, name?: string, productNames?: string[], query?: string): Ajustar precios por porcentaje o monto (en pesos)
 - create_product(name: string, price: number, sku?: string, description?: string, category?: string, unit?: string, unitValue?: string, secondaryUnit?: string, secondaryUnitValue?: string, initialStock?: number, lowThreshold?: number, categoryIds?: string[]): Crear producto (precio en pesos)
@@ -2060,10 +2060,7 @@ export class QuickActionService {
   private async toolAdjustStock(input: Record<string, unknown>, workspaceId: string): Promise<ToolResult> {
     const product = await this.resolveProduct(input, workspaceId);
     const workspaceLowThreshold = await this.getWorkspaceLowStockThreshold(workspaceId);
-    const adjustment = Number(input.quantity);
-    if (!Number.isFinite(adjustment) || adjustment === 0) {
-      throw new Error('Cantidad inválida');
-    }
+    const mode = input.mode === 'set' ? 'set' : 'adjust';
 
     const stockItems = Array.isArray((product).stockItems)
       ? ((product).stockItems as Array<{ quantity?: number | null; reserved?: number | null }>)
@@ -2071,6 +2068,48 @@ export class QuickActionService {
     const previousTotalQty = stockItems.reduce((sum, s) => sum + (s.quantity || 0), 0);
     const reservedTotal = stockItems.reduce((sum, s) => sum + (s.reserved || 0), 0);
     const previousAvailable = previousTotalQty - reservedTotal;
+
+    let target: number | null = null;
+    let adjustment = 0;
+
+    if (mode === 'set') {
+      const targetRaw = Number(input.target ?? input.quantity);
+      if (!Number.isFinite(targetRaw)) {
+        throw new Error('Cantidad objetivo inválida');
+      }
+      target = Math.round(targetRaw);
+      if (target < 0) {
+        throw new Error('El stock objetivo no puede ser negativo');
+      }
+      const desiredTotalQty = target + reservedTotal;
+      adjustment = desiredTotalQty - previousTotalQty;
+    } else {
+      const adjustmentRaw = Number(input.quantity);
+      if (!Number.isFinite(adjustmentRaw) || adjustmentRaw === 0) {
+        throw new Error('Cantidad inválida');
+      }
+      adjustment = Math.round(adjustmentRaw);
+      if (adjustment === 0) {
+        throw new Error('Cantidad inválida');
+      }
+    }
+
+    if (adjustment === 0) {
+      return {
+        data: {
+          productId: product.id,
+          productName: this.buildProductDisplayName(product),
+          mode,
+          target,
+          previousQuantity: previousTotalQty,
+          reserved: reservedTotal,
+          previousAvailable,
+          adjustment: 0,
+          newQuantity: previousTotalQty,
+          newAvailable: previousAvailable,
+        },
+      };
+    }
 
     let stockItem = product.stockItems?.[0];
     const previousQty = stockItem?.quantity || 0;
@@ -2096,7 +2135,7 @@ export class QuickActionService {
           quantity: adjustment,
           previousQty,
           newQty,
-          reason: String(input.reason || 'Ajuste manual'),
+          reason: String(input.reason || (mode === 'set' ? 'Ajuste manual (set)' : 'Ajuste manual')),
         },
       });
     } else {
@@ -2115,7 +2154,7 @@ export class QuickActionService {
           quantity: adjustment,
           previousQty: 0,
           newQty,
-          reason: String(input.reason || 'Stock inicial'),
+          reason: String(input.reason || (mode === 'set' ? 'Ajuste manual (set)' : 'Stock inicial')),
         },
       });
     }
@@ -2144,6 +2183,8 @@ export class QuickActionService {
       data: {
         productId: product.id,
         productName: this.buildProductDisplayName(product),
+        mode,
+        target,
         previousQuantity: previousTotalQty,
         reserved: reservedTotal,
         previousAvailable,
@@ -3807,7 +3848,9 @@ export class QuickActionService {
     const wantsProductStock = this.commandWantsProductStock(normalized);
     const inferredOrderStatus = this.inferOrderStatusFromCommand(normalized);
     const bulkStockIntent = this.extractBulkStockIntent(command);
+    const stockAdjustmentIntent = this.extractSingleStockIntent(command);
     const existingBulkTool = tools.find((tool) => tool.toolName === 'bulk_set_stock');
+    const existingStockTool = tools.find((tool) => tool.toolName === 'adjust_stock');
     const priceAdjustmentIntent = this.extractPriceAdjustmentIntent(command);
     const existingPriceAdjustmentTool = tools.find((tool) => tool.toolName === 'adjust_prices_percent');
     const categoryAssignment = this.extractCategoryAssignmentIntent(command);
@@ -3839,6 +3882,77 @@ export class QuickActionService {
         ...(bulkStockIntent || {}),
       };
       return [this.buildParsedToolCall('bulk_set_stock', mergedInput)];
+    }
+
+    if (stockAdjustmentIntent || existingStockTool) {
+      const mergedInput: Record<string, unknown> = {
+        ...(existingStockTool?.input || {}),
+      };
+
+      const intentName = stockAdjustmentIntent?.name
+        ? this.cleanProductQuery(stockAdjustmentIntent.name)
+        : '';
+      if (intentName) {
+        const existingName = typeof mergedInput.name === 'string' ? mergedInput.name.trim() : '';
+        if (!existingName || this.isGenericProductWord(existingName)) {
+          mergedInput.name = intentName;
+        }
+      }
+
+      if (stockAdjustmentIntent?.hasQuantity) {
+        if (stockAdjustmentIntent.mode === 'set') {
+          mergedInput.mode = 'set';
+          mergedInput.target = stockAdjustmentIntent.target;
+          delete mergedInput.quantity;
+        } else {
+          mergedInput.mode = 'adjust';
+          mergedInput.quantity = stockAdjustmentIntent.quantity;
+          delete mergedInput.target;
+        }
+      } else if (existingStockTool) {
+        // Avoid unsafe updates if command did not specify a stock quantity explicitly.
+        delete mergedInput.mode;
+        delete mergedInput.quantity;
+        delete mergedInput.target;
+      }
+
+      if (typeof mergedInput.name === 'string' && this.isGenericProductWord(mergedInput.name)) {
+        delete mergedInput.name;
+      }
+
+      if (!this.toolHasProductIdentifier(mergedInput)) {
+        const inferredName =
+          this.extractProductNameForStockAdjustment(command) ||
+          this.extractProductNameFromCommand(command);
+        if (inferredName) {
+          mergedInput.name = inferredName;
+        }
+      }
+
+      const hasTargetValue =
+        (typeof mergedInput.quantity === 'number' && Number.isFinite(mergedInput.quantity)) ||
+        (typeof mergedInput.quantity === 'string' && mergedInput.quantity.trim().length > 0) ||
+        (typeof mergedInput.target === 'number' && Number.isFinite(mergedInput.target)) ||
+        (typeof mergedInput.target === 'string' && mergedInput.target.trim().length > 0);
+
+      if (hasTargetValue) {
+        return [this.buildParsedToolCall('adjust_stock', mergedInput)];
+      }
+
+      const lookupInput: Record<string, unknown> = {};
+      if (mergedInput.productId) lookupInput.productId = mergedInput.productId;
+      if (mergedInput.sku) lookupInput.sku = mergedInput.sku;
+      if (mergedInput.name) lookupInput.name = mergedInput.name;
+      if (!lookupInput.name) {
+        const inferredName =
+          this.extractProductNameForStockAdjustment(command) ||
+          this.extractProductNameFromCommand(command);
+        if (inferredName) lookupInput.name = inferredName;
+      }
+
+      if (Object.keys(lookupInput).length > 0) {
+        return [this.buildParsedToolCall('get_product_details', lookupInput)];
+      }
     }
 
     if (priceAdjustmentIntent || existingPriceAdjustmentTool) {
@@ -4461,6 +4575,139 @@ export class QuickActionService {
       default:
         return { ...tool, input: baseInput };
     }
+  }
+
+  private extractSingleStockIntent(
+    command: string
+  ): { mode: 'set' | 'adjust'; target?: number; quantity?: number; name?: string; hasQuantity: boolean } | null {
+    const normalized = this.normalizeText(command);
+    if (!normalized) return null;
+
+    const mentionsStockContext =
+      normalized.includes('stock') ||
+      normalized.includes('inventario') ||
+      normalized.includes('existencias') ||
+      normalized.includes('unidades');
+    if (!mentionsStockContext) return null;
+
+    const hasStockActionVerb = /(?:ajusta|ajustar|acomoda|acomodar|corrige|corregir|actualiza|actualizar|pone|poner|deja|dejar|fija|fijar|iguala|igualar|suma|sumar|agrega|agregar|aumenta|aumentar|incrementa|incrementar|subi|subir|baja|bajar|disminui|disminuir|reduce|reducir|resta|restar|quita|quitar)/.test(normalized);
+    if (!hasStockActionVerb) return null;
+
+    if (this.extractBulkStockIntent(command)) return null;
+
+    const plain = command
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[¿?]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!plain) return null;
+
+    const parseRoundedAmount = (raw: string): number | null => {
+      const parsed = Number(raw.replace(',', '.'));
+      if (!Number.isFinite(parsed)) return null;
+      return Math.round(parsed);
+    };
+
+    const hasSetMarker = /(?:dejar|poner|fijar|igualar|setear|establecer|acomodar|acomoda)/.test(plain);
+    const hasIncreaseMarker = /(?:sumar|agregar|aumentar|incrementar|subir|subi|subime)/.test(plain);
+    const hasDecreaseMarker = /(?:restar|quitar|disminuir|reducir|bajar|baja)/.test(plain);
+
+    const setMatch =
+      plain.match(
+        /(?:dejar|poner|fijar|igualar|setear|establecer|acomodar|acomoda|ajustar|ajusta|actualizar|actualiza)(?:\s+el)?(?:\s+stock|\s+inventario|\s+existencias|\s+unidades)?(?:\s+de\s+.+?)?\s+(?:a|en|hasta)\s*(-?\d+(?:[.,]\d+)?)/i
+      ) ||
+      (hasSetMarker ? plain.match(/\b(?:a|en|hasta)\s*(-?\d+(?:[.,]\d+)?)(?:\s*(?:unidades?|uds?))?\b/i) : null);
+
+    const increaseMatch = plain.match(
+      /(?:sumar|agregar|aumentar|incrementar|subir|subi|subime)\s*(?:en|de)?\s*(\d+(?:[.,]\d+)?)/i
+    );
+    const decreaseMatch = plain.match(
+      /(?:restar|quitar|disminuir|reducir|bajar|baja)\s*(?:en|de)?\s*(\d+(?:[.,]\d+)?)/i
+    );
+    const signedMatch = plain.match(
+      /(?:\bstock\b|\binventario\b|\bexistencias?\b|\bunidades?\b)[^+\-\d]{0,20}([+-]\d+(?:[.,]\d+)?)/i
+    );
+
+    let mode: 'set' | 'adjust' = hasSetMarker && !hasIncreaseMarker && !hasDecreaseMarker ? 'set' : 'adjust';
+    let target: number | null = null;
+    let quantity: number | null = null;
+
+    if (setMatch?.[1]) {
+      const parsed = parseRoundedAmount(setMatch[1]);
+      if (parsed !== null) {
+        mode = 'set';
+        target = parsed;
+      }
+    } else if (increaseMatch?.[1]) {
+      const parsed = parseRoundedAmount(increaseMatch[1]);
+      if (parsed !== null) {
+        mode = 'adjust';
+        quantity = Math.abs(parsed);
+      }
+    } else if (decreaseMatch?.[1]) {
+      const parsed = parseRoundedAmount(decreaseMatch[1]);
+      if (parsed !== null) {
+        mode = 'adjust';
+        quantity = -Math.abs(parsed);
+      }
+    } else if (signedMatch?.[1]) {
+      const parsed = parseRoundedAmount(signedMatch[1]);
+      if (parsed !== null && parsed !== 0) {
+        mode = 'adjust';
+        quantity = parsed;
+      }
+    }
+
+    const name =
+      this.extractProductNameForStockAdjustment(command) ||
+      this.extractProductNameFromCommand(command) ||
+      undefined;
+    const hasQuantity = mode === 'set' ? target !== null : quantity !== null;
+    if (!hasQuantity && !name) return null;
+
+    if (mode === 'set') {
+      return {
+        mode,
+        target: target ?? undefined,
+        name,
+        hasQuantity,
+      };
+    }
+
+    return {
+      mode,
+      quantity: quantity ?? undefined,
+      name,
+      hasQuantity,
+    };
+  }
+
+  private extractProductNameForStockAdjustment(command: string): string | null {
+    const cleaned = command.replace(/[¿?]/g, ' ').trim();
+    if (!cleaned) return null;
+
+    const patterns = [
+      /(?:ajusta(?:r)?|acomoda(?:r)?|actualiza(?:r)?|corrige(?:r)?|pon(?:e|er)?|deja(?:r)?|fija(?:r)?|iguala(?:r)?|suma(?:r)?|agrega(?:r)?|aumenta(?:r)?|incrementa(?:r)?|subi(?:r)?|baja(?:r)?|disminui(?:r)?|reduce|resta(?:r)?|quita(?:r)?)\s+(?:el\s+)?(?:stock|inventario|existencias?|unidades?)\s+(?:de|del|la|el)\s+(.+)$/i,
+      /(?:stock|inventario|existencias?|unidades?)\s+(?:de|del|la|el)\s+(.+)$/i,
+      /(?:ajusta(?:r)?|acomoda(?:r)?|actualiza(?:r)?|corrige(?:r)?|pon(?:e|er)?|deja(?:r)?|fija(?:r)?|iguala(?:r)?)\s+(.+?)\s+(?:a|en|hasta)\s*-?\d+(?:[.,]\d+)?/i,
+    ];
+
+    for (const pattern of patterns) {
+      const match = cleaned.match(pattern);
+      if (!match || !match[1]) continue;
+      const candidate = this.cleanProductQuery(match[1])
+        .replace(/\s+(?:a|en|hasta|por|con)\s*-?\d+(?:[.,]\d+)?(?:\s*(?:unidades?|uds?))?.*$/i, '')
+        .replace(/[!.]+$/g, '')
+        .trim();
+
+      if (candidate.length < 2) continue;
+      if (this.isGenericProductWord(candidate)) continue;
+      return candidate;
+    }
+
+    return null;
   }
 
   private extractBulkStockIntent(

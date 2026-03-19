@@ -306,6 +306,29 @@ function normalizeCommercePromptProfile(input: unknown): CommercePromptProfile {
   };
 }
 
+function normalizeOnlineStoreUrl(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  const candidate = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  try {
+    const parsed = new URL(candidate);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+function resolveOnlineStoreMenuMessage(settingsValue: unknown): string | null {
+  const settings = toRecord(settingsValue) ?? {};
+  if (settings.onlineStoreEnabled !== true) return null;
+  const url = normalizeOnlineStoreUrl(settings.onlineStoreUrl);
+  if (!url) return null;
+  return `Tenemos tienda online por si queres conocer mas:\n${url}`;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // AGENT CLASS
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1065,6 +1088,17 @@ export class RetailAgent {
 
       memory.context.activeFlow = detectConversationFlow(memory);
 
+      const workspaceRecord = await this.prisma.workspace.findUnique({
+        where: { id: workspaceId },
+        select: { name: true, settings: true },
+      });
+      const workspaceSettings = (workspaceRecord?.settings as Record<string, unknown>) || {};
+      const commerceName =
+        (workspaceSettings.businessName as string) ||
+        workspaceRecord?.name ||
+        'Tu Comercio';
+      const onlineStoreMenuMessage = resolveOnlineStoreMenuMessage(workspaceSettings);
+
       const availabilityStatus = await this.resolveWorkspaceAvailability(workspaceId);
       if ((process.env.AGENT_AVAILABILITY_DEBUG || '') === '1') {
         console.warn(`[Agent] Availability status for ${workspaceId}: ${availabilityStatus ?? 'null'}`);
@@ -1299,8 +1333,8 @@ export class RetailAgent {
         }
 
         const menuContent = variant === 'primary_lite'
-          ? buildPrimaryMenuLiteContent()
-          : buildPrimaryMenuContent();
+          ? buildPrimaryMenuLiteContent(onlineStoreMenuMessage)
+          : buildPrimaryMenuContent(onlineStoreMenuMessage);
         memory.context.lastMenu = 'primary';
         await this.memoryManager.saveSession(memory);
 
@@ -1375,7 +1409,7 @@ export class RetailAgent {
           memory.context.lastMenu = 'primary';
           await this.memoryManager.saveSession(memory);
 
-          const menuContent = buildPrimaryMenuContent();
+          const menuContent = buildPrimaryMenuContent(onlineStoreMenuMessage);
           await this.storeMessage(sessionId, 'user', message, messageId);
           await this.storeMessage(sessionId, 'assistant', menuContent.text);
 
@@ -1672,15 +1706,6 @@ export class RetailAgent {
         const commerceProfile = memory.context.commerceProfile
           ? normalizeCommercePromptProfile(memory.context.commerceProfile)
           : await this.loadCommerceProfile(workspaceId);
-
-        const workspace = await this.prisma.workspace.findUnique({
-          where: { id: workspaceId },
-          select: { settings: true },
-        });
-        const workspaceSettings = (workspace?.settings as Record<string, unknown>) || {};
-        const commerceName =
-          (workspaceSettings.businessName as string) ||
-          'Tu Comercio';
 
         const subagentsEnabled = this.isSubagentsEnabled(workspaceSettings);
         const agentMode = this.resolveAgentMode(message, memory, fsm, subagentsEnabled);
@@ -4096,7 +4121,7 @@ export class RetailAgent {
             await this.memoryManager.updateState(sessionId, AgentState.IDLE);
           }
 
-          const menuContent = buildPrimaryMenuContent();
+          const menuContent = buildPrimaryMenuContent(onlineStoreMenuMessage);
           const response = wasEditingOrder ? 'Edición cancelada.' : 'Pedido cancelado.';
           await this.storeMessage(sessionId, 'user', message, messageId);
           await this.storeMessage(sessionId, 'assistant', response);
@@ -4389,16 +4414,6 @@ export class RetailAgent {
         }
       }
 
-      // Load workspace settings (for commerce name/profile)
-      const workspace = await this.prisma.workspace.findUnique({
-        where: { id: workspaceId },
-        select: { name: true, settings: true },
-      });
-      const workspaceSettings = (workspace?.settings as Record<string, unknown>) || {};
-      const commerceName =
-        (workspaceSettings.businessName as string) ||
-        'Tu Comercio';
-
       // Strict registration flow (no phone request, no guessing)
       const customerRecord = await this.prisma.customer.findFirst({
         where: { id: customerId, workspaceId },
@@ -4441,7 +4456,7 @@ export class RetailAgent {
         }
         await this.memoryManager.saveSession(memory);
 
-        const menuContent = hasFullName && hasDni ? buildPrimaryMenuContent() : null;
+        const menuContent = hasFullName && hasDni ? buildPrimaryMenuContent(onlineStoreMenuMessage) : null;
         const response = hasFullName && hasDni
           ? buildRegisteredMessage(
               `${merged.firstName} ${merged.lastName}`.trim(),
@@ -4503,7 +4518,7 @@ export class RetailAgent {
           memory.context.lastMenu = 'primary';
           await this.memoryManager.saveSession(memory);
 
-          const menuContent = buildPrimaryMenuContent();
+          const menuContent = buildPrimaryMenuContent(onlineStoreMenuMessage);
           const response = 'Perfecto, no cancelo el pedido.';
           await this.storeMessage(sessionId, 'user', message, messageId);
           await this.storeMessage(sessionId, 'assistant', response);
@@ -4540,7 +4555,7 @@ export class RetailAgent {
           ? `Listo, tu pedido ${cancelOrderNumber} fue cancelado con éxito.`
           : execution.result.error || 'No pude cancelar el pedido.';
 
-        const menuContent = buildPrimaryMenuContent();
+        const menuContent = buildPrimaryMenuContent(onlineStoreMenuMessage);
         const response = cancelResponse;
 
         await this.storeMessage(sessionId, 'user', message, messageId);
@@ -4573,7 +4588,7 @@ export class RetailAgent {
           memory.context.lastMenu = 'primary';
           await this.memoryManager.saveSession(memory);
 
-          const menuContent = buildPrimaryMenuContent();
+          const menuContent = buildPrimaryMenuContent(onlineStoreMenuMessage);
           await this.storeMessage(sessionId, 'user', message, messageId);
           await this.storeMessage(sessionId, 'assistant', menuContent.text);
 
@@ -4598,7 +4613,7 @@ export class RetailAgent {
           memory.context.lastMenu = 'primary';
           await this.memoryManager.saveSession(memory);
 
-          const menuContent = buildPrimaryMenuContent();
+          const menuContent = buildPrimaryMenuContent(onlineStoreMenuMessage);
           await this.storeMessage(sessionId, 'user', message, messageId);
           await this.storeMessage(sessionId, 'assistant', menuContent.text);
 
@@ -6096,7 +6111,7 @@ export class RetailAgent {
 
       // Registered customers: show menu on explicit menu request even outside idle
       if (fsm.getState() !== AgentState.IDLE && isMenuRequest(message)) {
-        const menuContent = buildPrimaryMenuContent();
+        const menuContent = buildPrimaryMenuContent(onlineStoreMenuMessage);
         const wantsGreeting = shouldPrefaceGreeting(message);
         const body = wantsGreeting ? `¡Hola! 😊\n\n${menuContent.interactive.body}` : menuContent.interactive.body;
         const response = body;
@@ -6126,7 +6141,7 @@ export class RetailAgent {
       if (fsm.getState() === AgentState.IDLE) {
 
         if (shouldShowMenu(message)) {
-          const menuContent = buildPrimaryMenuContent();
+          const menuContent = buildPrimaryMenuContent(onlineStoreMenuMessage);
           const wantsGreeting = shouldPrefaceGreeting(message);
           const body = wantsGreeting ? `¡Hola! 😊\n\n${menuContent.interactive.body}` : menuContent.interactive.body;
           const response = body;
@@ -6171,7 +6186,7 @@ export class RetailAgent {
           await this.memoryManager.saveSession(memory);
 
           const response = 'Perfecto, no hay problema. Cuando quieras pagar, estoy acá para ayudarte.';
-          const menuContent = buildPrimaryMenuContent();
+          const menuContent = buildPrimaryMenuContent(onlineStoreMenuMessage);
           await this.storeMessage(sessionId, 'user', message, messageId);
           await this.storeMessage(sessionId, 'assistant', response);
 
@@ -6569,7 +6584,7 @@ export class RetailAgent {
             await this.memoryManager.saveSession(memory);
 
             const response = 'Perfecto, el repartidor aguarda tu pago en efectivo.';
-            const menuContent = buildPrimaryMenuContent();
+            const menuContent = buildPrimaryMenuContent(onlineStoreMenuMessage);
             await this.storeMessage(sessionId, 'user', message, messageId);
             await this.storeMessage(sessionId, 'assistant', response);
 
@@ -6861,7 +6876,7 @@ export class RetailAgent {
             await this.memoryManager.saveSession(memory);
 
             const response = 'Perfecto, el repartidor aguarda tu pago en efectivo.';
-            const menuContent = buildPrimaryMenuContent();
+            const menuContent = buildPrimaryMenuContent(onlineStoreMenuMessage);
             await this.storeMessage(sessionId, 'user', message, messageId);
             await this.storeMessage(sessionId, 'assistant', response);
 
@@ -7891,7 +7906,7 @@ export class RetailAgent {
       }
 
       if (response && !responseType && isPrimaryMenuResponse(response)) {
-        const menuContent = buildPrimaryMenuContent();
+        const menuContent = buildPrimaryMenuContent(onlineStoreMenuMessage);
         memory.context.lastMenu = 'primary';
         await this.memoryManager.saveSession(memory);
 
@@ -9537,20 +9552,27 @@ function buildRegisteredMessage(fullName: string, menuText: string): string {
   ].join('\n');
 }
 
-function buildPrimaryMenuContent(): { text: string; interactive: InteractiveButtonsPayload } {
-  const text = [
+function buildPrimaryMenuContent(onlineStoreMenuMessage?: string | null): { text: string; interactive: InteractiveButtonsPayload } {
+  const lines = [
     '¿Qué querés hacer?',
     '',
     '1. Hacer pedido',
     '2. Ver pedidos activos',
     '3. Más opciones',
-    '',
-  ].join('\n');
+  ];
+  if (onlineStoreMenuMessage) {
+    lines.push('', onlineStoreMenuMessage);
+  }
+  lines.push('');
+  const text = lines.join('\n');
+  const body = onlineStoreMenuMessage
+    ? `¿Qué querés hacer? ✨\n\n${onlineStoreMenuMessage}`
+    : '¿Qué querés hacer? ✨';
 
   return {
     text,
     interactive: {
-      body: '¿Qué querés hacer? ✨',
+      body,
       buttons: [
         { id: 'menu_primary_order', title: '🛒 Hacer pedido' },
         { id: 'menu_primary_active', title: '📦 Pedidos activos' },
@@ -9560,19 +9582,26 @@ function buildPrimaryMenuContent(): { text: string; interactive: InteractiveButt
   };
 }
 
-function buildPrimaryMenuLiteContent(): { text: string; interactive: InteractiveButtonsPayload } {
-  const text = [
+function buildPrimaryMenuLiteContent(onlineStoreMenuMessage?: string | null): { text: string; interactive: InteractiveButtonsPayload } {
+  const lines = [
     '¿Qué querés hacer?',
     '',
     '1. Hacer pedido',
     '2. Ver pedidos activos',
-    '',
-  ].join('\n');
+  ];
+  if (onlineStoreMenuMessage) {
+    lines.push('', onlineStoreMenuMessage);
+  }
+  lines.push('');
+  const text = lines.join('\n');
+  const body = onlineStoreMenuMessage
+    ? `¿Qué querés hacer? ✨\n\n${onlineStoreMenuMessage}`
+    : '¿Qué querés hacer? ✨';
 
   return {
     text,
     interactive: {
-      body: '¿Qué querés hacer? ✨',
+      body,
       buttons: [
         { id: 'menu_primary_order', title: '🛒 Hacer pedido' },
         { id: 'menu_primary_active', title: '📦 Pedidos activos' },

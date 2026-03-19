@@ -114,11 +114,19 @@ function readErrorMessage(payload: unknown): string | null {
 const EMPTY_SERIES: MetricsSeriesPoint[] = [];
 const EMPTY_PAYMENTS: Array<{ method: string; total: number; count: number }> = [];
 
-const RANGE_OPTIONS = [
-  { value: '30d', label: 'Últimos 30 días' },
-  { value: '90d', label: 'Últimos 90 días' },
-  { value: '12m', label: 'Últimos 12 meses' },
-  { value: 'all', label: 'Todo el historial' },
+const MONTH_OPTIONS = [
+  { value: '1', label: 'Enero' },
+  { value: '2', label: 'Febrero' },
+  { value: '3', label: 'Marzo' },
+  { value: '4', label: 'Abril' },
+  { value: '5', label: 'Mayo' },
+  { value: '6', label: 'Junio' },
+  { value: '7', label: 'Julio' },
+  { value: '8', label: 'Agosto' },
+  { value: '9', label: 'Septiembre' },
+  { value: '10', label: 'Octubre' },
+  { value: '11', label: 'Noviembre' },
+  { value: '12', label: 'Diciembre' },
 ];
 
 const PAYMENT_METHOD_LABELS: Record<string, string> = {
@@ -165,7 +173,7 @@ function EmptyState({ icon: Icon, title, subtitle }: { icon: React.ElementType; 
 export default function MetricsPage(): JSX.Element {
   const { workspace } = useAuth();
   const capabilities = getWorkspaceCommerceCapabilities(workspace);
-  const [range, setRange] = useState('90d');
+  const [month, setMonth] = useState(() => String(new Date().getMonth() + 1));
   const [year, setYear] = useState(() => String(new Date().getFullYear()));
   const [metrics, setMetrics] = useState<MetricsResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -187,7 +195,7 @@ export default function MetricsPage(): JSX.Element {
     const loadMetrics = async (): Promise<void> => {
       setIsLoading(true);
       try {
-        const queryParams = new URLSearchParams({ range, year });
+        const queryParams = new URLSearchParams({ month, year });
         const response = await apiFetch(`/api/v1/analytics/metrics?${queryParams.toString()}`, {}, workspace.id);
         if (response.ok) {
           const data = (await response.json()) as unknown as MetricsResponse;
@@ -201,7 +209,7 @@ export default function MetricsPage(): JSX.Element {
     };
 
     void loadMetrics();
-  }, [workspace?.id, range, year]);
+  }, [workspace?.id, month, year]);
 
   const pendingRevenue = metrics?.summary.pendingRevenue ?? 0;
   const paidRate = metrics?.summary.paidRate ?? 0;
@@ -268,7 +276,7 @@ export default function MetricsPage(): JSX.Element {
       setInsightsError('');
       setIsInsightsLoading(true);
       try {
-        const queryParams = new URLSearchParams({ range, year });
+        const queryParams = new URLSearchParams({ month, year });
         const response = await apiFetch(`/api/v1/analytics/insights?${queryParams.toString()}`, {}, workspace.id);
         if (!response.ok) {
           let message = 'No se pudo generar el resumen';
@@ -291,7 +299,7 @@ export default function MetricsPage(): JSX.Element {
     };
 
     void loadInsights();
-  }, [capabilities.showMetricsAiInsights, isInsightsOpen, range, workspace?.id, year]);
+  }, [capabilities.showMetricsAiInsights, isInsightsOpen, month, workspace?.id, year]);
 
   return (
     <div className="h-full overflow-y-auto scrollbar-hide p-4 md:p-6">
@@ -305,12 +313,12 @@ export default function MetricsPage(): JSX.Element {
           </div>
           <div className="flex w-full flex-col gap-3 md:w-auto md:flex-row md:items-center">
             <div className="w-full md:w-56">
-              <Select value={range} onValueChange={setRange}>
+              <Select value={month} onValueChange={setMonth}>
                 <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Rango" />
+                  <SelectValue placeholder="Mes" />
                 </SelectTrigger>
                 <SelectContent>
-                  {RANGE_OPTIONS.map((option) => (
+                  {MONTH_OPTIONS.map((option) => (
                     <SelectItem key={option.value} value={option.value}>
                       {option.label}
                     </SelectItem>

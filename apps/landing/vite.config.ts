@@ -1,9 +1,23 @@
-import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
+import { defineConfig, type PluginOption } from 'vite';
 import path from 'path';
 
-export default defineConfig({
-  plugins: [react()],
+async function resolveReactPlugin(): Promise<PluginOption[]> {
+  try {
+    const react = await import('@vitejs/plugin-react');
+    return [react.default()];
+  } catch {
+    try {
+      const reactSwc = await import('@vitejs/plugin-react-swc');
+      return [reactSwc.default()];
+    } catch {
+      // Fallback to plain Vite if React plugins are not present in node_modules.
+      return [];
+    }
+  }
+}
+
+export default defineConfig(async () => ({
+  plugins: await resolveReactPlugin(),
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
@@ -31,6 +45,16 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: true,
+    rollupOptions: {
+      input: {
+        main: path.resolve(__dirname, 'index.html'),
+        cart: path.resolve(__dirname, 'cart/index.html'),
+        register: path.resolve(__dirname, 'register/index.html'),
+        verifyEmail: path.resolve(__dirname, 'verify-email/index.html'),
+        checkout: path.resolve(__dirname, 'checkout/index.html'),
+        checkoutContinue: path.resolve(__dirname, 'checkout/continue/index.html'),
+        checkoutSuccess: path.resolve(__dirname, 'checkout/success/index.html'),
+      },
+    },
   },
-});
-
+}));

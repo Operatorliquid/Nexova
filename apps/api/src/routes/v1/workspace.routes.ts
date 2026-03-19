@@ -338,6 +338,37 @@ function isValidWhatsappContactForSettings(raw: unknown): boolean {
   return WHATSAPP_CONTACT_REGEX.test(trimmed);
 }
 
+function normalizeOnlineStoreUrlForSettings(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+
+  const candidate = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  try {
+    const parsed = new URL(candidate);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return trimmed;
+    }
+    return parsed.toString();
+  } catch {
+    return trimmed;
+  }
+}
+
+function isValidOnlineStoreUrlForSettings(raw: unknown): boolean {
+  if (typeof raw !== 'string') return false;
+  const trimmed = raw.trim();
+  if (!trimmed) return true;
+
+  const candidate = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  try {
+    const parsed = new URL(candidate);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
   const workspaceService = new WorkspaceService(fastify.prisma);
 
@@ -1393,6 +1424,8 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
 	          paymentAlias: z.string().max(100).optional(),
 	          paymentCbu: z.string().max(100).optional(),
 	          businessAddress: z.string().max(500).optional(),
+          onlineStoreEnabled: z.boolean().optional(),
+          onlineStoreUrl: z.string().trim().max(500).optional().nullable(),
 	          vatConditionId: z.string().max(50).optional().nullable(),
           monotributoCategory: z.string().max(2).optional(),
           monotributoActivity: z.enum(['services', 'goods']).optional(),
@@ -1597,6 +1630,19 @@ export const workspaceRoutes: FastifyPluginAsync = async (fastify) => {
             return reply.code(400).send({
               error: 'INVALID_WHATSAPP_CONTACT',
               message: 'WhatsApp de contacto invalido. Usa 8 a 15 digitos (opcional + al inicio).',
+            });
+          }
+        }
+
+        if (typeof newSettings.onlineStoreUrl === 'string') {
+          const normalized = normalizeOnlineStoreUrlForSettings(newSettings.onlineStoreUrl);
+          if (typeof normalized === 'string') {
+            newSettings.onlineStoreUrl = normalized;
+          }
+          if (!isValidOnlineStoreUrlForSettings(newSettings.onlineStoreUrl)) {
+            return reply.code(400).send({
+              error: 'INVALID_ONLINE_STORE_URL',
+              message: 'URL de tienda online inválida. Usá un dominio o URL http/https.',
             });
           }
         }

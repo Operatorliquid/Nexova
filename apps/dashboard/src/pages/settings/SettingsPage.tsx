@@ -113,6 +113,18 @@ function isValidWhatsappContact(value: string): boolean {
   return /^\+?\d{8,15}$/.test(trimmed);
 }
 
+function isValidOnlineStoreUrl(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return true;
+  const candidate = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  try {
+    const parsed = new URL(candidate);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 // Navigation items - "Mi negocio" only shows for commerce business type
 const getSettingsNav = (
   businessType?: string,
@@ -333,6 +345,8 @@ interface BusinessProfile {
   companyLogo: string | null;
   businessName: string;
   whatsappContact: string;
+  onlineStoreEnabled: boolean;
+  onlineStoreUrl: string;
   ownerAgentEnabled: boolean;
   ownerAgentNumber: string;
   ownerAgentPinRequired: boolean;
@@ -410,6 +424,8 @@ function BusinessSettings(): JSX.Element {
     companyLogo: null,
     businessName: '',
     whatsappContact: '',
+    onlineStoreEnabled: false,
+    onlineStoreUrl: '',
     ownerAgentEnabled: false,
     ownerAgentNumber: '',
     ownerAgentPinRequired: false,
@@ -463,6 +479,8 @@ function BusinessSettings(): JSX.Element {
             companyLogo: readString(settings, 'companyLogo') ?? null,
             businessName: readString(settings, 'businessName') ?? '',
             whatsappContact: sanitizeWhatsappContactInput(readString(settings, 'whatsappContact') ?? ''),
+            onlineStoreEnabled: readBoolean(settings, 'onlineStoreEnabled', false),
+            onlineStoreUrl: readString(settings, 'onlineStoreUrl') ?? '',
             ownerAgentEnabled: readBoolean(settings, 'ownerAgentEnabled', false),
             ownerAgentNumber: readString(settings, 'ownerAgentNumber') ?? '',
             ownerAgentPinRequired: ownerAgentPinHash !== undefined,
@@ -553,10 +571,15 @@ function BusinessSettings(): JSX.Element {
       if (!isValidWhatsappContact(normalizedWhatsappContact)) {
         throw new Error('Ingresá un WhatsApp de contacto válido (8 a 15 dígitos, opcional + al inicio).');
       }
+      const normalizedOnlineStoreUrl = profile.onlineStoreUrl.trim();
+      if (normalizedOnlineStoreUrl && !isValidOnlineStoreUrl(normalizedOnlineStoreUrl)) {
+        throw new Error('Ingresá una URL de tienda online válida (dominio o URL http/https).');
+      }
 
       const payload: Record<string, unknown> = {
         ...profile,
         whatsappContact: normalizedWhatsappContact,
+        onlineStoreUrl: normalizedOnlineStoreUrl || null,
         vatConditionId: profile.vatConditionId || null,
       };
 
@@ -735,6 +758,23 @@ function BusinessSettings(): JSX.Element {
             onChange={(e) => setProfile((p) => ({ ...p, businessName: e.target.value }))}
             hint="Se usa en los saludos y mensajes del agente"
           />
+          <div className="pt-2 border-t border-border/50 space-y-3">
+            <Switch
+              label="Mostrar tienda online en el menú del bot"
+              description="Si está activo, el bot mostrará el link de tu tienda debajo del menú principal."
+              checked={profile.onlineStoreEnabled}
+              onChange={(e) => setProfile((p) => ({ ...p, onlineStoreEnabled: e.target.checked }))}
+            />
+            <Input
+              label="URL de la tienda online"
+              placeholder="https://mitienda.com"
+              value={profile.onlineStoreUrl}
+              onChange={(e) => setProfile((p) => ({ ...p, onlineStoreUrl: e.target.value }))}
+              hint="Podés pegar dominio o URL completa. Ejemplo: mitienda.com"
+              disabled={!profile.onlineStoreEnabled}
+              inputMode="url"
+            />
+          </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Input
               label="WhatsApp de contacto"

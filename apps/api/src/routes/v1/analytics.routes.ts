@@ -8,7 +8,7 @@ import { z } from 'zod';
 import { COMMERCE_USAGE_METRICS } from '@nexova/shared';
 
 import { generateBusinessInsights } from '../../services/analytics/insights.service.js';
-import { buildMetrics } from '../../services/analytics/metrics.service.js';
+import { type MetricsRangeInput, buildMetrics } from '../../services/analytics/metrics.service.js';
 import { getEffectiveCommercePlanLimits } from '../../utils/commerce-plan-limits.js';
 import { getWorkspacePlanContext } from '../../utils/commerce-plan.js';
 import { getMonthlyUsage, recordMonthlyUsage } from '../../utils/monthly-usage.js';
@@ -16,8 +16,37 @@ import { getMonthlyUsage, recordMonthlyUsage } from '../../utils/monthly-usage.j
 
 const metricsQuerySchema = z.object({
   range: z.enum(['today', 'week', 'month', '30d', '90d', '12m', 'all']).optional(),
+  month: z.coerce.number().int().min(1).max(12).optional(),
   year: z.coerce.number().int().min(2000).max(2100).optional(),
 });
+
+type MetricsQuery = z.infer<typeof metricsQuerySchema>;
+
+function resolveMonthLabel(month: number): string {
+  const monthLabel = new Intl.DateTimeFormat('es-AR', { month: 'long' }).format(new Date(2000, month - 1, 1));
+  return monthLabel.charAt(0).toUpperCase() + monthLabel.slice(1);
+}
+
+function resolveMetricsQueryInput(query: MetricsQuery): { rangeInput?: MetricsRangeInput; selectedYear?: number } {
+  if (typeof query.month === 'number') {
+    const year = query.year ?? new Date().getFullYear();
+    const from = new Date(year, query.month - 1, 1, 0, 0, 0, 0);
+    const to = new Date(year, query.month, 0, 23, 59, 59, 999);
+    return {
+      rangeInput: {
+        from,
+        to,
+        label: `${resolveMonthLabel(query.month)} ${year}`,
+      },
+      selectedYear: undefined,
+    };
+  }
+
+  return {
+    rangeInput: query.range,
+    selectedYear: query.year,
+  };
+}
 
 function buildEmergencyFallbackInsights(reason?: string): {
   insights: {
@@ -76,7 +105,8 @@ export const analyticsRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const query = metricsQuerySchema.parse(request.query);
-      const metrics = await buildMetrics(fastify.prisma, workspaceId, query.range, query.year);
+      const { rangeInput, selectedYear } = resolveMetricsQueryInput(query);
+      const metrics = await buildMetrics(fastify.prisma, workspaceId, rangeInput, selectedYear);
       return reply.send(metrics);
     }
   );
@@ -91,6 +121,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const query = metricsQuerySchema.parse(request.query);
+      const { rangeInput, selectedYear } = resolveMetricsQueryInput(query);
       const membership = await fastify.prisma.membership.findFirst({
         where: {
           workspaceId,
@@ -127,7 +158,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (fastify) => {
           }
         }
 
-        const result = await generateBusinessInsights(fastify.prisma, workspaceId, query.range, query.year);
+        const result = await generateBusinessInsights(fastify.prisma, workspaceId, rangeInput, selectedYear);
         if (!result.fallback) {
           await recordMonthlyUsage(fastify.prisma, {
             workspaceId,
