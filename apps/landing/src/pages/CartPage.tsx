@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 
-import { BILLING_MONTH_OPTIONS } from '@nexova/shared';
-
 import { apiFetch, readErrorMessage } from '../lib/api';
+
+const BILLING_MONTH_OPTIONS = [1, 12, 24, 48] as const;
+type BillingMonthOption = (typeof BILLING_MONTH_OPTIONS)[number];
 
 type CatalogPlan = {
   plan: 'basic' | 'standard' | 'pro';
@@ -86,7 +87,7 @@ export default function CartPage(): JSX.Element {
   }, []);
 
   useEffect(() => {
-    const safeMonths = BILLING_MONTH_OPTIONS.includes(months as (typeof BILLING_MONTH_OPTIONS)[number])
+    const safeMonths = BILLING_MONTH_OPTIONS.includes(months as BillingMonthOption)
       ? months
       : 1;
     if (safeMonths !== months) {
@@ -103,7 +104,7 @@ export default function CartPage(): JSX.Element {
         const data = (await res.json()) as { intent?: BillingIntent };
         if (!data.intent) return;
         setSelectedPlan(data.intent.plan);
-        if (BILLING_MONTH_OPTIONS.includes(data.intent.months as (typeof BILLING_MONTH_OPTIONS)[number])) {
+        if (BILLING_MONTH_OPTIONS.includes(data.intent.months as BillingMonthOption)) {
           setMonths(data.intent.months);
         }
       } catch {
