@@ -1342,6 +1342,9 @@ function ApplicationsSettings(): JSX.Element {
   const [isGeneratingCsr, setIsGeneratingCsr] = useState(false);
   const [arcaCsr, setArcaCsr] = useState('');
   const [arcaCsrCopied, setArcaCsrCopied] = useState(false);
+  const arcaCertificateFileRef = useRef<HTMLInputElement>(null);
+  const [isReadingArcaCertificateFile, setIsReadingArcaCertificateFile] = useState(false);
+  const [arcaCertificateFileName, setArcaCertificateFileName] = useState('');
   const [arcaForm, setArcaForm] = useState({
     cuit: '',
     pointOfSale: '1',
@@ -1694,6 +1697,46 @@ function ApplicationsSettings(): JSX.Element {
     }
   };
 
+  const handleArcaEnvironmentChange = (value: string): void => {
+    const nextEnvironment: 'test' | 'prod' = value === 'prod' ? 'prod' : 'test';
+    setArcaForm((prev) => {
+      if (prev.environment === nextEnvironment) return prev;
+      return {
+        ...prev,
+        environment: nextEnvironment,
+        certificate: '',
+      };
+    });
+    setArcaCertificateFileName('');
+    setArcaError('');
+  };
+
+  const handleArcaCertificateFileChange = async (event: ChangeEvent<HTMLInputElement>): Promise<void> => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setArcaError('');
+    setIsReadingArcaCertificateFile(true);
+    try {
+      const content = (await file.text()).trim();
+      if (!content) {
+        throw new Error('El archivo del certificado está vacío.');
+      }
+      if (!content.includes('BEGIN CERTIFICATE')) {
+        throw new Error('El archivo no parece un certificado PEM válido.');
+      }
+      setArcaForm((prev) => ({ ...prev, certificate: content }));
+      setArcaCertificateFileName(file.name);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'No se pudo leer el certificado';
+      setArcaForm((prev) => ({ ...prev, certificate: '' }));
+      setArcaCertificateFileName('');
+      setArcaError(message);
+    } finally {
+      setIsReadingArcaCertificateFile(false);
+      event.target.value = '';
+    }
+  };
+
   const handleConnectArca = async (): Promise<void> => {
     if (!workspace?.id) return;
     setIsConnectingArca(true);
@@ -1703,7 +1746,7 @@ function ApplicationsSettings(): JSX.Element {
       const payload: Record<string, unknown> = {
         cuit: arcaForm.cuit.trim(),
         pointOfSale: Number(arcaForm.pointOfSale),
-        certificate: arcaForm.certificate,
+        certificate: arcaForm.certificate.trim(),
         environment: arcaForm.environment,
       };
       const res = await fetchWithCredentials(`${API_URL}/api/v1/integrations/arca/connect`, {
@@ -1812,6 +1855,7 @@ function ApplicationsSettings(): JSX.Element {
   };
 
   const isLoading = isLoadingWA || (canUseMercadoPago && isLoadingMP) || (canUseArca && isLoadingArca);
+  const arcaCertificateReady = arcaForm.certificate.trim().length > 0;
 
   if (isLoading) {
     return (
@@ -2244,7 +2288,7 @@ function ApplicationsSettings(): JSX.Element {
                   <label className="text-sm font-medium leading-none">Entorno</label>
                   <Select
                     value={arcaForm.environment}
-                    onValueChange={(value) => setArcaForm((prev) => ({ ...prev, environment: value }))}
+                    onValueChange={handleArcaEnvironmentChange}
                   >
                     <SelectTrigger>
                       <SelectValue />
@@ -2294,24 +2338,48 @@ function ApplicationsSettings(): JSX.Element {
                   </div>
                 </div>
                 <div className="text-xs text-muted-foreground space-y-2">
-                  <p>1) Ingresá en <span className="font-medium text-foreground/80">afip.gob.ar</span> y logueate.</p>
-                  <p>2) Buscá el trámite <span className="font-medium text-foreground/80">{arcaForm.environment === 'prod' ? 'Administración de Certificados Digitales' : 'WSASS - Autogestión Certificados Homologación'}</span>.</p>
-                  <p>3) En el panel izquierdo: <span className="font-medium text-foreground/80">{arcaForm.environment === 'prod' ? 'Agregar alias' : 'Nuevo certificado'}</span>.</p>
-                  <p>4) Completá:</p>
-                  <div className="ml-3 space-y-1">
-                    <p>• Nombre simbólico del DN: el que quieras</p>
-                    <p>• CUIT del contribuyente: dejalo igual</p>
-                    <p>• Solicitud PKCS#10: pegá el CSR del paso 1</p>
-                  </div>
-                  <p>5) Hacé click en <span className="font-medium text-foreground/80">{arcaForm.environment === 'prod' ? 'Agregar alias' : 'Crear DN y obtener certificado'}</span>.</p>
-                  <p>6) Copiá el certificado generado y pegalo en el paso 3.</p>
-                  <p>7) En el panel izquierdo: <span className="font-medium text-foreground/80">{arcaForm.environment === 'prod' ? 'Agregar autorización' : 'Crear autorización a servicio'}</span>.</p>
-                  <div className="ml-3 space-y-1">
-                    <p>• Campo 1: seleccioná el certificado creado</p>
-                    <p>• Campos 2, 3 y 4: dejalos como están</p>
-                    <p>• Campo 5: <span className="font-medium text-foreground/80">wsfe</span> (Factura electrónica)</p>
-                  </div>
-                  <p>8) Creá la autorización y luego tocá <span className="font-medium text-foreground/80">Conectar</span>.</p>
+                  {arcaForm.environment === 'prod' ? (
+                    <>
+                      <p>1) Ingresá en <span className="font-medium text-foreground/80">afip.gob.ar</span> y logueate.</p>
+                      <p>2) Buscá <span className="font-medium text-foreground/80">Administración de Certificados Digitales</span>.</p>
+                      <p>3) En el panel izquierdo: <span className="font-medium text-foreground/80">Agregar alias</span>.</p>
+                      <p>4) Completá:</p>
+                      <div className="ml-3 space-y-1">
+                        <p>• Nombre simbólico del DN: el que quieras</p>
+                        <p>• CUIT del contribuyente: dejalo igual</p>
+                        <p>• Solicitud PKCS#10: pegá el CSR del paso 1</p>
+                      </div>
+                      <p>5) Hacé click en <span className="font-medium text-foreground/80">Agregar alias</span>.</p>
+                      <p>6) Descargá el certificado que genera ARCA y subilo en el paso 3.</p>
+                      <p>7) Volvé al panel inicial de ARCA y abrí <span className="font-medium text-foreground/80">Administrador de Relaciones de Clave Fiscal</span>.</p>
+                      <p>8) Tocá <span className="font-medium text-foreground/80">Nueva relación</span>.</p>
+                      <p>9) En <span className="font-medium text-foreground/80">Servicio</span>, tocá <span className="font-medium text-foreground/80">Buscar</span> y elegí: <span className="font-medium text-foreground/80">ARCA {'>'} Web Services {'>'} Facturación Electrónica</span>.</p>
+                      <p>10) En <span className="font-medium text-foreground/80">Representante</span>, tocá <span className="font-medium text-foreground/80">Buscar</span>.</p>
+                      <p>11) En <span className="font-medium text-foreground/80">Computador fiscal</span>, elegí el certificado creado anteriormente y confirmá.</p>
+                      <p>12) Confirmá nuevamente la relación y luego tocá <span className="font-medium text-foreground/80">Conectar</span> en Nexova.</p>
+                    </>
+                  ) : (
+                    <>
+                      <p>1) Ingresá en <span className="font-medium text-foreground/80">afip.gob.ar</span> y logueate.</p>
+                      <p>2) Buscá el trámite <span className="font-medium text-foreground/80">WSASS - Autogestión Certificados Homologación</span>.</p>
+                      <p>3) En el panel izquierdo: <span className="font-medium text-foreground/80">Nuevo certificado</span>.</p>
+                      <p>4) Completá:</p>
+                      <div className="ml-3 space-y-1">
+                        <p>• Nombre simbólico del DN: el que quieras</p>
+                        <p>• CUIT del contribuyente: dejalo igual</p>
+                        <p>• Solicitud PKCS#10: pegá el CSR del paso 1</p>
+                      </div>
+                      <p>5) Hacé click en <span className="font-medium text-foreground/80">Crear DN y obtener certificado</span>.</p>
+                      <p>6) Copiá el certificado generado y pegalo en el paso 3.</p>
+                      <p>7) En el panel izquierdo: <span className="font-medium text-foreground/80">Crear autorización a servicio</span>.</p>
+                      <div className="ml-3 space-y-1">
+                        <p>• Campo 1: seleccioná el certificado creado</p>
+                        <p>• Campos 2, 3 y 4: dejalos como están</p>
+                        <p>• Campo 5: <span className="font-medium text-foreground/80">wsfe</span> (Factura electrónica)</p>
+                      </div>
+                      <p>8) Creá la autorización y luego tocá <span className="font-medium text-foreground/80">Conectar</span>.</p>
+                    </>
+                  )}
                 </div>
                 <div className={cn(
                   'mt-auto p-3 rounded-xl border text-xs',
@@ -2327,32 +2395,80 @@ function ApplicationsSettings(): JSX.Element {
               {/* Step 3: Upload certificate */}
               <div className={cn(
                 'p-4 rounded-2xl bg-secondary/50 border h-full flex flex-col gap-3',
-                arcaForm.certificate ? 'border-emerald-500/20' : 'border-border'
+                arcaCertificateReady ? 'border-emerald-500/20' : 'border-border'
               )}>
                 <div className="flex items-center gap-3">
                   <div className={cn(
                     'w-8 h-8 rounded-xl flex items-center justify-center text-sm font-semibold',
-                    arcaForm.certificate ? 'bg-emerald-500/10 text-emerald-400' : 'bg-primary/10 text-primary'
+                    arcaCertificateReady ? 'bg-emerald-500/10 text-emerald-400' : 'bg-primary/10 text-primary'
                   )}>
-                    {arcaForm.certificate ? <Check className="w-4 h-4" /> : '3'}
+                    {arcaCertificateReady ? <Check className="w-4 h-4" /> : '3'}
                   </div>
                   <div>
                     <p className="font-medium text-foreground">Subir certificado</p>
                     <p className="text-xs text-muted-foreground">Cuando ARCA lo entregue.</p>
                   </div>
                 </div>
-                <p className="text-xs text-muted-foreground">Certificado PEM</p>
-                <Textarea
-                  className="h-28 text-xs font-mono"
-                  placeholder="Pegá acá el certificado PEM completo (BEGIN CERTIFICATE)"
-                  value={arcaForm.certificate}
-                  onChange={(e) =>
-                    setArcaForm((prev) => ({
-                      ...prev,
-                      certificate: e.target.value,
-                    }))
-                  }
-                />
+                {arcaForm.environment === 'prod' ? (
+                  <>
+                    <p className="text-xs text-muted-foreground">Archivo del certificado (.pem, .crt, .cer)</p>
+                    <input
+                      ref={arcaCertificateFileRef}
+                      type="file"
+                      accept=".pem,.crt,.cer,text/plain,application/x-pem-file,application/pkix-cert"
+                      className="hidden"
+                      onChange={(event) => {
+                        void handleArcaCertificateFileChange(event);
+                      }}
+                    />
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => arcaCertificateFileRef.current?.click()}
+                        isLoading={isReadingArcaCertificateFile}
+                      >
+                        {arcaCertificateFileName ? 'Cambiar archivo' : 'Subir archivo'}
+                      </Button>
+                      {arcaCertificateReady && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => {
+                            setArcaForm((prev) => ({ ...prev, certificate: '' }));
+                            setArcaCertificateFileName('');
+                          }}
+                        >
+                          Quitar
+                        </Button>
+                      )}
+                    </div>
+                    {arcaCertificateFileName ? (
+                      <p className="text-xs text-muted-foreground truncate">
+                        Archivo cargado: <span className="text-foreground/80">{arcaCertificateFileName}</span>
+                      </p>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        En producción ARCA devuelve un archivo de certificado. Subilo acá sin pegar texto.
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <p className="text-xs text-muted-foreground">Certificado PEM</p>
+                    <Textarea
+                      className="h-28 text-xs font-mono"
+                      placeholder="Pegá acá el certificado PEM completo (BEGIN CERTIFICATE)"
+                      value={arcaForm.certificate}
+                      onChange={(e) =>
+                        setArcaForm((prev) => ({
+                          ...prev,
+                          certificate: e.target.value,
+                        }))
+                      }
+                    />
+                  </>
+                )}
               </div>
             </div>
 
@@ -2369,7 +2485,7 @@ function ApplicationsSettings(): JSX.Element {
               <Button
                 onClick={() => { void handleConnectArca(); }}
                 isLoading={isConnectingArca}
-                disabled={!arcaForm.cuit || arcaForm.cuit.length !== 11 || !arcaForm.certificate}
+                disabled={!arcaForm.cuit || arcaForm.cuit.length !== 11 || !arcaCertificateReady}
               >
                 Conectar
               </Button>

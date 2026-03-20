@@ -369,8 +369,25 @@ export function AuthProvider({ children }: { children: ReactNode }): ReactNode {
 
     const payload = parseAuthPayload(await safeJsonRecord(response));
     if (!payload.user) {
-      // Some proxies can return 200 with an empty body; fall back to `/me`.
-      await checkAuth();
+      // Some proxies can return 200 with an empty body. Verify session explicitly.
+      const meResponse = await fetchWithTimeout(`${API_URL}/api/v1/auth/me`, {
+        credentials: 'include',
+      });
+      const mePayload = await safeJsonRecord(meResponse);
+      if (!meResponse.ok) {
+        const details = readErrorMessage(
+          mePayload,
+          'No se pudo establecer la sesión. Revisá cookies/cors del navegador.'
+        );
+        throw new Error(details);
+      }
+
+      const recovered = parseAuthPayload(mePayload);
+      if (!recovered.user) {
+        throw new Error('No se pudo establecer la sesión. Revisá cookies/cors del navegador.');
+      }
+
+      applyAuthenticatedState(recovered);
       return;
     }
 

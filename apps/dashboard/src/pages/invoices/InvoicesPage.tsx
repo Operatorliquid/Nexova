@@ -64,19 +64,40 @@ function extractArcaRejectionMessage(data: JsonRecord): string | null {
     return code ? `ARCA rechazó la factura (${code}): ${explicit}` : `ARCA rechazó la factura: ${explicit}`;
   }
 
+  const payloadIssues = asArray(data.issues);
+  for (const issue of payloadIssues) {
+    const issueRecord = asRecord(issue);
+    const message = readString(issueRecord, 'message') ?? readString(issueRecord, 'Msg');
+    const code = readNumber(issueRecord, 'code') ?? readNumber(issueRecord, 'Code');
+    if (message && code) return `ARCA rechazó la factura (${code}): ${message}`;
+    if (message) return `ARCA rechazó la factura: ${message}`;
+    if (code) return `ARCA rechazó la factura (código ${code})`;
+  }
+
   const raw = asRecord(data.raw);
+  const feCabResp = asRecord(raw?.FeCabResp);
   const feDetResp = asRecord(raw?.FeDetResp);
   const detail = asRecord(feDetResp?.FECAEDetResponse);
-  const observations = asRecord(detail?.Observaciones);
-  const obsList = asArray(observations?.Obs);
-  const firstObs = asRecord(obsList[0]);
-  const message = readString(firstObs, 'Msg');
-  const code = readNumber(firstObs, 'Code');
 
-  if (!message && !code) return null;
-  if (message && code) return `ARCA rechazó la factura (${code}): ${message}`;
-  if (message) return `ARCA rechazó la factura: ${message}`;
-  return `ARCA rechazó la factura (código ${code})`;
+  const issueCandidates = [
+    ...asArray(asRecord(feCabResp?.Errors)?.Err),
+    ...asArray(asRecord(feCabResp?.Events)?.Evt),
+    ...asArray(asRecord(detail?.Observaciones)?.Obs),
+    ...asArray(asRecord(raw?.Errors)?.Err),
+    ...asArray(asRecord(raw?.Events)?.Evt),
+    ...asArray(asRecord(raw?.Observaciones)?.Obs),
+  ];
+
+  for (const entry of issueCandidates) {
+    const issue = asRecord(entry);
+    const message = readString(issue, 'Msg') ?? readString(issue, 'message');
+    const code = readNumber(issue, 'Code') ?? readNumber(issue, 'code');
+    if (message && code) return `ARCA rechazó la factura (${code}): ${message}`;
+    if (message) return `ARCA rechazó la factura: ${message}`;
+    if (code) return `ARCA rechazó la factura (código ${code})`;
+  }
+
+  return null;
 }
 
 interface OrderItem {

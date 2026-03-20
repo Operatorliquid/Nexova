@@ -140,6 +140,8 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
   };
 
   type JsonRecord = Record<string, unknown>;
+  type ArcaIssueType = 'observation' | 'error' | 'event';
+  type ArcaIssue = { type: ArcaIssueType; code: number | null; message: string | null };
 
   const asRecord = (value: unknown): JsonRecord | null => {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -152,30 +154,75 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
     return [value];
   };
 
-  const parseArcaObservations = (raw: unknown): Array<{ code: number | null; message: string | null }> => {
-    const root = asRecord(raw);
-    if (!root) return [];
-    const feDetResp = asRecord(root.FeDetResp);
-    const detail = asRecord(feDetResp?.FECAEDetResponse);
-    const observations = asRecord(detail?.Observaciones);
-    const obsEntries = asArray(observations?.Obs);
-
-    return obsEntries.map((entry) => {
+  const parseArcaIssueEntries = (
+    bucket: unknown,
+    itemKey: 'Obs' | 'Err' | 'Evt',
+    type: ArcaIssueType
+  ): ArcaIssue[] => {
+    const items = asArray(asRecord(bucket)?.[itemKey]);
+    return items.map((entry) => {
       const item = asRecord(entry);
       const rawCode = item?.Code;
       const code = typeof rawCode === 'number'
         ? rawCode
         : typeof rawCode === 'string'
           ? Number.parseInt(rawCode, 10)
-          : NaN;
-      const rawMessage = item?.Msg;
+          : Number.NaN;
+      const rawMessage = item?.Msg ?? item?.message;
       return {
+        type,
         code: Number.isFinite(code) ? code : null,
         message: typeof rawMessage === 'string' && rawMessage.trim().length > 0
           ? rawMessage.trim()
           : null,
       };
     });
+  };
+
+  const parseArcaObservations = (raw: unknown): Array<{ code: number | null; message: string | null }> => {
+    const root = asRecord(raw);
+    if (!root) return [];
+    const feDetResp = asRecord(root.FeDetResp);
+    const detail = asRecord(feDetResp?.FECAEDetResponse);
+    return parseArcaIssueEntries(detail?.Observaciones, 'Obs', 'observation')
+      .map((issue) => ({ code: issue.code, message: issue.message }));
+  };
+
+  const parseArcaIssues = (raw: unknown): ArcaIssue[] => {
+    const root = asRecord(raw);
+    if (!root) return [];
+    const feCabResp = asRecord(root.FeCabResp);
+    const feDetResp = asRecord(root.FeDetResp);
+    const detail = asRecord(feDetResp?.FECAEDetResponse);
+
+    const issues = [
+      ...parseArcaIssueEntries(detail?.Observaciones, 'Obs', 'observation'),
+      ...parseArcaIssueEntries(detail?.Errors, 'Err', 'error'),
+      ...parseArcaIssueEntries(detail?.Events, 'Evt', 'event'),
+      ...parseArcaIssueEntries(feCabResp?.Errors, 'Err', 'error'),
+      ...parseArcaIssueEntries(feCabResp?.Events, 'Evt', 'event'),
+      ...parseArcaIssueEntries(root.Observaciones, 'Obs', 'observation'),
+      ...parseArcaIssueEntries(root.Errors, 'Err', 'error'),
+      ...parseArcaIssueEntries(root.Events, 'Evt', 'event'),
+    ];
+
+    const seen = new Set<string>();
+    return issues.filter((issue) => {
+      const key = `${issue.type}:${issue.code ?? ''}:${issue.message ?? ''}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  };
+
+  const getArcaPrimaryIssue = (raw: unknown): ArcaIssue | null => {
+    const issues = parseArcaIssues(raw);
+    if (issues.length === 0) return null;
+    const firstError = issues.find((item) => item.type === 'error' && (item.message || item.code !== null));
+    if (firstError) return firstError;
+    const firstObservation = issues.find((item) => item.type === 'observation' && (item.message || item.code !== null));
+    if (firstObservation) return firstObservation;
+    return issues.find((item) => item.message || item.code !== null) ?? issues[0];
   };
 
   const getArcaPrimaryObservation = (raw: unknown): { code: number | null; message: string | null } | null => {
@@ -1353,7 +1400,8 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
           }
         }
 
-        const rejectionObservation = getArcaPrimaryObservation(result.raw);
+        const arcaIssues = parseArcaIssues(result.raw);
+        const rejectionIssue = getArcaPrimaryIssue(result.raw);
         const status = await arcaService.getStatus(workspaceId);
         const totalCents = Math.round(invoiceRequest.impTotal * 100);
 
@@ -1415,6 +1463,20 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
           }
         }
 
+        if (!result.approved) {
+          request.log.warn({
+            workspaceId,
+            orderId: invoiceRequest.orderId || null,
+            environment: status.environment || null,
+            pointOfSale: invoiceRequest.pointOfSale || status.pointOfSale || 0,
+            cbteTipo: invoiceRequest.cbteTipo,
+            docTipo: invoiceRequest.docTipo,
+            docNro: String(invoiceRequest.docNro),
+            condicionIVAReceptorId: invoiceRequest.condicionIVAReceptorId,
+            issues: arcaIssues,
+          }, 'ARCA rejected invoice request');
+        }
+
         if (invoiceRequest.orderId && result.approved) {
           const existingOrder = await app.prisma.order.findFirst({
             where: { id: invoiceRequest.orderId, workspaceId },
@@ -1454,10 +1516,20 @@ export async function integrationsRoutes(app: FastifyInstance): Promise<void> {
         return reply.send({
           ...result,
           appliedCondicionIVAReceptorId: invoiceRequest.condicionIVAReceptorId,
-          rejectionCode: rejectionObservation?.code ?? null,
-          rejectionMessage: rejectionObservation?.message ?? null,
+          rejectionCode: rejectionIssue?.code ?? null,
+          rejectionMessage: rejectionIssue?.message ?? null,
+          issues: arcaIssues,
         });
       } catch (error) {
+        request.log.error({
+          error,
+          workspaceId,
+          cbteTipo: normalizedBody.cbteTipo,
+          pointOfSale: normalizedBody.pointOfSale ?? null,
+          orderId: normalizedBody.orderId ?? null,
+          docTipo: normalizedBody.docTipo,
+          docNro: normalizedBody.docNro,
+        }, 'Failed to issue ARCA invoice');
         const message = error instanceof Error ? error.message : 'Error al emitir factura';
         return reply.status(500).send({ error: message });
       }
