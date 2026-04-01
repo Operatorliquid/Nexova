@@ -240,6 +240,11 @@ type BillingWorkspaceSummary = {
 export const billingRoutes: FastifyPluginAsync = async (fastify) => {
   const workspaceService = new WorkspaceService(fastify.prisma);
   const stripeWebhookSecret = (process.env.STRIPE_WEBHOOK_SECRET || '').trim();
+  const landingBaseUrl = getLandingUrl().replace(/\/+$/, '');
+  const landingPath = (pathname: string): string => {
+    const normalized = pathname.replace(/^\/+/, '');
+    return `${landingBaseUrl}/${normalized}`;
+  };
 
   // Capture raw JSON body inside billing scope so Stripe signatures can be verified.
   fastify.addContentTypeParser(
@@ -644,7 +649,7 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
       },
     });
 
-    const verifyUrl = `${getLandingUrl()}/verify-email?token=${encodeURIComponent(
+    const verifyUrl = `${landingPath('verify-email/')}?token=${encodeURIComponent(
       plainToken
     )}&flowToken=${encodeURIComponent(flowToken)}`;
 
@@ -786,7 +791,7 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
           },
           workspace,
           workspaces,
-          next: `${getLandingUrl()}/checkout/continue?flowToken=${encodeURIComponent(flowToken)}`,
+          next: `${landingPath('checkout/continue/')}?flowToken=${encodeURIComponent(flowToken)}`,
         });
       }
     }
@@ -910,7 +915,7 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
       },
       workspace: primaryWorkspace,
       workspaces,
-      next: `${getLandingUrl()}/checkout/continue?flowToken=${encodeURIComponent(flowToken)}`,
+      next: `${landingPath('checkout/continue/')}?flowToken=${encodeURIComponent(flowToken)}`,
     });
   });
 
@@ -989,7 +994,7 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
         provider: 'google',
         state,
         flowToken,
-        redirectUri: `${getLandingUrl()}/checkout/continue?flowToken=${encodeURIComponent(flowToken)}`,
+        redirectUri: `${landingPath('checkout/continue/')}?flowToken=${encodeURIComponent(flowToken)}`,
         expiresAt: new Date(Date.now() + 15 * 60 * 1000),
       },
     });
@@ -1197,7 +1202,7 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
     });
     setAuthCookies(reply, tokens);
 
-    const nextUrl = oauthState.redirectUri || `${getLandingUrl()}/checkout/continue`;
+    const nextUrl = oauthState.redirectUri || landingPath('checkout/continue/');
     return reply.redirect(nextUrl);
   });
 
@@ -1322,10 +1327,10 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
               },
             },
           ],
-          success_url: `${getLandingUrl()}/checkout/success?session_id={CHECKOUT_SESSION_ID}&flowToken=${encodeURIComponent(
+          success_url: `${landingPath('checkout/success/')}?session_id={CHECKOUT_SESSION_ID}&flowToken=${encodeURIComponent(
             intent.flowToken
           )}`,
-          cancel_url: `${getLandingUrl()}/cart?plan=${encodeURIComponent(
+          cancel_url: `${landingPath('cart/')}?plan=${encodeURIComponent(
             intent.plan
           )}&months=${intent.months}`,
           customer_email: user.email,

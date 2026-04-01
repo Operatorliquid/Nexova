@@ -12,10 +12,20 @@ export default function App(): JSX.Element {
     <Routes>
       <Route path="/" element={<IndexPage />} />
       <Route path="/cart" element={<CartPage />} />
+      <Route path="/cart/" element={<CartPage />} />
+      <Route path="/cart/index.html" element={<CartPage />} />
       <Route path="/register" element={<RegisterPage />} />
+      <Route path="/register/" element={<RegisterPage />} />
+      <Route path="/register/index.html" element={<RegisterPage />} />
       <Route path="/verify-email" element={<VerifyEmailPage />} />
+      <Route path="/verify-email/" element={<VerifyEmailPage />} />
+      <Route path="/verify-email/index.html" element={<VerifyEmailPage />} />
       <Route path="/checkout/continue" element={<CheckoutContinuePage />} />
+      <Route path="/checkout/continue/" element={<CheckoutContinuePage />} />
+      <Route path="/checkout/continue/index.html" element={<CheckoutContinuePage />} />
       <Route path="/checkout/success" element={<CheckoutSuccessPage />} />
+      <Route path="/checkout/success/" element={<CheckoutSuccessPage />} />
+      <Route path="/checkout/success/index.html" element={<CheckoutSuccessPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

@@ -64,7 +64,7 @@ export default function VerifyEmailPage(): JSX.Element {
   const goToCheckout = (): void => {
     if (!flowToken || navigatingRef.current) return;
     navigatingRef.current = true;
-    navigate(`/checkout/continue?flowToken=${encodeURIComponent(flowToken)}`, { replace: true });
+    navigate(`/checkout/continue/?flowToken=${encodeURIComponent(flowToken)}`, { replace: true });
   };
 
   const verifyToken = async (tokenToVerify: string): Promise<void> => {

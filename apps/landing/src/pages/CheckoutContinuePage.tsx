@@ -50,7 +50,7 @@ export default function CheckoutContinuePage(): JSX.Element {
 
       const payload = (await sessionResponse.json()) as CheckoutSessionResponse;
       if (payload.alreadyProcessed) {
-        navigate(`/checkout/success?flowToken=${encodeURIComponent(flowToken)}`, { replace: true });
+        navigate(`/checkout/success/?flowToken=${encodeURIComponent(flowToken)}`, { replace: true });
         return;
       }
 

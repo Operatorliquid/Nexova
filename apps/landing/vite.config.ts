@@ -18,6 +18,7 @@ async function resolveReactPlugin(): Promise<PluginOption[]> {
 
 export default defineConfig(async () => ({
   plugins: await resolveReactPlugin(),
+  base: process.env.VITE_BASE_PATH?.trim() || './',
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

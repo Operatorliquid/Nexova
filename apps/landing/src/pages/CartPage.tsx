@@ -149,7 +149,7 @@ export default function CartPage(): JSX.Element {
 
       const meRes = await apiFetch('/api/v1/auth/me');
       if (meRes.ok) {
-        navigate(`/checkout/continue?flowToken=${encodeURIComponent(nextFlowToken)}`);
+        navigate(`/checkout/continue/?flowToken=${encodeURIComponent(nextFlowToken)}`);
       } else {
         navigate(`/register?flowToken=${encodeURIComponent(nextFlowToken)}`);
       }

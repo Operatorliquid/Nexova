@@ -57,11 +57,34 @@ async function readJsonRecord(response: Response): Promise<JsonRecord> {
   }
 }
 
+function formatArcaIssueMessage(code: number | undefined, message: string | undefined): string | null {
+  if (!message && !code) return null;
+
+  const normalized = (message || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const isMonotributoAuthorizationError = code === 10000
+    && normalized.includes('no autorizado a emitir comprobantes')
+    && normalized.includes('monotributo');
+
+  if (isMonotributoAuthorizationError) {
+    return 'ARCA rechazó la factura: la CUIT emisora no figura como Monotributo para emitir Factura C. Revisá Configuración > Mi negocio > Condición IVA del comercio. Si tu CUIT es Responsable Inscripto, emití Factura A/B.';
+  }
+
+  if (message && code) return `ARCA rechazó la factura (${code}): ${message}`;
+  if (message) return `ARCA rechazó la factura: ${message}`;
+  return `ARCA rechazó la factura (código ${code})`;
+}
+
 function extractArcaRejectionMessage(data: JsonRecord): string | null {
   const explicit = readString(data, 'rejectionMessage');
   if (explicit) {
     const code = readNumber(data, 'rejectionCode');
-    return code ? `ARCA rechazó la factura (${code}): ${explicit}` : `ARCA rechazó la factura: ${explicit}`;
+    return formatArcaIssueMessage(code, explicit);
   }
 
   const payloadIssues = asArray(data.issues);
@@ -69,9 +92,8 @@ function extractArcaRejectionMessage(data: JsonRecord): string | null {
     const issueRecord = asRecord(issue);
     const message = readString(issueRecord, 'message') ?? readString(issueRecord, 'Msg');
     const code = readNumber(issueRecord, 'code') ?? readNumber(issueRecord, 'Code');
-    if (message && code) return `ARCA rechazó la factura (${code}): ${message}`;
-    if (message) return `ARCA rechazó la factura: ${message}`;
-    if (code) return `ARCA rechazó la factura (código ${code})`;
+    const formatted = formatArcaIssueMessage(code, message);
+    if (formatted) return formatted;
   }
 
   const raw = asRecord(data.raw);
@@ -92,9 +114,8 @@ function extractArcaRejectionMessage(data: JsonRecord): string | null {
     const issue = asRecord(entry);
     const message = readString(issue, 'Msg') ?? readString(issue, 'message');
     const code = readNumber(issue, 'Code') ?? readNumber(issue, 'code');
-    if (message && code) return `ARCA rechazó la factura (${code}): ${message}`;
-    if (message) return `ARCA rechazó la factura: ${message}`;
-    if (code) return `ARCA rechazó la factura (código ${code})`;
+    const formatted = formatArcaIssueMessage(code, message);
+    if (formatted) return formatted;
   }
 
   return null;

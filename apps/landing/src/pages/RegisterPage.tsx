@@ -114,7 +114,7 @@ export default function RegisterPage(): JSX.Element {
         params.set('token', debugToken);
       }
 
-      navigate(`/verify-email?${params.toString()}`);
+      navigate(`/verify-email/?${params.toString()}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo completar el registro');
     } finally {
