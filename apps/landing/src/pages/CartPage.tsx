@@ -120,13 +120,12 @@ export default function CartPage(): JSX.Element {
   );
 
   const totalAmountCents = activePlan ? activePlan.monthlyAmountCents * months : 0;
-  const currency = activePlan?.currency || 'USD';
 
   const formatMoney = (amountCents: number): string =>
-    new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency,
-    }).format(amountCents / 100);
+    `$${(amountCents / 100).toLocaleString('es-AR', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
 
   const continueFlow = async (): Promise<void> => {
     if (!activePlan) return;
@@ -227,9 +226,6 @@ export default function CartPage(): JSX.Element {
             {/* Header */}
             <div>
               <h1 className="text-2xl font-bold tracking-tight">Elegí tu plan</h1>
-              <p className="text-sm text-white/40 mt-1">
-                Todos incluyen 14 días de prueba gratis. Cancelá cuando quieras.
-              </p>
             </div>
 
             {/* Plan cards */}

@@ -15,24 +15,24 @@ export const BILLING_MONTH_OPTIONS: BillingMonthsOption[] = [1, 12, 24, 48];
 export const BILLING_PLAN_CATALOG: Record<CommercePlan, BillingPlanCatalogItem> = {
   basic: {
     plan: 'basic',
-    name: 'Basic',
-    description: 'Funciones esenciales para operar con WhatsApp y dashboard.',
+    name: 'Plan Inicial',
+    description: 'Acceso base a plataforma, inbox, bot, catálogo y boleta estándar.',
     currency: 'USD',
-    monthlyAmountCents: 2900,
+    monthlyAmountCents: 4999,
   },
   standard: {
     plan: 'standard',
-    name: 'Standard',
-    description: 'Más automatización y módulos completos para crecer.',
+    name: 'Plan Pro',
+    description: 'Automatización comercial, promociones, facturación y catálogo personalizado.',
     currency: 'USD',
-    monthlyAmountCents: 5900,
+    monthlyAmountCents: 9999,
   },
   pro: {
     plan: 'pro',
-    name: 'Pro',
-    description: 'Acceso total a todas las funcionalidades del dashboard.',
+    name: 'Plan Empresa',
+    description: 'Operación avanzada con acciones rápidas y control por WhatsApp en vivo.',
     currency: 'USD',
-    monthlyAmountCents: 9900,
+    monthlyAmountCents: 14999,
   },
 };
 
@@ -48,4 +48,3 @@ export function coerceBillingMonths(value: unknown, fallback: BillingMonthsOptio
 export function getPlanBillingTotalCents(plan: CommercePlan, months: BillingMonthsOption): number {
   return BILLING_PLAN_CATALOG[plan].monthlyAmountCents * months;
 }
-
