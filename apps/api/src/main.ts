@@ -35,6 +35,7 @@ import { conversationsRoutes } from './routes/v1/conversations.routes.js';
 import { customersRoutes } from './routes/v1/customers.routes.js';
 import { healthRoutes } from './routes/v1/health.routes.js';
 import { integrationsRoutes } from './routes/v1/integrations.routes.js';
+import { leadsRoutes } from './routes/v1/leads.routes.js';
 import { notificationsRoutes } from './routes/v1/notifications.routes.js';
 import { ordersRoutes } from './routes/v1/orders.routes.js';
 import { productsRoutes } from './routes/v1/products.routes.js';
@@ -219,6 +220,7 @@ async function bootstrap(): Promise<void> {
   await app.register(adminRoutes, { prefix: '/api/v1/admin' });
   await app.register(conversationsRoutes, { prefix: '/api/v1/conversations' });
   await app.register(integrationsRoutes, { prefix: '/api/v1/integrations' });
+  await app.register(leadsRoutes, { prefix: '/api/v1/leads' });
   await app.register(quickActionsRoutes, { prefix: '/api/v1/quick-actions' });
   await app.register(customersRoutes, { prefix: '/api/v1/customers' });
   await app.register(productsRoutes, { prefix: '/api/v1/products' });
