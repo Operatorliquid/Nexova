@@ -2997,8 +2997,8 @@ const tN = [
     slug: 'basic',
     name: 'Plan Inicial',
     description: 'Ideal para empezar a vender y gestionar tu operación diaria.',
-    price: '$49,99',
-    billing: 'Por mes / facturación mensual',
+    price: '$75.000',
+    billing: 'Por mes / facturación mensual en ARS',
     checkoutUrl: '/checkout/?plan=basic',
     featured: !1,
     iconColor: 'text-zinc-400',
@@ -3015,8 +3015,8 @@ const tN = [
     slug: 'standard',
     name: 'Plan Pro',
     description: 'Para negocios que quieren automatizar, facturar y crecer más rápido.',
-    price: '$99,99',
-    billing: 'Por mes / facturación mensual',
+    price: '$150.000',
+    billing: 'Por mes / facturación mensual en ARS',
     checkoutUrl: '/checkout/?plan=standard',
     featured: !0,
     iconColor: 'text-yellow-500',
@@ -3034,8 +3034,8 @@ const tN = [
     slug: 'pro',
     name: 'Plan Empresa',
     description: 'Para operaciones avanzadas que necesitan control total y respuesta inmediata.',
-    price: '$149,99',
-    billing: 'Por mes / facturación mensual',
+    price: '$200.000',
+    billing: 'Por mes / facturación mensual en ARS',
     checkoutUrl: '/checkout/?plan=pro',
     featured: !1,
     iconColor: 'text-orange-500',
@@ -3832,6 +3832,30 @@ const lN = () => {
         ],
       }),
     }),
+  pN = () =>
+    f.jsxs('a', {
+      href: 'https://wa.link/wdumko',
+      target: '_blank',
+      rel: 'noopener noreferrer',
+      'aria-label': 'Escribinos por WhatsApp',
+      className:
+        'fixed bottom-5 right-5 md:bottom-6 md:right-6 z-[70] w-14 h-14 rounded-full bg-[#25D366] text-white shadow-[0_12px_32px_rgba(37,211,102,0.45)] hover:brightness-105 hover:scale-105 transition-all duration-200 flex items-center justify-center',
+      children: [
+        f.jsx('span', {
+          className: 'absolute inset-0 rounded-full animate-ping bg-[#25D366]/30',
+          'aria-hidden': !0,
+        }),
+        f.jsx('svg', {
+          viewBox: '0 0 24 24',
+          fill: 'currentColor',
+          className: 'relative w-7 h-7',
+          'aria-hidden': !0,
+          children: f.jsx('path', {
+            d: 'M12 2C6.486 2 2 6.477 2 11.982c0 1.943.553 3.813 1.603 5.427L2.05 22l4.709-1.53A9.99 9.99 0 0 0 12 21.965c5.514 0 10-4.476 10-9.983C22 6.477 17.514 2 12 2Zm0 18.33a8.33 8.33 0 0 1-4.252-1.164l-.305-.18-2.796.909.913-2.726-.198-.314a8.294 8.294 0 0 1-1.287-4.473c0-4.594 3.754-8.333 8.37-8.333 4.615 0 8.37 3.739 8.37 8.333 0 4.594-3.755 8.33-8.37 8.33Zm4.657-6.229c-.255-.128-1.507-.743-1.741-.826-.233-.085-.403-.128-.573.128-.17.255-.658.826-.806.996-.149.171-.297.192-.553.064-.255-.128-1.079-.396-2.056-1.262-.76-.675-1.273-1.507-1.422-1.762-.148-.255-.016-.393.112-.52.116-.117.255-.304.382-.454.128-.149.17-.255.255-.425.085-.17.042-.319-.021-.447-.063-.128-.573-1.379-.786-1.89-.206-.496-.415-.428-.573-.436l-.488-.008c-.17 0-.446.064-.68.319-.234.255-.892.87-.892 2.124 0 1.252.914 2.463 1.041 2.633.128.17 1.798 2.743 4.355 3.845.608.262 1.084.418 1.454.535.611.194 1.167.166 1.607.101.49-.073 1.507-.616 1.719-1.211.212-.596.212-1.106.149-1.211-.064-.106-.234-.17-.489-.298Z',
+          }),
+        }),
+      ],
+    }),
   fN = () =>
     f.jsxs('div', {
       className: "min-h-screen bg-[#040204] font-['Inter',sans-serif]",
@@ -3845,6 +3869,7 @@ const lN = () => {
         f.jsx(oN, {}),
         f.jsx(lN, {}),
         f.jsx(dN, {}),
+        f.jsx(pN, {}),
       ],
     });
 

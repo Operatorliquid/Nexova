@@ -45,7 +45,7 @@ export default function CheckoutContinuePage(): JSX.Element {
       });
 
       if (!sessionResponse.ok) {
-        throw new Error(await readErrorMessage(sessionResponse, 'No se pudo crear la sesión de Stripe'));
+        throw new Error(await readErrorMessage(sessionResponse, 'No se pudo crear la sesión en Mercado Pago'));
       }
 
       const payload = (await sessionResponse.json()) as CheckoutSessionResponse;
@@ -55,7 +55,7 @@ export default function CheckoutContinuePage(): JSX.Element {
       }
 
       if (!payload.checkoutUrl) {
-        throw new Error('Stripe no devolvió una URL de checkout válida.');
+        throw new Error('Mercado Pago no devolvió una URL de checkout válida.');
       }
 
       setCheckoutUrl(payload.checkoutUrl);
@@ -105,7 +105,7 @@ export default function CheckoutContinuePage(): JSX.Element {
             <svg className="w-4 h-4 text-white/30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
             </svg>
-            <span className="text-xs text-white/30">Pago seguro con Stripe</span>
+            <span className="text-xs text-white/30">Pago seguro con Mercado Pago</span>
           </div>
         </div>
       </nav>
@@ -150,7 +150,7 @@ export default function CheckoutContinuePage(): JSX.Element {
               <rect x="1" y="4" width="22" height="16" rx="2" ry="2" /><line x1="1" y1="10" x2="23" y2="10" />
             </svg>
           </div>
-          <h1 className="text-2xl font-bold tracking-tight">Redirigiendo a Stripe</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Redirigiendo a Mercado Pago</h1>
           <p className="text-sm text-white/40 mt-2 max-w-sm mx-auto">
             Estamos creando tu sesión de pago segura para completar la suscripción.
           </p>
@@ -202,7 +202,7 @@ export default function CheckoutContinuePage(): JSX.Element {
                     </>
                   ) : (
                     <>
-                      {error ? 'Reintentar checkout' : 'Ir a Stripe'}
+                      {error ? 'Reintentar checkout' : 'Ir a Mercado Pago'}
                       <svg className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <path d="M5 12h14M12 5l7 7-7 7" />
                       </svg>
@@ -216,17 +216,17 @@ export default function CheckoutContinuePage(): JSX.Element {
                   href={checkoutUrl}
                   className="block w-full text-center rounded-xl border border-white/[0.1] bg-white/[0.03] hover:bg-white/[0.06] hover:border-white/[0.18] px-4 py-3.5 font-medium text-sm text-white/70 hover:text-white transition-all duration-200"
                 >
-                  Abrir Stripe manualmente
+                  Abrir Mercado Pago manualmente
                 </a>
               )}
             </div>
 
-            {/* Stripe badge */}
+            {/* Mercado Pago badge */}
             <div className="flex items-center justify-center gap-2 pt-2">
               <svg className="w-3.5 h-3.5 text-white/20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
               </svg>
-              <span className="text-[11px] text-white/20">Procesado de forma segura por Stripe</span>
+              <span className="text-[11px] text-white/20">Procesado de forma segura por Mercado Pago</span>
             </div>
           </div>
         </div>

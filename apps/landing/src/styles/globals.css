@@ -38,6 +38,7 @@
     --text-subtle: rgba(255, 255, 255, 0.3);
     --shadow-color: rgba(0, 0, 0, 0.4);
     --glow-color: rgba(77, 124, 255, 0.45);
+    --build-revision: "2026-04-01a";
   }
 
   * {

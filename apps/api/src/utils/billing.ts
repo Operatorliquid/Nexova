@@ -16,13 +16,24 @@ const parsePositiveInteger = (value: string | undefined): number | null => {
   return parsed;
 };
 
+const isPriceOverrideEnabled = (): boolean => {
+  const raw = (process.env.BILLING_ENABLE_PRICE_OVERRIDES || '')
+    .trim()
+    .toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes';
+};
+
 export const getConfiguredMonthlyAmountCents = (plan: CommercePlan): number => {
+  if (!isPriceOverrideEnabled()) {
+    return BILLING_PLAN_CATALOG[plan].monthlyAmountCents;
+  }
+
   const envValue =
     plan === 'basic'
-      ? process.env.STRIPE_PRICE_BASIC_MONTHLY_CENTS
+      ? process.env.BILLING_PRICE_BASIC_MONTHLY_CENTS
       : plan === 'standard'
-        ? process.env.STRIPE_PRICE_STANDARD_MONTHLY_CENTS
-        : process.env.STRIPE_PRICE_PRO_MONTHLY_CENTS;
+        ? process.env.BILLING_PRICE_STANDARD_MONTHLY_CENTS
+        : process.env.BILLING_PRICE_PRO_MONTHLY_CENTS;
 
   const parsed = parsePositiveInteger(envValue);
   return parsed ?? BILLING_PLAN_CATALOG[plan].monthlyAmountCents;

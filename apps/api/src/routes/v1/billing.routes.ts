@@ -1,8 +1,7 @@
-import { createHash, randomBytes, randomUUID } from 'crypto';
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'crypto';
 
 import type { Prisma } from '@prisma/client';
 import { type FastifyPluginAsync, type FastifyReply } from 'fastify';
-import Stripe from 'stripe';
 import { z } from 'zod';
 
 import {
@@ -56,7 +55,7 @@ const createCheckoutSessionSchema = z.object({
 
 const finalizeCheckoutSchema = z.object({
   flowToken: z.string().min(8).max(64),
-  sessionId: z.string().min(5).max(255),
+  sessionId: z.string().min(5).max(255).optional(),
 });
 
 type AuthTokens = ReturnType<typeof generateTokenPair>;
@@ -137,20 +136,112 @@ const formatWorkspaceSlug = (name: string): string => {
   return base || 'workspace';
 };
 
-const buildStripe = (): Stripe => {
-  const secretKey = process.env.STRIPE_SECRET_KEY;
-  if (!secretKey) {
-    throw new Error('STRIPE_SECRET_KEY is required');
-  }
-  return new Stripe(secretKey);
+const MP_API_BASE_URL = 'https://api.mercadopago.com';
+
+type MercadoPagoSubscriptionStatus =
+  | 'authorized'
+  | 'paused'
+  | 'cancelled'
+  | 'pending'
+  | 'unknown';
+
+type MercadoPagoPreapproval = {
+  id: string;
+  status: MercadoPagoSubscriptionStatus;
+  externalReference: string | null;
+  initPoint: string | null;
+  payerEmail: string | null;
+  payerId: string | null;
+  nextPaymentDate: Date | null;
 };
 
-const isStripeConfigError = (error: unknown): boolean => {
+type MercadoPagoAuthorizedPayment = {
+  id: string;
+  preapprovalId: string | null;
+  status: string;
+  amountCents: number;
+  currency: string;
+  paidAt: Date | null;
+};
+
+const readMercadoPagoBillingConfig = (): {
+  accessToken: string;
+  webhookSecret: string;
+} => {
+  const accessToken = (
+    process.env.MP_SUBSCRIPTIONS_ACCESS_TOKEN ||
+    process.env.MP_BILLING_ACCESS_TOKEN ||
+    process.env.MP_ACCESS_TOKEN ||
+    process.env.MP_PRIVATE_ACCESS_TOKEN ||
+    ''
+  ).trim();
+
+  const webhookSecret = (
+    process.env.MP_SUBSCRIPTIONS_WEBHOOK_SECRET ||
+    process.env.MP_BILLING_WEBHOOK_SECRET ||
+    ''
+  ).trim();
+
+  return { accessToken, webhookSecret };
+};
+
+const ensureMercadoPagoConfigured = (): { accessToken: string; webhookSecret: string } => {
+  const config = readMercadoPagoBillingConfig();
+  if (!config.accessToken) {
+    throw new Error('MP_SUBSCRIPTIONS_ACCESS_TOKEN is required');
+  }
+  return config;
+};
+
+const sanitizeMercadoPagoStatus = (value: unknown): MercadoPagoSubscriptionStatus => {
+  if (typeof value !== 'string') return 'unknown';
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'authorized') return 'authorized';
+  if (normalized === 'paused') return 'paused';
+  if (normalized === 'cancelled') return 'cancelled';
+  if (normalized === 'pending') return 'pending';
+  return 'unknown';
+};
+
+const readString = (value: unknown): string | null => {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+};
+
+const parseDate = (value: unknown): Date | null => {
+  if (typeof value !== 'string') return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const isMercadoPagoConfigError = (error: unknown): boolean => {
   return (
     error instanceof Error &&
-    (error.message.includes('STRIPE_SECRET_KEY') ||
-      error.message.toLowerCase().includes('api key'))
+    (error.message.includes('MP_SUBSCRIPTIONS_ACCESS_TOKEN') ||
+      error.message.toLowerCase().includes('mercadopago'))
   );
+};
+
+const safeCompare = (left: string, right: string): boolean => {
+  const leftBuf = Buffer.from(left, 'utf8');
+  const rightBuf = Buffer.from(right, 'utf8');
+  if (leftBuf.length !== rightBuf.length) return false;
+  return timingSafeEqual(leftBuf, rightBuf);
+};
+
+const verifyMercadoPagoWebhookSignature = (params: {
+  requestId: string;
+  dataId: string;
+  signatureHeader: string;
+  secret: string;
+}): boolean => {
+  const parts = params.signatureHeader.split(',').map((part) => part.trim());
+  const ts = parts.find((part) => part.startsWith('ts='))?.slice(3);
+  const v1 = parts.find((part) => part.startsWith('v1='))?.slice(3);
+  if (!ts || !v1) return false;
+
+  const manifest = `id:${params.dataId};request-id:${params.requestId};ts:${ts};`;
+  const expected = createHmac('sha256', params.secret).update(manifest).digest('hex');
+  return safeCompare(v1, expected);
 };
 
 const readGoogleConfig = (): {
@@ -170,6 +261,87 @@ const readGoogleConfig = (): {
     clientId,
     clientSecret,
     redirectUri,
+  };
+};
+
+const mercadopagoRequest = async <T>(
+  accessToken: string,
+  path: string,
+  options?: {
+    method?: 'GET' | 'POST';
+    body?: Record<string, unknown>;
+    idempotencyKey?: string;
+  }
+): Promise<T> => {
+  const method = options?.method || 'GET';
+  const response = await fetch(`${MP_API_BASE_URL}${path}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+      ...(options?.idempotencyKey ? { 'X-Idempotency-Key': options.idempotencyKey } : {}),
+    },
+    body: method === 'POST' ? JSON.stringify(options?.body || {}) : undefined,
+  });
+
+  if (!response.ok) {
+    const details = await response.text().catch(() => '');
+    throw new Error(
+      `MercadoPago request failed (${method} ${path}) with ${response.status}${details ? `: ${details}` : ''}`
+    );
+  }
+
+  return response.json() as Promise<T>;
+};
+
+const parsePreapprovalResponse = (payload: unknown): MercadoPagoPreapproval => {
+  const data = isRecord(payload) ? payload : {};
+  const id = readString(data.id);
+  if (!id) {
+    throw new Error('MercadoPago preapproval response missing id');
+  }
+
+  const autoRecurring =
+    isRecord(data.auto_recurring) ? data.auto_recurring : {};
+
+  return {
+    id,
+    status: sanitizeMercadoPagoStatus(data.status),
+    externalReference: readString(data.external_reference),
+    initPoint: readString(data.init_point),
+    payerEmail: readString(data.payer_email),
+    payerId: readString(data.payer_id),
+    nextPaymentDate: parseDate(
+      data.next_payment_date ||
+        data.date_of_next_charge ||
+        autoRecurring.next_payment_date
+    ),
+  };
+};
+
+const parseAuthorizedPaymentResponse = (payload: unknown): MercadoPagoAuthorizedPayment => {
+  const data = isRecord(payload) ? payload : {};
+  const idCandidate = data.id;
+  const id =
+    (typeof idCandidate === 'string' && idCandidate.trim()) ||
+    (typeof idCandidate === 'number' ? String(idCandidate) : '');
+  if (!id) {
+    throw new Error('MercadoPago authorized payment response missing id');
+  }
+
+  const amountRaw = data.transaction_amount;
+  const amount =
+    typeof amountRaw === 'number' && Number.isFinite(amountRaw)
+      ? Math.round(amountRaw * 100)
+      : 0;
+
+  return {
+    id,
+    preapprovalId: readString(data.preapproval_id),
+    status: typeof data.status === 'string' ? data.status : 'unknown',
+    amountCents: amount,
+    currency: readString(data.currency_id) || 'ARS',
+    paidAt: parseDate(data.date_approved || data.date_created),
   };
 };
 
@@ -239,27 +411,11 @@ type BillingWorkspaceSummary = {
 
 export const billingRoutes: FastifyPluginAsync = async (fastify) => {
   const workspaceService = new WorkspaceService(fastify.prisma);
-  const stripeWebhookSecret = (process.env.STRIPE_WEBHOOK_SECRET || '').trim();
   const landingBaseUrl = getLandingUrl().replace(/\/+$/, '');
   const landingPath = (pathname: string): string => {
     const normalized = pathname.replace(/^\/+/, '');
     return `${landingBaseUrl}/${normalized}`;
   };
-
-  // Capture raw JSON body inside billing scope so Stripe signatures can be verified.
-  fastify.addContentTypeParser(
-    'application/json',
-    { parseAs: 'buffer' },
-    (request, body, done) => {
-      request.rawBody = body as Buffer;
-      try {
-        const json: unknown = JSON.parse((body as Buffer).toString('utf8'));
-        done(null, json);
-      } catch (err) {
-        done(err as Error, undefined);
-      }
-    }
-  );
 
   const fetchMemberships = (userId: string): Promise<BillingMembership[]> => {
     return fastify.prisma.membership.findMany({
@@ -357,11 +513,194 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
     return tokens;
   };
 
+  const createMercadoPagoSubscription = async (params: {
+    intent: {
+      flowToken: string;
+      plan: string;
+      months: number;
+      amount: number;
+    };
+    email: string;
+  }): Promise<MercadoPagoPreapproval> => {
+    const { accessToken } = ensureMercadoPagoConfigured();
+    const planConfig = BILLING_PLAN_CATALOG[params.intent.plan as CommercePlan];
+    const recurrenceMonths = Math.max(1, params.intent.months || 1);
+    const response = await mercadopagoRequest<Record<string, unknown>>(
+      accessToken,
+      '/preapproval',
+      {
+        method: 'POST',
+        idempotencyKey: params.intent.flowToken,
+        body: {
+          reason: `Nexova ${planConfig?.name || params.intent.plan} - ${recurrenceMonths} mes(es)`,
+          external_reference: params.intent.flowToken,
+          payer_email: params.email,
+          back_url: `${landingPath('checkout/success/')}?flowToken=${encodeURIComponent(params.intent.flowToken)}`,
+          notification_url: `${getApiPublicUrl().replace(/\/+$/, '')}/api/v1/billing/webhook`,
+          auto_recurring: {
+            frequency: recurrenceMonths,
+            frequency_type: 'months',
+            transaction_amount: params.intent.amount / 100,
+            currency_id: 'ARS',
+          },
+          status: 'pending',
+        },
+      }
+    );
+
+    return parsePreapprovalResponse(response);
+  };
+
+  const getMercadoPagoPreapproval = async (preapprovalId: string): Promise<MercadoPagoPreapproval> => {
+    const { accessToken } = ensureMercadoPagoConfigured();
+    const payload = await mercadopagoRequest<Record<string, unknown>>(
+      accessToken,
+      `/preapproval/${encodeURIComponent(preapprovalId)}`
+    );
+    return parsePreapprovalResponse(payload);
+  };
+
+  const getMercadoPagoAuthorizedPayment = async (
+    authorizedPaymentId: string
+  ): Promise<MercadoPagoAuthorizedPayment> => {
+    const { accessToken } = ensureMercadoPagoConfigured();
+    const payload = await mercadopagoRequest<Record<string, unknown>>(
+      accessToken,
+      `/authorized_payments/${encodeURIComponent(authorizedPaymentId)}`
+    );
+    return parseAuthorizedPaymentResponse(payload);
+  };
+
+  const setWorkspaceStatusFromSubscription = async (params: {
+    preapprovalId: string;
+    preapprovalStatus: MercadoPagoSubscriptionStatus;
+    nextPaymentDate: Date | null;
+  }): Promise<void> => {
+    const subscription = await fastify.prisma.workspaceSubscription.findFirst({
+      where: {
+        stripeSubscriptionId: params.preapprovalId,
+      },
+      select: {
+        workspaceId: true,
+      },
+    });
+
+    if (!subscription) return;
+
+    const subscriptionStatus =
+      params.preapprovalStatus === 'authorized'
+        ? 'active'
+        : params.preapprovalStatus === 'cancelled'
+          ? 'cancelled'
+          : 'past_due';
+    const workspaceStatus = subscriptionStatus === 'active' ? 'active' : 'suspended';
+
+    await fastify.prisma.$transaction(async (tx) => {
+      await tx.workspaceSubscription.updateMany({
+        where: { workspaceId: subscription.workspaceId },
+        data: {
+          status: subscriptionStatus,
+          nextChargeAt: params.nextPaymentDate || undefined,
+          ...(subscriptionStatus === 'cancelled' ? { cancelledAt: new Date() } : {}),
+        },
+      });
+
+      await tx.workspace.update({
+        where: { id: subscription.workspaceId },
+        data: {
+          status: workspaceStatus,
+        },
+      });
+    });
+  };
+
+  const recordRecurringAuthorizedPayment = async (
+    authorizedPayment: MercadoPagoAuthorizedPayment
+  ): Promise<void> => {
+    if (!authorizedPayment.preapprovalId || authorizedPayment.status !== 'authorized') return;
+
+    const subscription = await fastify.prisma.workspaceSubscription.findFirst({
+      where: {
+        stripeSubscriptionId: authorizedPayment.preapprovalId,
+      },
+      select: {
+        workspaceId: true,
+        userId: true,
+        plan: true,
+        billingCycleMonths: true,
+      },
+    });
+
+    if (!subscription) return;
+
+    const paymentRecordId = `mp_authorized_${authorizedPayment.id}`;
+    const paidAt = authorizedPayment.paidAt || new Date();
+    const cycleMonths = Math.max(1, subscription.billingCycleMonths || 1);
+    const currentPeriodEnd = addMonths(paidAt, cycleMonths);
+
+    const normalizedPlan = normalizePlanInput(subscription.plan);
+    const fallbackAmount =
+      normalizedPlan
+        ? getBillingTotalCents(normalizedPlan, cycleMonths as 1 | 12 | 24 | 48)
+        : 0;
+    const amountCents = authorizedPayment.amountCents > 0 ? authorizedPayment.amountCents : fallbackAmount;
+
+    await fastify.prisma.$transaction(async (tx) => {
+      const existing = await tx.billingPayment.findUnique({
+        where: { stripeCheckoutSessionId: paymentRecordId },
+        select: { id: true },
+      });
+
+      if (!existing) {
+        await tx.billingPayment.create({
+          data: {
+            workspaceId: subscription.workspaceId,
+            userId: subscription.userId,
+            checkoutIntentId: null,
+            stripeCheckoutSessionId: paymentRecordId,
+            stripePaymentIntentId: authorizedPayment.id,
+            stripeCustomerId: null,
+            amount: amountCents,
+            currency: authorizedPayment.currency || 'ARS',
+            plan: subscription.plan,
+            months: cycleMonths,
+            status: 'paid',
+            paidAt,
+            nextChargeAt: currentPeriodEnd,
+            metadata: {
+              provider: 'mercadopago',
+              source: 'subscription_authorized_payment',
+              preapprovalId: authorizedPayment.preapprovalId,
+            },
+          },
+        });
+      }
+
+      await tx.workspaceSubscription.updateMany({
+        where: { workspaceId: subscription.workspaceId },
+        data: {
+          status: 'active',
+          currentPeriodStart: paidAt,
+          currentPeriodEnd,
+          nextChargeAt: currentPeriodEnd,
+          cancelledAt: null,
+        },
+      });
+
+      await tx.workspace.update({
+        where: { id: subscription.workspaceId },
+        data: { status: 'active' },
+      });
+    });
+  };
+
   const markIntentAsPaid = async (params: {
     flowToken: string;
-    stripeSession: Stripe.Checkout.Session;
+    preapproval: MercadoPagoPreapproval;
+    paymentRecordId?: string;
+    paymentId?: string | null;
   }): Promise<void> => {
-    const { flowToken, stripeSession } = params;
+    const { flowToken, preapproval } = params;
 
     const intent = await fastify.prisma.billingCheckoutIntent.findUnique({
       where: { flowToken },
@@ -373,29 +712,28 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
 
     const paidAt = new Date();
     const currentPeriodStart = paidAt;
-    const currentPeriodEnd = addMonths(currentPeriodStart, intent.months);
+    const currentPeriodEnd =
+      preapproval.nextPaymentDate || addMonths(currentPeriodStart, Math.max(1, intent.months || 1));
+    const paymentRecordId = params.paymentRecordId || `mp_preapproval_${preapproval.id}`;
+    const paymentId = params.paymentId || preapproval.id;
+    const customerRef = preapproval.payerId || preapproval.payerEmail || undefined;
+    const workspaceId = intent.workspaceId;
 
     await fastify.prisma.$transaction(async (tx) => {
       const existing = await tx.billingPayment.findUnique({
-        where: { stripeCheckoutSessionId: stripeSession.id },
+        where: { stripeCheckoutSessionId: paymentRecordId },
         select: { id: true },
       });
 
       if (!existing) {
         await tx.billingPayment.create({
           data: {
-            workspaceId: intent.workspaceId!,
+            workspaceId,
             userId: intent.userId,
             checkoutIntentId: intent.id,
-            stripeCheckoutSessionId: stripeSession.id,
-            stripePaymentIntentId:
-              typeof stripeSession.payment_intent === 'string'
-                ? stripeSession.payment_intent
-                : stripeSession.payment_intent?.id || null,
-            stripeCustomerId:
-              typeof stripeSession.customer === 'string'
-                ? stripeSession.customer
-                : stripeSession.customer?.id || null,
+            stripeCheckoutSessionId: paymentRecordId,
+            stripePaymentIntentId: paymentId,
+            stripeCustomerId: customerRef,
             amount: intent.amount,
             currency: intent.currency,
             plan: intent.plan,
@@ -404,17 +742,18 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
             paidAt,
             nextChargeAt: currentPeriodEnd,
             metadata: {
-              mode: stripeSession.mode,
-              paymentStatus: stripeSession.payment_status,
+              provider: 'mercadopago',
+              preapprovalId: preapproval.id,
+              preapprovalStatus: preapproval.status,
             },
           },
         });
       }
 
       await tx.workspaceSubscription.upsert({
-        where: { workspaceId: intent.workspaceId! },
+        where: { workspaceId },
         create: {
-          workspaceId: intent.workspaceId!,
+          workspaceId,
           userId: intent.userId,
           plan: intent.plan,
           status: 'active',
@@ -422,10 +761,8 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
           currentPeriodStart,
           currentPeriodEnd,
           nextChargeAt: currentPeriodEnd,
-          stripeCustomerId:
-            typeof stripeSession.customer === 'string'
-              ? stripeSession.customer
-              : stripeSession.customer?.id || null,
+          stripeCustomerId: customerRef,
+          stripeSubscriptionId: preapproval.id,
         },
         update: {
           userId: intent.userId,
@@ -435,16 +772,14 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
           currentPeriodStart,
           currentPeriodEnd,
           nextChargeAt: currentPeriodEnd,
-          stripeCustomerId:
-            typeof stripeSession.customer === 'string'
-              ? stripeSession.customer
-              : stripeSession.customer?.id || null,
+          stripeCustomerId: customerRef,
+          stripeSubscriptionId: preapproval.id,
           cancelledAt: null,
         },
       });
 
       await tx.workspace.update({
-        where: { id: intent.workspaceId! },
+        where: { id: workspaceId },
         data: {
           plan: intent.plan,
           status: 'active',
@@ -455,16 +790,15 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: intent.id },
         data: {
           status: 'completed',
-          stripeCheckoutSessionId: stripeSession.id,
-          stripePaymentIntentId:
-            typeof stripeSession.payment_intent === 'string'
-              ? stripeSession.payment_intent
-              : stripeSession.payment_intent?.id || null,
-          stripeCustomerId:
-            typeof stripeSession.customer === 'string'
-              ? stripeSession.customer
-              : stripeSession.customer?.id || null,
+          stripeCheckoutSessionId: preapproval.id,
+          stripePaymentIntentId: paymentId,
+          stripeCustomerId: customerRef,
           completedAt: paidAt,
+          metadata: {
+            ...readIntentMetadata(intent.metadata),
+            provider: 'mercadopago',
+            preapprovalStatus: preapproval.status,
+          } as Prisma.InputJsonValue,
         },
       });
     });
@@ -500,7 +834,7 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
         plan,
         months,
         amount: totalCents,
-        currency: 'USD',
+        currency: 'ARS',
         status: 'pending_auth',
         expiresAt,
       },
@@ -1308,48 +1642,32 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      let session: Stripe.Checkout.Session;
+      let preapproval: MercadoPagoPreapproval;
       try {
-        const stripe = buildStripe();
-        const planConfig = BILLING_PLAN_CATALOG[intent.plan as CommercePlan];
-        session = await stripe.checkout.sessions.create({
-          mode: 'payment',
-          line_items: [
-            {
-              quantity: 1,
-              price_data: {
-                currency: 'usd',
-                unit_amount: intent.amount,
-                product_data: {
-                  name: `Nexova ${planConfig?.name || intent.plan}`,
-                  description: `${intent.months} mes(es)`,
-                },
-              },
-            },
-          ],
-          success_url: `${landingPath('checkout/success/')}?session_id={CHECKOUT_SESSION_ID}&flowToken=${encodeURIComponent(
-            intent.flowToken
-          )}`,
-          cancel_url: `${landingPath('cart/')}?plan=${encodeURIComponent(
-            intent.plan
-          )}&months=${intent.months}`,
-          customer_email: user.email,
-          metadata: {
+        preapproval = await createMercadoPagoSubscription({
+          intent: {
             flowToken: intent.flowToken,
-            workspaceId: intent.workspaceId,
-            userId,
             plan: intent.plan,
-            months: String(intent.months),
+            months: intent.months,
+            amount: intent.amount,
           },
+          email: user.email,
         });
       } catch (error) {
-        request.log.error({ error }, 'Stripe checkout session creation failed');
-        const message = isStripeConfigError(error)
-          ? 'Stripe no está configurado. Revisá STRIPE_SECRET_KEY en el entorno de la API.'
-          : 'No se pudo crear la sesión de pago en Stripe.';
+        request.log.error({ error }, 'MercadoPago preapproval creation failed');
+        const message = isMercadoPagoConfigError(error)
+          ? 'Mercado Pago no está configurado. Revisá MP_SUBSCRIPTIONS_ACCESS_TOKEN en el entorno de la API.'
+          : 'No se pudo crear la suscripción en Mercado Pago.';
         return reply.code(500).send({
-          error: 'STRIPE_CHECKOUT_ERROR',
+          error: 'MERCADOPAGO_SUBSCRIPTION_ERROR',
           message,
+        });
+      }
+
+      if (!preapproval.initPoint) {
+        return reply.code(500).send({
+          error: 'MERCADOPAGO_INIT_POINT_MISSING',
+          message: 'Mercado Pago no devolvió una URL válida para continuar el pago.',
         });
       }
 
@@ -1357,13 +1675,19 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: intent.id },
         data: {
           status: 'checkout_created',
-          stripeCheckoutSessionId: session.id,
+          stripeCheckoutSessionId: preapproval.id,
+          stripeCustomerId: preapproval.payerId || preapproval.payerEmail,
+          metadata: {
+            ...readIntentMetadata(intent.metadata),
+            provider: 'mercadopago',
+            preapprovalStatus: preapproval.status,
+          } as Prisma.InputJsonValue,
         },
       });
 
       return reply.send({
-        checkoutUrl: session.url,
-        sessionId: session.id,
+        checkoutUrl: preapproval.initPoint,
+        sessionId: preapproval.id,
       });
     }
   );
@@ -1392,36 +1716,49 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.send({ success: true, alreadyProcessed: true });
       }
 
-      let stripeSession: Stripe.Checkout.Session;
+      const preapprovalId = body.sessionId || intent.stripeCheckoutSessionId;
+      if (!preapprovalId) {
+        return reply.code(400).send({
+          error: 'INVALID_SESSION',
+          message: 'No se encontró el identificador de suscripción para este checkout.',
+        });
+      }
+
+      let preapproval: MercadoPagoPreapproval;
       try {
-        const stripe = buildStripe();
-        stripeSession = await stripe.checkout.sessions.retrieve(body.sessionId);
+        preapproval = await getMercadoPagoPreapproval(preapprovalId);
       } catch (error) {
-        request.log.error({ error }, 'Stripe checkout session retrieve failed');
-        const message = isStripeConfigError(error)
-          ? 'Stripe no está configurado. Revisá STRIPE_SECRET_KEY en el entorno de la API.'
-          : 'No se pudo validar la sesión de pago en Stripe.';
+        request.log.error({ error }, 'MercadoPago preapproval retrieve failed');
+        const message = isMercadoPagoConfigError(error)
+          ? 'Mercado Pago no está configurado. Revisá MP_SUBSCRIPTIONS_ACCESS_TOKEN en el entorno de la API.'
+          : 'No se pudo validar el estado de la suscripción en Mercado Pago.';
         return reply.code(500).send({
-          error: 'STRIPE_CHECKOUT_ERROR',
+          error: 'MERCADOPAGO_SUBSCRIPTION_ERROR',
           message,
         });
       }
-      if (!stripeSession || stripeSession.id !== intent.stripeCheckoutSessionId) {
+      if (
+        intent.stripeCheckoutSessionId &&
+        preapproval.id !== intent.stripeCheckoutSessionId
+      ) {
         return reply.code(400).send({
           error: 'INVALID_SESSION',
-          message: 'La sesión de pago no coincide con el checkout.',
+          message: 'La suscripción no coincide con el checkout.',
         });
       }
-      if (stripeSession.payment_status !== 'paid') {
+      if (preapproval.status !== 'authorized') {
         return reply.code(400).send({
           error: 'PAYMENT_NOT_COMPLETED',
-          message: 'El pago todavía no fue confirmado por Stripe.',
+          message:
+            preapproval.status === 'pending'
+              ? 'La suscripción todavía está pendiente en Mercado Pago.'
+              : 'El pago todavía no fue confirmado por Mercado Pago.',
         });
       }
 
       await markIntentAsPaid({
         flowToken: intent.flowToken,
-        stripeSession,
+        preapproval,
       });
 
       return reply.send({
@@ -1439,73 +1776,108 @@ export const billingRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const { sessionId } = request.params as { sessionId: string };
-      let session: Stripe.Checkout.Session;
+      let preapproval: MercadoPagoPreapproval;
       try {
-        const stripe = buildStripe();
-        session = await stripe.checkout.sessions.retrieve(sessionId);
+        preapproval = await getMercadoPagoPreapproval(sessionId);
       } catch (error) {
-        request.log.error({ error }, 'Stripe checkout session status failed');
-        const message = isStripeConfigError(error)
-          ? 'Stripe no está configurado. Revisá STRIPE_SECRET_KEY en el entorno de la API.'
-          : 'No se pudo consultar el estado de la sesión en Stripe.';
+        request.log.error({ error }, 'MercadoPago preapproval status failed');
+        const message = isMercadoPagoConfigError(error)
+          ? 'Mercado Pago no está configurado. Revisá MP_SUBSCRIPTIONS_ACCESS_TOKEN en el entorno de la API.'
+          : 'No se pudo consultar el estado de la suscripción en Mercado Pago.';
         return reply.code(500).send({
-          error: 'STRIPE_CHECKOUT_ERROR',
+          error: 'MERCADOPAGO_SUBSCRIPTION_ERROR',
           message,
         });
       }
       return reply.send({
         session: {
-          id: session.id,
-          status: session.status,
-          paymentStatus: session.payment_status,
+          id: preapproval.id,
+          status: preapproval.status,
+          paymentStatus: preapproval.status === 'authorized' ? 'paid' : preapproval.status,
         },
       });
     }
   );
 
   fastify.post('/webhook', async (request, reply) => {
-    if (!stripeWebhookSecret) {
-      request.log.error('STRIPE_WEBHOOK_SECRET is not configured');
-      return reply.code(503).send({ error: 'WEBHOOK_NOT_CONFIGURED' });
-    }
+    const payload = (request.body as Record<string, unknown>) || {};
+    const data = isRecord(payload.data) ? payload.data : {};
+    const dataId = readString(data.id);
+    const eventType =
+      readString(payload.type) ||
+      readString(payload.topic) ||
+      readString(payload.action) ||
+      'unknown';
 
-    const signature = request.headers['stripe-signature'];
-    if (typeof signature !== 'string' || !signature.trim()) {
-      return reply.code(400).send({ error: 'MISSING_SIGNATURE' });
-    }
-
-    let stripe: Stripe;
     try {
-      stripe = buildStripe();
-    } catch (error) {
-      request.log.error({ error }, 'Stripe client is not available');
-      return reply.code(503).send({ error: 'WEBHOOK_NOT_CONFIGURED' });
-    }
+      const config = ensureMercadoPagoConfigured();
+      const signature = request.headers['x-signature'];
+      const requestId = request.headers['x-request-id'];
 
-    let event: Stripe.Event;
-    try {
-      const rawBody = request.rawBody || Buffer.from(JSON.stringify(request.body ?? {}));
-      event = stripe.webhooks.constructEvent(rawBody, signature, stripeWebhookSecret);
-    } catch (error) {
-      request.log.warn({ error }, 'Invalid Stripe webhook signature');
-      return reply.code(400).send({ error: 'INVALID_SIGNATURE' });
-    }
-
-    if (event.type === 'checkout.session.completed') {
-      const session = event.data.object;
-      const flowToken = session.metadata?.flowToken;
-      if (flowToken && session.payment_status === 'paid') {
-        try {
-          await markIntentAsPaid({
-            flowToken,
-            stripeSession: session,
-          });
-        } catch (error) {
-          request.log.error({ error }, 'Failed to process billing webhook');
+      if (
+        config.webhookSecret &&
+        typeof signature === 'string' &&
+        signature.trim() &&
+        typeof requestId === 'string' &&
+        requestId.trim() &&
+        dataId
+      ) {
+        const isValid = verifyMercadoPagoWebhookSignature({
+          requestId,
+          dataId,
+          signatureHeader: signature,
+          secret: config.webhookSecret,
+        });
+        if (!isValid) {
+          request.log.warn({ eventType, dataId }, 'Invalid MercadoPago webhook signature');
+          return reply.code(401).send({ error: 'INVALID_SIGNATURE' });
         }
       }
+    } catch (error) {
+      request.log.error({ error }, 'MercadoPago webhook config error');
+      return reply.code(503).send({ error: 'WEBHOOK_NOT_CONFIGURED' });
     }
 
-    return reply.send({ received: true });
+    try {
+      const normalizedEvent = eventType.toLowerCase();
+
+      if (
+        dataId &&
+        (normalizedEvent.includes('subscription_preapproval') ||
+          normalizedEvent.includes('preapproval') ||
+          normalizedEvent === 'created' ||
+          normalizedEvent === 'updated')
+      ) {
+        const preapproval = await getMercadoPagoPreapproval(dataId);
+        const flowToken = preapproval.externalReference;
+
+        if (preapproval.status === 'authorized' && flowToken) {
+          await markIntentAsPaid({
+            flowToken,
+            preapproval,
+          });
+        } else {
+          await setWorkspaceStatusFromSubscription({
+            preapprovalId: preapproval.id,
+            preapprovalStatus: preapproval.status,
+            nextPaymentDate: preapproval.nextPaymentDate,
+          });
+        }
+      }
+
+      if (
+        dataId &&
+        (normalizedEvent.includes('subscription_authorized_payment') ||
+          normalizedEvent.includes('authorized_payment'))
+      ) {
+        const authorizedPayment = await getMercadoPagoAuthorizedPayment(dataId);
+        await recordRecurringAuthorizedPayment(authorizedPayment);
+      }
+    } catch (error) {
+      request.log.error({ error, eventType, dataId }, 'Failed to process MercadoPago billing webhook');
+      return reply.send({ received: true, processed: false });
+    }
+
+    return reply.send({ received: true, processed: true });
   });
 };

@@ -174,7 +174,7 @@ export default function RegisterPage(): JSX.Element {
             <svg className="w-4 h-4 text-white/30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
             </svg>
-            <span className="text-xs text-white/30">Pago seguro con Stripe</span>
+            <span className="text-xs text-white/30">Pago seguro con Mercado Pago</span>
           </div>
         </div>
       </nav>

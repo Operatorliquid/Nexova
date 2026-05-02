@@ -18,7 +18,6 @@ async function resolveReactPlugin(): Promise<PluginOption[]> {
 
 export default defineConfig(async () => ({
   plugins: await resolveReactPlugin(),
-  base: process.env.VITE_BASE_PATH?.trim() || './',
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
@@ -49,6 +48,7 @@ export default defineConfig(async () => ({
     rollupOptions: {
       input: {
         main: path.resolve(__dirname, 'index.html'),
+        demo: path.resolve(__dirname, 'demo/index.html'),
         cart: path.resolve(__dirname, 'cart/index.html'),
         register: path.resolve(__dirname, 'register/index.html'),
         verifyEmail: path.resolve(__dirname, 'verify-email/index.html'),

@@ -24,7 +24,7 @@ export default function CheckoutSuccessPage(): JSX.Element {
   const [dashboardUrl, setDashboardUrl] = useState(`${DASHBOARD_URL}/login`);
 
   const finalizeCheckout = async (): Promise<void> => {
-    if (!flowToken || !sessionId) {
+    if (!flowToken) {
       setError('Faltan parámetros de checkout para finalizar el pago.');
       setIsLoading(false);
       return;
@@ -39,7 +39,7 @@ export default function CheckoutSuccessPage(): JSX.Element {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           flowToken,
-          sessionId,
+          ...(sessionId ? { sessionId } : {}),
         }),
       });
 
@@ -100,7 +100,7 @@ export default function CheckoutSuccessPage(): JSX.Element {
             <svg className="w-4 h-4 text-white/30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
             </svg>
-            <span className="text-xs text-white/30">Pago seguro con Stripe</span>
+            <span className="text-xs text-white/30">Pago seguro con Mercado Pago</span>
           </div>
         </div>
       </nav>
@@ -169,7 +169,7 @@ export default function CheckoutSuccessPage(): JSX.Element {
             {isSuccess
               ? 'Tu suscripción quedó activa. Ya podés ingresar al dashboard y empezar a usar Nexova.'
               : isLoading
-              ? 'Estamos validando la sesión de Stripe. Solo tomará un momento.'
+              ? 'Estamos validando la suscripción en Mercado Pago. Solo tomará un momento.'
               : 'Hubo un problema al confirmar tu pago. Podés reintentar.'}
           </p>
         </div>
@@ -184,7 +184,7 @@ export default function CheckoutSuccessPage(): JSX.Element {
                   <div className="w-10 h-10 border-2 border-white/[0.06] rounded-full" />
                   <div className="absolute inset-0 w-10 h-10 border-2 border-transparent border-t-[#4D7CFF] rounded-full animate-spin" />
                 </div>
-                <p className="text-xs text-white/30">Validando con Stripe...</p>
+                <p className="text-xs text-white/30">Validando con Mercado Pago...</p>
               </div>
             )}
 

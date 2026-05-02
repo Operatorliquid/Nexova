@@ -10,7 +10,7 @@ type CatalogPlan = {
   plan: 'basic' | 'standard' | 'pro';
   name: string;
   description: string;
-  currency: 'USD';
+  currency: 'ARS';
   monthlyAmountCents: number;
 };
 
@@ -121,11 +121,10 @@ export default function CartPage(): JSX.Element {
 
   const totalAmountCents = activePlan ? activePlan.monthlyAmountCents * months : 0;
 
-  const formatMoney = (amountCents: number): string =>
-    `$${(amountCents / 100).toLocaleString('es-AR', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    })}`;
+  const formatMoney = (amountCents: number): string => {
+    const amount = Math.round(amountCents / 100);
+    return `$${amount.toLocaleString('es-AR')}`;
+  };
 
   const continueFlow = async (): Promise<void> => {
     if (!activePlan) return;
@@ -189,7 +188,7 @@ export default function CartPage(): JSX.Element {
             <svg className="w-4 h-4 text-white/30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
             </svg>
-            <span className="text-xs text-white/30">Pago seguro con Stripe</span>
+            <span className="text-xs text-white/30">Pago seguro con Mercado Pago</span>
           </div>
         </div>
       </nav>
@@ -218,8 +217,8 @@ export default function CartPage(): JSX.Element {
       </div>
 
       {/* Content */}
-      <div className="max-w-5xl mx-auto px-6 py-8">
-        <div className="grid lg:grid-cols-[1fr,380px] gap-8">
+      <div className="max-w-6xl mx-auto px-6 py-8">
+        <div className="grid lg:grid-cols-[minmax(0,1fr)_420px] gap-8">
 
           {/* ── LEFT: Plan selection ── */}
           <div className="space-y-6">
@@ -234,7 +233,7 @@ export default function CartPage(): JSX.Element {
                 <div className="w-8 h-8 border-2 border-white/10 border-t-[#4D7CFF] rounded-full animate-spin" />
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 {plans.map((plan) => {
                   const selected = selectedPlan === plan.plan;
                   const pm = PLAN_META[plan.plan] || PLAN_META.standard;
@@ -275,9 +274,11 @@ export default function CartPage(): JSX.Element {
                         {plan.name}
                       </p>
 
-                      <div className="flex items-baseline gap-1 mt-1.5 mb-2">
-                        <span className="text-2xl font-bold text-white">{formatMoney(plan.monthlyAmountCents)}</span>
-                        <span className="text-xs text-white/30">/mes</span>
+                      <div className="flex items-end gap-1.5 mt-1.5 mb-2 min-w-0">
+                        <span className="text-xl xl:text-2xl font-bold text-white leading-none whitespace-nowrap">
+                          {formatMoney(plan.monthlyAmountCents)}
+                        </span>
+                        <span className="text-xs text-white/30 whitespace-nowrap">/mes</span>
                       </div>
 
                       <p className="text-xs text-white/35 leading-relaxed">{plan.description}</p>
@@ -363,7 +364,7 @@ export default function CartPage(): JSX.Element {
                   {/* Total */}
                   <div className="flex items-center justify-between">
                     <span className="text-white font-semibold">Total a pagar</span>
-                    <span className="text-xl font-bold bg-gradient-to-r from-white to-white/80 bg-clip-text text-transparent">
+                    <span className="text-lg xl:text-xl font-bold bg-gradient-to-r from-white to-white/80 bg-clip-text text-transparent whitespace-nowrap">
                       {formatMoney(totalAmountCents)}
                     </span>
                   </div>
@@ -429,7 +430,7 @@ export default function CartPage(): JSX.Element {
                     <svg className="w-3.5 h-3.5 text-white/20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <rect x="1" y="4" width="22" height="16" rx="2" ry="2" /><line x1="1" y1="10" x2="23" y2="10" />
                     </svg>
-                    <span className="text-[11px] text-white/20">Stripe</span>
+                    <span className="text-[11px] text-white/20">Mercado Pago</span>
                   </div>
                   <div className="flex items-center gap-1.5">
                     <svg className="w-3.5 h-3.5 text-white/20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

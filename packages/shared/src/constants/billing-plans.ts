@@ -6,7 +6,7 @@ export interface BillingPlanCatalogItem {
   plan: CommercePlan;
   name: string;
   description: string;
-  currency: 'USD';
+  currency: 'ARS';
   monthlyAmountCents: number;
 }
 
@@ -15,24 +15,24 @@ export const BILLING_MONTH_OPTIONS: BillingMonthsOption[] = [1, 12, 24, 48];
 export const BILLING_PLAN_CATALOG: Record<CommercePlan, BillingPlanCatalogItem> = {
   basic: {
     plan: 'basic',
-    name: 'Plan Inicial',
+    name: 'Plan Base',
     description: 'Acceso base a plataforma, inbox, bot, catálogo y boleta estándar.',
-    currency: 'USD',
-    monthlyAmountCents: 4999,
+    currency: 'ARS',
+    monthlyAmountCents: 7500000,
   },
   standard: {
     plan: 'standard',
     name: 'Plan Pro',
     description: 'Automatización comercial, promociones, facturación y catálogo personalizado.',
-    currency: 'USD',
-    monthlyAmountCents: 9999,
+    currency: 'ARS',
+    monthlyAmountCents: 15000000,
   },
   pro: {
     plan: 'pro',
     name: 'Plan Empresa',
     description: 'Operación avanzada con acciones rápidas y control por WhatsApp en vivo.',
-    currency: 'USD',
-    monthlyAmountCents: 14999,
+    currency: 'ARS',
+    monthlyAmountCents: 20000000,
   },
 };
 
